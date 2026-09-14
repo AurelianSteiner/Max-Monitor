@@ -1,5 +1,21 @@
 # Änderungen
 
+## 2.8.1
+
+- **Speichern funktioniert nach Updates wieder.** Der Schlüsselbund bindet jeden
+  Eintrag an den Code-Hash des Builds, der ihn angelegt hat („partition ID").
+  Ein neuer Build darf den Eintrag nach der Einmal-Frage lesen, aber weder
+  ändern noch löschen — seit dem Update auf 2.8 schlug deshalb jedes Speichern
+  still fehl (Schlüsselbund-Fehler -25299, „Duplikat"): erneuerte Refresh-
+  Tokens, Neuanmeldungen, Aliase und Kündigungsdaten lebten nur bis zum
+  nächsten Start. Das Problem ist alt und traf jedes Update, es fiel nur nie
+  auf. Zugangsdaten liegen jetzt AES-GCM-verschlüsselt in einer Datei im
+  App-Container; im Schlüsselbund steht nur noch der Schlüssel dazu, der nach
+  dem Anlegen nie mehr geschrieben wird. Bestehende Einträge werden beim
+  ersten Start übernommen. Beim Update fragt der Schlüsselbund künftig
+  höchstens einmal (nach dem Schlüssel) statt je Eintrag. Der Speicher ist
+  ohne SwiftUI und per `swift test` abgedeckt.
+
 ## 2.8
 
 Die App heißt jetzt **Max Monitor** — sie zeigt längst nicht mehr nur Claude.

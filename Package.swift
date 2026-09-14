@@ -38,7 +38,8 @@ let package = Package(
                 "Models/TeamHistorySample.swift",
                 "Helpers/PrivilegedPower.swift",
                 "Helpers/OAuthGrantFailure.swift",
-                "Views/Dashboard/MascotParadeTiming.swift"
+                "Views/Dashboard/MascotParadeTiming.swift",
+                "Services/CredentialVault.swift"
             ]
         ),
         .testTarget(
