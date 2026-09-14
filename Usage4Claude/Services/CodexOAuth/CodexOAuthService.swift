@@ -104,9 +104,22 @@ enum CodexOAuthService {
             }
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 let bodyText = String(data: data, encoding: .utf8) ?? ""
-                Logger.api.error("Codex OAuth token HTTP \(http.statusCode): \(bodyText.prefix(200))")
-                completion(.failure(http.statusCode == 401 ? UsageError.unauthorized
-                                    : UsageError.httpError(statusCode: http.statusCode)))
+                Logger.api.error("Codex OAuth token HTTP \(http.statusCode): \(bodyText.prefix(200), privacy: .public)")
+                // 401 bleibt `unauthorized` — daran hängen die bestehenden Codex-Retry-
+                // Pfade. Neu: ein ausdrücklich verbrauchtes Token (400, siehe
+                // OAuthGrantFailure) heißt „neu anmelden", und 429 ist Drosselung,
+                // kein Fehler der Zugangsdaten.
+                let failure: UsageError
+                if http.statusCode == 401 {
+                    failure = .unauthorized
+                } else if OAuthGrantFailure.isDeadGrant(statusCode: http.statusCode, body: bodyText) {
+                    failure = .sessionExpired
+                } else if http.statusCode == 429 {
+                    failure = .rateLimited
+                } else {
+                    failure = .httpError(statusCode: http.statusCode)
+                }
+                completion(.failure(failure))
                 return
             }
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

@@ -107,6 +107,7 @@ struct AccountUsageCard: View {
                         .truncationMode(.middle)
 
                     kindIcon
+                    cancellationBadge
                 }
 
                 // Anmelde-Email als zweite Zeile — bei Konten, deren Anzeigename
@@ -145,6 +146,62 @@ struct AccountUsageCard: View {
                 .foregroundColor(.secondary)
                 .help(snapshot.account.kind.localizedName)
         }
+    }
+
+    // MARK: - Kündigungs-Plakette
+
+    /// Gekündigtes Abo: „endet 9. Okt." neben dem Namen, mit Tooltip samt vollem
+    /// Datum und Restzeit. Der Ton kommt aus der Anbieter-Farbreihe — kräftig,
+    /// sobald weniger als eine Woche bleibt. Ohne eingetragenes Datum bleibt die
+    /// Stelle leer; das Datum kommt von Hand aus den Einstellungen, keine
+    /// Schnittstelle liefert es.
+    @ViewBuilder
+    private var cancellationBadge: some View {
+        if let end = snapshot.account.subscriptionEndsAt {
+            let days = snapshot.account.subscriptionDaysRemaining() ?? 0
+            let level: Double = days <= 7 ? 100 : 80
+            let shortDate = Self.shortDate(end)
+            let text = days < 0
+                ? L.Account.cancellationEnded(shortDate)
+                : L.Account.cancellationEndsOn(shortDate)
+
+            HStack(spacing: 2) {
+                Image(systemName: "calendar.badge.exclamationmark")
+                    .font(.system(size: 8, weight: .semibold))
+                Text(text)
+                    .font(.system(size: 9, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundColor(days < 0 ? .secondary : DashboardPalette.ink(level, provider: snapshot.provider))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1.5)
+            .background(
+                Capsule().fill(
+                    days < 0
+                        ? Color.secondary.opacity(0.12)
+                        : DashboardPalette.fill(level, provider: snapshot.provider).opacity(0.14)
+                )
+            )
+            .fixedSize()
+            .help(L.Account.cancellationHelp(Self.longDate(end), L.Account.cancellationDaysLeft(days)))
+            .accessibilityLabel(L.Account.cancellationHelp(Self.longDate(end), L.Account.cancellationDaysLeft(days)))
+        }
+    }
+
+    /// „9. Okt." / „Oct 9" — für die Plakette
+    private static func shortDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = UserSettings.shared.appLocale
+        formatter.setLocalizedDateFormatFromTemplate("dMMM")
+        return formatter.string(from: date)
+    }
+
+    /// „Freitag, 9. Oktober 2026" — für den Tooltip
+    private static func longDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = UserSettings.shared.appLocale
+        formatter.setLocalizedDateFormatFromTemplate("EEEEdMMMMyyyy")
+        return formatter.string(from: date)
     }
 
     @ViewBuilder
@@ -212,7 +269,8 @@ struct AccountUsageCard: View {
             WaterLevelGauge(
                 percentage: session?.percentage ?? 0,
                 caption: session?.label ?? L.Usage.fiveHourLimitShort,
-                diameter: DashboardMetrics.ringSlotWidth
+                diameter: DashboardMetrics.ringSlotWidth,
+                provider: snapshot.provider
             )
 
             resetLine(for: session)
@@ -231,7 +289,7 @@ struct AccountUsageCard: View {
 
             Text("\(Int(percentage.rounded()))%")
                 .font(.system(size: 30, weight: .semibold).monospacedDigit())
-                .foregroundColor(DashboardPalette.ink(percentage))
+                .foregroundColor(DashboardPalette.ink(percentage, provider: snapshot.provider))
                 .lineLimit(1)
 
             resetLine(for: weekly)
@@ -346,17 +404,17 @@ struct AccountUsageCard: View {
                     .minimumScaleFactor(0.7)
             }
         }
-        .foregroundColor(DashboardPalette.ink(level))
+        .foregroundColor(DashboardPalette.ink(level, provider: snapshot.provider))
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(DashboardPalette.fill(level).opacity(isWeekly ? 0.20 : 0.12))
+                .fill(DashboardPalette.fill(level, provider: snapshot.provider).opacity(isWeekly ? 0.20 : 0.12))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(
-                    DashboardPalette.fill(level).opacity(isWeekly ? 0.75 : 0.40),
+                    DashboardPalette.fill(level, provider: snapshot.provider).opacity(isWeekly ? 0.75 : 0.40),
                     lineWidth: isWeekly ? 1.5 : 1
                 )
         )
@@ -391,7 +449,7 @@ struct AccountUsageCard: View {
             TimelineView(.periodic(from: .now, by: 60)) { _ in
                 Text(isSoon ? data.formattedCompactRemaining : data.formattedCompactResetDate)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(limit.isExhausted ? DashboardPalette.ink(100) : .secondary)
+                    .foregroundColor(limit.isExhausted ? DashboardPalette.ink(100, provider: snapshot.provider) : .secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
             }
@@ -433,7 +491,9 @@ struct AccountUsageCard: View {
             }
 
             // Abruf fehlgeschlagen, aber alte Daten noch vorhanden: Hinweis, dass
-            // die Zahlen veraltet sein können.
+            // die Zahlen veraltet sein können. Ist die Anmeldung abgelaufen, hängt
+            // der Weg zur Neuanmeldung direkt daneben — der Hinweis allein ließe
+            // die Karte sonst still veralten.
             if let error = snapshot.errorMessage {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -442,8 +502,12 @@ struct AccountUsageCard: View {
                         .font(.system(size: 9))
                         .lineLimit(1)
                         .truncationMode(.tail)
+                    if snapshot.needsReauth {
+                        Spacer(minLength: 4)
+                        reauthButton
+                    }
                 }
-                .foregroundColor(DashboardPalette.ink(80))
+                .foregroundColor(DashboardPalette.ink(80, provider: snapshot.provider))
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -460,7 +524,7 @@ struct AccountUsageCard: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 22))
-                .foregroundColor(DashboardPalette.ink(80))
+                .foregroundColor(DashboardPalette.ink(80, provider: snapshot.provider))
                 .frame(width: DashboardMetrics.ringSlotWidth)
 
             VStack(alignment: .leading, spacing: 6) {
@@ -470,11 +534,17 @@ struct AccountUsageCard: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 8) {
-                    Button(action: onRefresh) {
-                        Text(L.Dashboard.retry).font(.system(size: 10))
+                    if snapshot.needsReauth {
+                        // Abgelaufene Anmeldung: „Erneut versuchen" kann nichts
+                        // ausrichten, der Login ist der einzige Weg zurück.
+                        reauthButton
+                    } else {
+                        Button(action: onRefresh) {
+                            Text(L.Dashboard.retry).font(.system(size: 10))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
 
                     Button(action: onOpenAuthSettings) {
                         Text(L.Usage.goToSettings).font(.system(size: 10))
@@ -485,6 +555,25 @@ struct AccountUsageCard: View {
             }
         }
         .frame(minHeight: DashboardMetrics.ringSlotWidth)
+    }
+
+    /// Öffnet den Browser-Login des passenden Anbieters. Nach der Anmeldung
+    /// bleiben ID, Alias, Art und Kündigungsdatum des Kontos erhalten — nur die
+    /// Zugangsdaten werden ersetzt (siehe `AccountStore.replaceClaudeCredentials`).
+    private var reauthButton: some View {
+        Button(action: openLogin) {
+            Text(L.Dashboard.reauth).font(.system(size: 10))
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .help(L.Error.sessionExpired)
+    }
+
+    private func openLogin() {
+        switch snapshot.provider {
+        case .claude: WebLoginWindowManager.shared.showLoginWindow()
+        case .codex:  WebLoginWindowManager.shared.showCodexLoginWindow()
+        }
     }
 
     private var placeholderContent: some View {

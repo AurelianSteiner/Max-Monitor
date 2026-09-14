@@ -137,16 +137,24 @@ final class DashboardRefreshManager: ObservableObject {
 
         var rebuilt: [AccountUsageSnapshot] = []
         rebuilt.reserveCapacity(accounts.count)
+        /// Konten, deren Zugangsdaten sich durch eine Neuanmeldung geändert haben —
+        /// die holen gleich neu, statt bis zum nächsten Takt „Neu anmelden" zu zeigen.
+        var reauthenticated: [UUID] = []
 
         for account in accounts {
             if let existing = snapshots.first(where: { $0.id == account.id }) {
+                // Neuanmeldung: Der Fehler „Anmeldung abgelaufen" gehört zum alten
+                // Token und darf mit dem neuen nicht stehen bleiben.
+                let credentialsChanged = existing.account.sessionKey != account.sessionKey
+                if credentialsChanged, existing.needsReauth { reauthenticated.append(account.id) }
                 // 凭据可能被静默续期过，快照里始终保存最新的账户对象
                 rebuilt.append(
                     AccountUsageSnapshot(
                         account: account,
                         usageData: existing.usageData,
                         codexUsageData: existing.codexUsageData,
-                        errorMessage: existing.errorMessage,
+                        errorMessage: credentialsChanged && existing.needsReauth ? nil : existing.errorMessage,
+                        needsReauth: credentialsChanged ? false : existing.needsReauth,
                         isLoading: existing.isLoading,
                         updatedAt: existing.updatedAt
                     )
@@ -167,9 +175,13 @@ final class DashboardRefreshManager: ObservableObject {
                     && $0.account.sessionKey == $1.account.sessionKey
                     && $0.account.alias == $1.account.alias
                     && $0.account.kind == $1.account.kind
+                    && $0.account.subscriptionEndsAt == $1.account.subscriptionEndsAt
             }
         if !unchanged {
             snapshots = rebuilt
+        }
+        for id in reauthenticated {
+            refreshAccount(id: id)
         }
 
         // 清理已删除账户的 Service（连同它们缓存的 token）
@@ -255,6 +267,7 @@ final class DashboardRefreshManager: ObservableObject {
         case .success(let data):
             snapshots[index].usageData = data
             snapshots[index].errorMessage = nil
+            snapshots[index].needsReauth = false
             snapshots[index].updatedAt = Date()
         case .failure(let error):
             // 429 auf einem Konto, das schon Daten hat: letzte Daten stehen lassen
@@ -265,7 +278,18 @@ final class DashboardRefreshManager: ObservableObject {
             } else {
                 snapshots[index].errorMessage = error.localizedDescription
             }
+            snapshots[index].needsReauth = isAuthFailure(error)
             Logger.menuBar.info("Dashboard: Claude 账户拉取失败（\(error.localizedDescription)）")
+        }
+    }
+
+    /// Abgelaufene oder widerrufene Anmeldung: Da hilft kein „Erneut versuchen",
+    /// die Karte bietet stattdessen „Neu anmelden" an.
+    private func isAuthFailure(_ error: Error) -> Bool {
+        guard let usageError = error as? UsageError else { return false }
+        switch usageError {
+        case .sessionExpired, .unauthorized: return true
+        default: return false
         }
     }
 
@@ -282,6 +306,7 @@ final class DashboardRefreshManager: ObservableObject {
         case .success(let data):
             snapshots[index].codexUsageData = data
             snapshots[index].errorMessage = nil
+            snapshots[index].needsReauth = false
             snapshots[index].updatedAt = Date()
         case .failure(let error):
             if isRateLimit(error), snapshots[index].codexUsageData != nil {
@@ -289,6 +314,7 @@ final class DashboardRefreshManager: ObservableObject {
             } else {
                 snapshots[index].errorMessage = error.localizedDescription
             }
+            snapshots[index].needsReauth = isAuthFailure(error)
             Logger.menuBar.info("Dashboard: Codex 账户拉取失败（\(error.localizedDescription)）")
         }
     }

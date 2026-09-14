@@ -537,6 +537,10 @@ class ClaudeAPIService {
                     return try await self.refreshClaudeOAuthTokens(refreshToken: token)
                 }
                 await MainActor.run { completion(.success(accessToken)) }
+            } catch OAuthTokenCacheError.revokedGrant {
+                // Der Cache kennt das Token als tot und hat gar nicht erst angefragt.
+                // Für die Karte ist das eine abgelaufene Anmeldung — „Neu anmelden".
+                await MainActor.run { completion(.failure(UsageError.sessionExpired)) }
             } catch {
                 await MainActor.run { completion(.failure(error)) }
             }
@@ -572,6 +576,12 @@ class ClaudeAPIService {
             // expires_in 通常为 3600 秒；未给出时保守使用 30 分钟
             let expiry = tokens.expiresAt ?? Date().addingTimeInterval(30 * 60)
             return OAuthTokenCache.Tokens(accessToken: tokens.accessToken, refreshToken: newRefresh, expiresAt: expiry)
+        } catch UsageError.sessionExpired {
+            // Der Server hat das Refresh-Token endgültig abgelehnt. Als
+            // `revokedGrant` an den Cache melden — der merkt sich das Token und
+            // lässt keine weitere Erneuerung damit raus (siehe OAuthTokenCache).
+            Logger.api.notice("Claude OAuth: Refresh-Token widerrufen oder verbraucht – Konto braucht eine Neuanmeldung")
+            throw OAuthTokenCacheError.revokedGrant
         } catch {
             Logger.api.error("Claude OAuth refresh 失败: \(error.localizedDescription)")
             throw error

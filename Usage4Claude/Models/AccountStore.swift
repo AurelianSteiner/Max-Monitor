@@ -306,6 +306,55 @@ final class AccountStore: ObservableObject {
         Logger.settings.notice("更新账户类型: \(displayName) → \(kind.rawValue)")
     }
 
+    /// Kündigungsdatum setzen oder löschen (`nil`). Rein manuelle Angabe —
+    /// keine Schnittstelle liefert das Datum, deshalb fasst es außer den
+    /// Einstellungen niemand an; Re-Logins und Token-Erneuerungen lassen es stehen.
+    func updateAccount(_ account: Account, subscriptionEndsAt date: Date?) {
+        guard let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
+        guard accounts[index].subscriptionEndsAt != date else { return }
+        accounts[index].subscriptionEndsAt = date
+        let displayName = accounts[index].displayName
+        Logger.settings.notice("Kündigungsdatum aktualisiert: \(displayName)")
+    }
+
+    /// Neuanmeldung eines schon bekannten Kontos: Die Zugangsdaten werden **an Ort
+    /// und Stelle** ersetzt, das Konto behält seine ID, seinen Alias, seine Art und
+    /// sein Kündigungsdatum. Vorher wurde das alte Konto gelöscht und ein neues
+    /// angelegt — dabei gingen Alias und alle Handeinträge verloren, und die
+    /// Karten der Übersicht wurden neu gebaut.
+    ///
+    /// Die Art wird nur übernommen, wenn das Profil etwas Belastbares liefert;
+    /// eine manuell gesetzte Art überlebt die Neuanmeldung sonst.
+    /// - Returns: das aktualisierte Konto, oder nil, wenn kein Konto mit dieser
+    ///   Organisation existiert (dann legt der Aufrufer ein neues an).
+    @discardableResult
+    func replaceClaudeCredentials(
+        organizationId: String,
+        sessionKey: String,
+        email: String?,
+        kind: AccountKind
+    ) -> Account? {
+        guard !organizationId.isEmpty,
+              let index = accounts.firstIndex(where: { $0.organizationId == organizationId }) else { return nil }
+        accounts[index].sessionKey = sessionKey
+        accounts[index].provider = .claude
+        if let email, !email.isEmpty {
+            accounts[index].email = email
+            // Bei OAuth-Konten ohne Alias ist der Organisationsname die Email —
+            // die darf sich mit der Neuanmeldung ändern (z. B. Korrektur).
+            if accounts[index].organizationName.contains("@") {
+                accounts[index].organizationName = email
+            }
+        }
+        if kind != .unknown {
+            accounts[index].kind = kind
+        }
+        let updated = accounts[index]
+        Logger.settings.notice("Zugangsdaten erneuert: \(updated.displayName)")
+        postAccountChanged(provider: .claude)
+        return updated
+    }
+
     /// 静默更新当前 Claude 账户的 session-token（不触发 accountChanged 通知）
     /// 用于 OAuth refresh_token 轮换场景——只更新持久化数据，不触发重新拉取循环
     func silentlyUpdateCurrentClaudeSessionToken(_ token: String) {
@@ -404,6 +453,14 @@ final class AccountStore: ObservableObject {
         guard let index = codexAccounts.firstIndex(where: { $0.id == account.id }) else { return }
         codexAccounts[index].alias = alias
         Logger.settings.notice("更新 Codex 账户别名: \(self.codexAccounts[index].displayName)")
+    }
+
+    /// Kündigungsdatum eines Codex-Kontos — siehe `updateAccount(_:subscriptionEndsAt:)`.
+    func updateCodexAccount(_ account: Account, subscriptionEndsAt date: Date?) {
+        guard let index = codexAccounts.firstIndex(where: { $0.id == account.id }) else { return }
+        guard codexAccounts[index].subscriptionEndsAt != date else { return }
+        codexAccounts[index].subscriptionEndsAt = date
+        Logger.settings.notice("Kündigungsdatum (Codex) aktualisiert: \(self.codexAccounts[index].displayName)")
     }
 
     /// 静默更新当前 Codex 账户的 session-token（不触发 accountChanged 通知）

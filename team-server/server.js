@@ -1,5 +1,5 @@
 //
-// Claude Max Monitor — Team-Relay
+// Max Monitor — Team-Relay
 //
 // Winziger Dienst ohne Abhängigkeiten. Drei Rollen:
 //   super   Team-Inhaber (Token aus TEAM_TOKENS): verwaltet Mitglieder,

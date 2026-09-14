@@ -390,7 +390,8 @@ struct DashboardView: View {
                     MiniWaterGauge(
                         weeklyUtilization: snapshot.weeklyPeakUtilization,
                         sessionExhausted: snapshot.sessionExhausted,
-                        diameter: diameter
+                        diameter: diameter,
+                        provider: snapshot.provider
                     )
                     .help(gaugeHelp(for: snapshot))
                 }
@@ -401,12 +402,24 @@ struct DashboardView: View {
 
     /// Der Laufsteg unter dem Kopf. Früher teilte sich die Zeile die Parade mit
     /// der Punktreihe und blieb auf 300 pt beschränkt — seit die Pegel oben in
-    /// der Kopfzeile sitzen, laufen die Claudies über die volle Breite.
+    /// der Kopfzeile sitzen, laufen die Maskottchen über die volle Breite.
+    ///
+    /// Die Besetzung folgt den Konten: ein Claudie je Claude-Konto, ein blaues
+    /// Codex-Pet je Codex-Konto, und nie mehr Läufer gleichzeitig als Konten.
+    /// Als Breite bekommt die Parade die Wunschbreite aus der Spaltenwahl, nicht
+    /// die live gemessene — jede Breitenänderung mischt die Reihe neu, und das
+    /// soll beim Ziehen am Fenster nicht passieren (siehe `MascotParadeTiming`).
     private var mascotRow: some View {
-        AwakeMascotView()
-            .padding(.horizontal, DashboardMetrics.outerPadding)
-            .padding(.top, 2)
-            .padding(.bottom, 4)
+        AwakeMascotView(
+            roster: MascotRoster(
+                claudeCount: settings.accounts.count,
+                codexCount: settings.codexAccounts.count
+            ),
+            referenceWidth: contentWidth - DashboardMetrics.outerPadding * 2
+        )
+        .padding(.horizontal, DashboardMetrics.outerPadding)
+        .padding(.top, 2)
+        .padding(.bottom, 4)
     }
 
     /// Misst die verfügbare Breite für das responsive Gitter. Nur im eigenen

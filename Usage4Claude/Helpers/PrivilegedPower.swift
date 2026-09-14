@@ -69,6 +69,9 @@ enum PrivilegedPower {
     // MARK: - Konstanten
 
     private static let pmsetPath = "/usr/bin/pmset"
+    // Der Dateiname bleibt beim alten Produktnamen: Er ist auf bestehenden Macs
+    // schon installiert (Einmal-Freigabe). Ein neuer Name hieße neue Passwortabfrage
+    // und eine verwaiste alte Regel.
     private static let sudoersFile = "/etc/sudoers.d/claude-max-monitor"
 
     private static let queue = DispatchQueue(
@@ -211,7 +214,7 @@ enum PrivilegedPower {
             shell = [
                 "set -e",
                 "umask 077",
-                "tmp=$(/usr/bin/mktemp /private/tmp/claude-max-monitor-sudoers.XXXXXX)",
+                "tmp=$(/usr/bin/mktemp /private/tmp/max-monitor-sudoers.XXXXXX)",
                 "/usr/bin/printf '%s\\n' '\(rule)' > \"$tmp\"",
                 "/usr/sbin/visudo -cf \"$tmp\"",
                 "/usr/bin/install -m 440 -o root -g wheel \"$tmp\" \(sudoersFile)",

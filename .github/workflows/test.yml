@@ -97,13 +97,13 @@ jobs:
             echo "App not found at $APP; searching:"; find build -maxdepth 5 -name '*.app'
             exit 1
           fi
-          ditto -c -k --keepParent "$APP" "Claude-Max-Monitor.zip"
+          ditto -c -k --keepParent "$APP" "Max-Monitor.zip"
 
       - name: Upload app artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: Claude-Max-Monitor-app
-          path: Claude-Max-Monitor.zip
+          name: Max-Monitor-app
+          path: Max-Monitor.zip
           if-no-files-found: error
 
   python-script-tests:

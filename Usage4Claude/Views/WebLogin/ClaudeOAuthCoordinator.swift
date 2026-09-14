@@ -191,7 +191,14 @@ final class ClaudeOAuthCoordinator: ObservableObject {
         switch result {
         case .failure(let error):
             Logger.settings.error("ClaudeOAuth: token 交换失败 \(error.localizedDescription)")
-            fail(L.WebLogin.codexOAuthFailed)
+            // 429 am Token-Endpunkt: Anthropic drosselt dieses Netz gerade (meist
+            // nach einem Sturm fehlgeschlagener Erneuerungen). Das ist kein Fehler
+            // der Anmeldung — der Hinweis muss „kurz warten" sagen, nicht „nochmal".
+            if case UsageError.rateLimited = error {
+                fail(L.WebLogin.claudeOAuthRateLimited)
+            } else {
+                fail(L.WebLogin.codexOAuthFailed)
+            }
 
         case .success(let tokens):
             guard !tokens.refreshToken.isEmpty else {
@@ -221,30 +228,36 @@ final class ClaudeOAuthCoordinator: ObservableObject {
         // organizationId 用组织 uuid（缺失时退回 email），与旧 cookie 账户的去重标识一致
         let stableOrgId = orgId.isEmpty ? email : orgId
 
-        // 迁移：addAccount 对已存在的 organizationId 会直接跳过，故先移除同标识的旧账户再添加
-        if !stableOrgId.isEmpty,
-           let existing = UserSettings.shared.accounts.first(where: { $0.organizationId == stableOrgId }) {
-            // Eine manuell gesetzte Kontoart überlebt die Neuanmeldung, solange
-            // das Profil selbst nichts Belastbares liefert.
-            if kind == .unknown { kind = existing.kind }
-            UserSettings.shared.removeAccount(existing)
-        }
-
-        let account = Account(
-            sessionKey: tokens.refreshToken,
+        // Neuanmeldung eines bekannten Kontos (abgelaufenes Refresh-Token, Wechsel
+        // von Cookie auf OAuth): Zugangsdaten an Ort und Stelle ersetzen. Das Konto
+        // behält ID, Alias, Art und Kündigungsdatum — vorher wurde es gelöscht und
+        // neu angelegt, und mit ihm gingen alle Handeinträge verloren.
+        let account: Account
+        if let replaced = UserSettings.shared.replaceClaudeCredentials(
             organizationId: stableOrgId,
-            organizationName: displayName,
-            alias: nil,
-            provider: .claude
-        ,
+            sessionKey: tokens.refreshToken,
             email: email,
-            kind: kind)
-        UserSettings.shared.addAccount(account)
+            kind: kind
+        ) {
+            account = replaced
+            Logger.settings.notice("ClaudeOAuth: Zugangsdaten eines bestehenden Kontos erneuert - \(account.displayName)")
+        } else {
+            account = Account(
+                sessionKey: tokens.refreshToken,
+                organizationId: stableOrgId,
+                organizationName: displayName,
+                alias: nil,
+                provider: .claude,
+                email: email,
+                kind: kind
+            )
+            UserSettings.shared.addAccount(account)
+            Logger.settings.notice("ClaudeOAuth: 账户创建成功 - \(account.displayName)")
+        }
         UserSettings.shared.switchToAccount(account)
 
         loginState = .success(accountName: account.displayName)
         onAccountCreated?(account)
-        Logger.settings.notice("ClaudeOAuth: 账户创建成功 - \(account.displayName)")
         finishCleanup()
     }
 

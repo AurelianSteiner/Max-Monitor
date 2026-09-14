@@ -249,4 +249,95 @@ final class OAuthTokenCacheTests: XCTestCase {
         let refreshCount = await counter.count
         XCTAssertEqual(refreshCount, 2, "token within the refresh margin should be treated as needing renewal")
     }
+
+
+    // MARK: - Totes Refresh-Token (2.8)
+
+    /// Meldet der Server das Token als tot (`revokedGrant`), merkt sich der Cache
+    /// das: Der nächste Abruf mit demselben Token scheitert sofort, ohne die
+    /// Erneuerungs-Closure noch einmal aufzurufen.
+    func testRevokedGrantIsRememberedAndNotRetried() async throws {
+        let cache = OAuthTokenCache()
+        let counter = CallCounter()
+
+        do {
+            _ = try await cache.accessToken(refreshToken: "dead") { _ in
+                _ = await counter.increment()
+                throw OAuthTokenCacheError.revokedGrant
+            }
+            XCTFail("expected revokedGrant")
+        } catch let error as OAuthTokenCacheError {
+            XCTAssertEqual(error, .revokedGrant)
+        }
+
+        do {
+            _ = try await cache.accessToken(refreshToken: "dead") { _ in
+                _ = await counter.increment()
+                return self.makeTokens(access: "never")
+            }
+            XCTFail("expected revokedGrant on the second call as well")
+        } catch let error as OAuthTokenCacheError {
+            XCTAssertEqual(error, .revokedGrant)
+        }
+
+        let calls = await counter.count
+        XCTAssertEqual(calls, 1, "the dead token must not reach the network again")
+        let dead = await cache.isKnownDead(refreshToken: "dead")
+        XCTAssertTrue(dead)
+    }
+
+    /// Eine Neuanmeldung bringt ein anderes Token — das läuft normal durch.
+    func testDifferentTokenAfterRevocationRefreshesNormally() async throws {
+        let cache = OAuthTokenCache()
+        _ = try? await cache.accessToken(refreshToken: "dead") { _ in
+            throw OAuthTokenCacheError.revokedGrant
+        }
+
+        let token = try await cache.accessToken(refreshToken: "fresh") { _ in
+            self.makeTokens(access: "access-1", refresh: "fresh-2")
+        }
+        XCTAssertEqual(token, "access-1")
+        let stillDead = await cache.isKnownDead(refreshToken: "dead")
+        XCTAssertTrue(stillDead)
+    }
+
+    /// `clear()` (401 der Usage-Schnittstelle) löscht nur den Access-Token-Cache,
+    /// nicht das Wissen um das tote Refresh-Token — sonst ginge der Sturm nach
+    /// jedem 401 wieder los.
+    func testClearKeepsDeadTokenMemory() async throws {
+        let cache = OAuthTokenCache()
+        let counter = CallCounter()
+        _ = try? await cache.accessToken(refreshToken: "dead") { _ in
+            _ = await counter.increment()
+            throw OAuthTokenCacheError.revokedGrant
+        }
+        await cache.clear()
+        _ = try? await cache.accessToken(refreshToken: "dead") { _ in
+            _ = await counter.increment()
+            return self.makeTokens(access: "never")
+        }
+        let calls = await counter.count
+        XCTAssertEqual(calls, 1)
+    }
+
+    /// Ein gewöhnlicher Fehler (Netz, 500) sperrt nichts: der nächste Abruf
+    /// versucht es wieder.
+    func testTransientFailureDoesNotMarkDead() async throws {
+        struct Transient: Error {}
+        let cache = OAuthTokenCache()
+        let counter = CallCounter()
+        _ = try? await cache.accessToken(refreshToken: "rt") { _ in
+            _ = await counter.increment()
+            throw Transient()
+        }
+        let token = try await cache.accessToken(refreshToken: "rt") { _ in
+            _ = await counter.increment()
+            return self.makeTokens(access: "ok")
+        }
+        XCTAssertEqual(token, "ok")
+        let calls = await counter.count
+        XCTAssertEqual(calls, 2)
+        let dead = await cache.isKnownDead(refreshToken: "rt")
+        XCTAssertFalse(dead)
+    }
 }

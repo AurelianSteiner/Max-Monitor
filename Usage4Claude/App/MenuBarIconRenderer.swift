@@ -194,7 +194,7 @@ class MenuBarIconRenderer {
                     // färbt selbst ein — der Pegel bleibt trotzdem ablesbar.
                     NSColor.labelColor.setFill()
                 } else {
-                    DashboardPalette.nsFill(utilization).setFill()
+                    DashboardPalette.nsFill(utilization, provider: state.provider).setFill()
                 }
                 NSBezierPath(rect: water).fill()
                 NSGraphicsContext.restoreGraphicsState()

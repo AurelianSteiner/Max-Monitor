@@ -1,6 +1,6 @@
 # Team relay
 
-The little server behind the Team view of [Claude Max Monitor](../README.md). Every app in a
+The little server behind the Team view of [Max Monitor](../README.md). Every app in a
 team posts its own usage percentages here; everyone in the team gets one card per person and
 can see who still has headroom. That is the whole job.
 
@@ -156,7 +156,7 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/teams/DEMO1234/m
 
 ## Point the app at it
 
-In Claude Max Monitor: **Settings → Accounts → Team → Connect to server**. Unfold *Change
+In Max Monitor: **Settings → Accounts → Team → Connect to server**. Unfold *Change
 server*, put your relay's address in the URL field, then enter the team ID and the token.
 
 The URL must be `https`. The only exception is a relay on your own Mac — `http://localhost`,

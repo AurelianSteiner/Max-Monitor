@@ -36,7 +36,7 @@ NOTES="${2:-}"
 [[ -n "$VERSION" ]] || fail "Version fehlt. Beispiel: ./scripts/release.sh 1.1"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || fail "Version muss dem Muster X.Y oder X.Y.Z folgen"
 
-PRODUCT_NAME="${U4C_PRODUCT_NAME:-Claude Max Monitor}"
+PRODUCT_NAME="${U4C_PRODUCT_NAME:-Max Monitor}"
 BUNDLE_ID="${U4C_BUNDLE_ID:-xyz.fi5h.Usage4Claude}"
 REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
 APPCAST_URL="https://raw.githubusercontent.com/$REPO/main/appcast.xml"

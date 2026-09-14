@@ -38,7 +38,7 @@
 //  Nummer und Vorfall — nie davon abhängig, wo der Läufer gerade steht, sonst
 //  spränge seine Position in dem Moment, in dem der Grabstein auftaucht — und
 //  (c) kurz genug, dass die vergrößerten Startabstände der Parade (siehe
-//  `MascotParadeCanvas.minInterval`) sie auffangen.
+//  `MascotParadeTiming.minInterval`) sie auffangen.
 //
 //  Copyright © 2025 f-is-h. All rights reserved.
 //
@@ -148,6 +148,14 @@ enum MascotIncident {
     /// Der Matsch: Claudes Korallenton, aber deutlich sattere Tomate
     static let splat = Color(red: 0.878, green: 0.478, blue: 0.196)
     static let splatDark = Color(red: 0.718, green: 0.353, blue: 0.133)
+    /// Matsch eines Codex-Pets: dessen Blau, satter
+    static let codexSplat = Color(red: 0.239, green: 0.478, blue: 0.859)
+    static let codexSplatDark = Color(red: 0.157, green: 0.325, blue: 0.639)
+
+    /// Matschfarben nach Art des Opfers
+    static func splatColors(for species: MascotSpecies) -> (light: Color, dark: Color) {
+        species == .codex ? (codexSplat, codexSplatDark) : (splat, splatDark)
+    }
     /// Mittleres Grau — trägt in hellem wie dunklem Erscheinungsbild
     static let stone = Color(red: 0.612, green: 0.620, blue: 0.659)
     static let stoneDark = Color(red: 0.427, green: 0.435, blue: 0.478)
@@ -207,8 +215,8 @@ enum MascotIncident {
     }
 
     /// Wann Läufer `index` die Mitte erreicht — der Nullpunkt des Ablaufs.
-    static func stopTime(victim index: Int, width: CGFloat) -> TimeInterval {
-        MascotParadeCanvas.spawnTime(index)
+    static func stopTime(victim index: Int, width: CGFloat, timing: MascotParadeTiming) -> TimeInterval {
+        timing.spawnTime(index)
             + Double(victimX(width: width) + MascotParadeCanvas.overshoot) / MascotParadeCanvas.baseSpeed
     }
 
@@ -216,18 +224,20 @@ enum MascotIncident {
     ///
     /// Gesucht wird rückwärts vom jüngsten Läufer aus: weit genug, dass auch ein
     /// Grabstein gefunden wird, dessen Opfer längst aus dem Bild wäre.
-    static func active(at time: TimeInterval, width: CGFloat) -> MascotIncidentState? {
+    /// `timing` ist die Taktung der Parade — bei wenigen Konten weiter
+    /// gestreckt, dann liegen weniger Nummern in derselben Zeitspanne.
+    static func active(at time: TimeInterval, width: CGFloat, timing: MascotParadeTiming) -> MascotIncidentState? {
         guard width >= minimumWidth else { return nil }
 
         let x = victimX(width: width)
         let travel = Double(x + MascotParadeCanvas.overshoot) / MascotParadeCanvas.baseSpeed
-        let lookback = Int(((lifetime + travel) / MascotParadeCanvas.minInterval).rounded(.up)) + 6
-        let newest = Int((time / MascotParadeCanvas.avgInterval).rounded(.down)) + 1
+        let lookback = Int(((lifetime + travel) / timing.minInterval).rounded(.up)) + 6
+        let newest = Int((time / timing.interval).rounded(.down)) + 1
 
         var index = newest
         while index >= newest - lookback {
             if isVictim(index) {
-                let start = MascotParadeCanvas.spawnTime(index) + travel
+                let start = timing.spawnTime(index) + travel
                 if time >= start, time < start + lifetime {
                     return MascotIncidentState(victimIndex: index, start: start,
                                                x: x, elapsed: time - start)
@@ -300,8 +310,8 @@ enum MascotIncident {
     /// Pausenrechnung herausbekommt — hier direkt, damit die Geschosse an der
     /// richtigen Stelle losfliegen, ohne dass die Zeichenschleife etwas
     /// zwischenspeichern muss.
-    static func frozenX(of index: Int, incident: MascotIncidentState) -> CGFloat {
-        CGFloat((incident.start - MascotParadeCanvas.spawnTime(index)) * MascotParadeCanvas.baseSpeed)
+    static func frozenX(of index: Int, incident: MascotIncidentState, timing: MascotParadeTiming) -> CGFloat {
+        CGFloat((incident.start - timing.spawnTime(index)) * MascotParadeCanvas.baseSpeed)
             - MascotParadeCanvas.overshoot
     }
 
@@ -310,12 +320,14 @@ enum MascotIncident {
     /// Matsch und Grabstein. Wird **vor** den Läufern gezeichnet, damit die
     /// Trauernden davor vorbeigehen und der Stein nicht wie ein Hindernis
     /// mitten im Weg klebt.
-    static func drawGround(in ctx: GraphicsContext, incident: MascotIncidentState) {
+    static func drawGround(in ctx: GraphicsContext, incident: MascotIncidentState,
+                           species: MascotSpecies = .claudie) {
         let t = incident.elapsed
         // Der Vorfall bleibt danach noch bekannt (siehe `trailingGrace`),
         // sichtbar ist ab hier aber nichts mehr.
         guard t < total else { return }
         let cell = MascotParadeCanvas.cell
+        let (splat, splatDark) = splatColors(for: species)
 
         var ground = ctx
         ground.translateBy(x: incident.x, y: 13)
@@ -389,7 +401,8 @@ enum MascotIncident {
     /// die Parade diese Nummer ganz.
     @discardableResult
     static func drawVictim(in ctx: GraphicsContext, incident: MascotIncidentState,
-                           time: TimeInterval, seed: Int) -> Bool {
+                           time: TimeInterval, seed: Int,
+                           species: MascotSpecies = .claudie) -> Bool {
         let t = incident.elapsed
         guard t < fallEnd + 0.2 else { return false }
 
@@ -407,7 +420,7 @@ enum MascotIncident {
         MascotParadeCanvas.drawWalker(
             in: ctx, x: incident.x, step: false, alpha: alpha,
             variant: .normal, time: time, seed: seed,
-            pose: .standing, collapse: collapse
+            species: species, pose: .standing, collapse: collapse
         )
         return true
     }
@@ -416,7 +429,8 @@ enum MascotIncident {
 
     /// Mündungsfeuer, Geschosse und der kleine Einschlag. Kommt **nach** den
     /// Läufern, damit nichts davorliegt.
-    static func drawShots(in ctx: GraphicsContext, incident: MascotIncidentState) {
+    static func drawShots(in ctx: GraphicsContext, incident: MascotIncidentState,
+                          timing: MascotParadeTiming, species: MascotSpecies = .claudie) {
         let t = incident.elapsed
         guard t >= shotAt, t < hitAt + 0.35 else { return }
 
@@ -427,7 +441,8 @@ enum MascotIncident {
         let target = incident.x + 6.5 * cell
         // Der Colt des Sheriffs ragt einen guten Zentimeter über den alten
         // bloßen Arm hinaus — das Mündungsfeuer sitzt an der Laufspitze.
-        let muzzle = frozenX(of: incident.victimIndex - 1, incident: incident) - 2.3 * cell
+        let muzzle = frozenX(of: incident.victimIndex - 1, incident: incident, timing: timing) - 2.3 * cell
+        let splat = splatColors(for: species).light
 
         func dot(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, _ color: Color) {
             shots.fill(Path(CGRect(x: x, y: y, width: w, height: h)), with: .color(color))

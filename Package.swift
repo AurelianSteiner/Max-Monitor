@@ -36,7 +36,9 @@ let package = Package(
                 "Helpers/NotificationNames.swift",
                 "Models/TeamReport.swift",
                 "Models/TeamHistorySample.swift",
-                "Helpers/PrivilegedPower.swift"
+                "Helpers/PrivilegedPower.swift",
+                "Helpers/OAuthGrantFailure.swift",
+                "Views/Dashboard/MascotParadeTiming.swift"
             ]
         ),
         .testTarget(

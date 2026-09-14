@@ -32,6 +32,8 @@ struct MenuBarDotState: Equatable {
     let weeklyUtilization: Double?
     /// Roter Ring außen: das 5-Stunden-Fenster (bzw. Codex primary) ist aufgebraucht
     let sessionExhausted: Bool
+    /// Anbieter des Kontos — Codex-Pegel steigen durch die blaue Farbreihe
+    var provider: ProviderType = .claude
 
     /// Rastert auf ganze 2-%-Stufen — abrundend, damit die Schwellen der
     /// `DashboardPalette` (50/75/90) exakt beim echten Überschreiten kippen
@@ -43,7 +45,8 @@ struct MenuBarDotState: Equatable {
     /// Kürzel für den Icon-Cache-Key in `MenuBarUI` („42", „100!", „n", …)
     var cacheToken: String {
         let level = weeklyUtilization.map { String(Int($0)) } ?? "n"
-        return sessionExhausted ? "\(level)!" : level
+        let token = sessionExhausted ? "\(level)!" : level
+        return provider == .codex ? "\(token)x" : token
     }
 }
 
@@ -133,7 +136,8 @@ final class MenuBarAccountDots {
             ? ordered.map {
                 MenuBarDotState(
                     weeklyUtilization: MenuBarDotState.quantized($0.weeklyPeakUtilization),
-                    sessionExhausted: $0.sessionExhausted
+                    sessionExhausted: $0.sessionExhausted,
+                    provider: $0.provider
                 )
             }
             : []
