@@ -3,6 +3,25 @@
     <channel>
         <title>Max Monitor</title>
         <item>
+            <title>2.8</title>
+            <pubDate>Mon, 14 Sep 2026 11:27:34 +0000</pubDate>
+            <sparkle:version>2.8</sparkle:version>
+            <sparkle:shortVersionString>2.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[Die App heißt jetzt Max Monitor – sie zeigt längst nicht mehr nur Claude.
+
+• Claude-Konten lassen sich wieder verbinden: Ein abgelaufenes Refresh-Token wird als „Anmeldung abgelaufen“ erkannt statt als HTTP-Fehler, die App fragt damit nicht mehr jede Minute erneut an (das hatte den Anmelde-Endpunkt für dieses Netz gedrosselt), und die Karte bietet direkt „Neu anmelden“. Eine Neuanmeldung behält Alias, Art und Kündigungsdatum des Kontos.
+• Codex in Blau: Codex-Karten, Wasserstände und Menüleisten-Punkte laufen durch eine eigene Farbreihe von Himmelblau bis Indigo.
+• Gekündigt bis: In den Konten-Einstellungen lässt sich je Konto der letzte Tag des Abos eintragen; die Karte zeigt ihn als Plakette samt Restzeit.
+• Die Parade richtet sich nach den Konten: ein Claudie je Claude-Konto, ein blaues Codex-Pet je Codex-Konto, nie mehr gleichzeitig als Konten eingetragen sind.
+• Der Sortier-/Spalten-Regler steht direkt über den Karten; der Sheriff trägt Stern und Colt, und ein Läufer fährt im roten Auto.]]></description>
+            <enclosure
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.8/Max-Monitor-2.8.dmg"
+                sparkle:edSignature="T37uF+jd6dorzqbSMwjH2T0DAiqR+Zk3m2VwxX5gURmpeKfo9MtZYdFtInxZCzfMZ7EdkdEsoiJ2ytnlVlOeBw=="
+                length="5394323"
+                type="application/octet-stream"/>
+        </item>
+        <item>
             <title>2.7.1</title>
             <pubDate>Mon, 31 Aug 2026 02:31:10 +0000</pubDate>
             <sparkle:version>2.7.1</sparkle:version>
