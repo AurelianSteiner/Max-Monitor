@@ -11,6 +11,17 @@
 
 import Foundation
 
+/// Fehler des Caches selbst — unabhängig vom Anbieter, damit die Datei ohne
+/// `UsageError` auskommt (SwiftPM-Testziel).
+nonisolated enum OAuthTokenCacheError: Error, Equatable {
+    /// Das Refresh-Token ist tot (verbraucht oder widerrufen). Der Cache merkt
+    /// sich das und lehnt weitere Erneuerungen mit **demselben** Token sofort
+    /// ab, ohne das Netz zu belasten — bis eine Neuanmeldung ein anderes Token
+    /// bringt. Die Erneuerungs-Closure wirft diesen Fehler, wenn der Server das
+    /// Token abgelehnt hat (siehe `OAuthGrantFailure`).
+    case revokedGrant
+}
+
 /// 单个 Provider 的 OAuth access_token 缓存 + 单飞刷新
 actor OAuthTokenCache {
     /// 一次刷新换到的结果（不同 Provider 的响应结构不同，调用方在 refresh 闭包里统一成这个形状）
@@ -28,6 +39,13 @@ actor OAuthTokenCache {
     private var refreshTask: Task<Tokens, Error>?
     private var refreshTaskToken: String?
 
+    /// Refresh-Token, das der Server als tot gemeldet hat. Solange das Konto
+    /// genau dieses Token trägt, geht keine weitere Erneuerung mehr raus:
+    /// Vorher schlug jeder Abruf jede Minute je Konto am Token-Endpunkt auf
+    /// (HTTP 400, invalid_grant) — Tausende Fehlversuche am Tag, bis der
+    /// Endpunkt das ganze Netz drosselte und auch Neuanmeldungen scheiterten.
+    private var deadRefreshToken: String?
+
     /// 获取有效的 access_token：命中缓存直接返回；否则发起刷新，
     /// 同一 refresh_token 的并发调用自动复用同一次网络请求的结果。
     /// - Parameters:
@@ -39,6 +57,12 @@ actor OAuthTokenCache {
         margin: TimeInterval = 5 * 60,
         refresh: @escaping (String) async throws -> Tokens
     ) async throws -> String {
+        // Totes Token: sofort ablehnen, kein Netz. Ein anderes Token (nach
+        // Neuanmeldung) läuft normal durch.
+        if let dead = deadRefreshToken, dead == refreshToken {
+            throw OAuthTokenCacheError.revokedGrant
+        }
+
         if let cached = cachedAccessToken, !cached.isEmpty,
            let expiry = cachedExpiry,
            cachedForRefreshToken == refreshToken,
@@ -65,11 +89,27 @@ actor OAuthTokenCache {
             }
         }
 
-        let tokens = try await task.value
+        let tokens: Tokens
+        do {
+            tokens = try await task.value
+        } catch OAuthTokenCacheError.revokedGrant {
+            // Der Server hat genau dieses Token abgelehnt — merken, damit die
+            // nächsten Abrufe nicht wieder anklopfen.
+            deadRefreshToken = refreshToken
+            cachedAccessToken = nil
+            cachedExpiry = nil
+            cachedForRefreshToken = nil
+            throw OAuthTokenCacheError.revokedGrant
+        }
         cachedAccessToken = tokens.accessToken
         cachedExpiry = tokens.expiresAt
         cachedForRefreshToken = tokens.refreshToken
         return tokens.accessToken
+    }
+
+    /// Ist dieses Refresh-Token als tot bekannt? (Nur für Tests und Diagnose.)
+    func isKnownDead(refreshToken: String) -> Bool {
+        deadRefreshToken == refreshToken
     }
 
     /// 返回尚未过期的缓存 token（不触发刷新）
@@ -84,6 +124,10 @@ actor OAuthTokenCache {
     }
 
     /// 清除缓存（账户切换或收到 401 时调用，强制下次重新走网络刷新）
+    ///
+    /// Das Wissen um ein totes Refresh-Token bleibt dabei erhalten: Ein 401 der
+    /// Usage-Schnittstelle sagt nichts über das Refresh-Token — die Sperre
+    /// löst sich nur durch ein anderes Token (Neuanmeldung).
     func clear() {
         cachedAccessToken = nil
         cachedExpiry = nil

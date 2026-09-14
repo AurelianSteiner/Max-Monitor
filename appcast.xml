@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
     <channel>
-        <title>Claude Max Monitor</title>
+        <title>Max Monitor</title>
         <item>
             <title>2.7.1</title>
             <pubDate>Mon, 31 Aug 2026 02:31:10 +0000</pubDate>
@@ -14,7 +14,7 @@ Der Team-Server liefert Meldungen und Verläufe jetzt an jede Rolle — wer sein
 
 Vor dem Release lief ein Security-Review über alle Änderungen seit 2.6 (Server-Endpunkte, Verlaufs-Speicher, Team-Ansichten) — ohne Befund.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v2.7.1/Claude-Max-Monitor-2.7.1.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.7.1/Claude-Max-Monitor-2.7.1.dmg"
                 sparkle:edSignature="ZNYIHTw+mzKsvDpJV7IMso7m4C8yNDGKvAze28CVaawQvMJHTTBzZcY/CbLaEvYKbcZcgIjMlHTLOtg3cRb5Dw=="
                 length="5246596"
                 type="application/octet-stream"/>
@@ -33,7 +33,7 @@ Vor dem Release lief ein Security-Review über alle Änderungen seit 2.6 (Server
 • Ein Sheriff patrouilliert hüpfend durch die Claudie-Parade — und ungefähr jeder fünfte zieht. Der Grabstein steht nur noch eine knappe Minute.
 • Entschlackt: ein Einstellungen-Eintrag statt zwei; Benachrichtigungen, Zeitformat-Auswahl, Status-Links und das Willkommensfenster sind weg. Unterm Strich über 6 000 Zeilen weniger Code.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v2.7/Claude-Max-Monitor-2.7.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.7/Claude-Max-Monitor-2.7.dmg"
                 sparkle:edSignature="uZ81iPaAWUGniWYsZ0sWWbslQKVjdih9MyfN86RUyWG9dGaw76Oj+lLfIoKMPiH3HpJ8rLZsX/C9op4amNYdDw=="
                 length="5281503"
                 type="application/octet-stream"/>
@@ -52,7 +52,7 @@ Die Claudies laufen jetzt über die volle Breite statt nur am rechten Rand, und 
 
 Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v2.6/Claude-Max-Monitor-2.6.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.6/Claude-Max-Monitor-2.6.dmg"
                 sparkle:edSignature="lIhnacbELPezfYPhW0SOhPBQT3ortQ9XzEaLDXW5PmwgDg1pcrIjrZA2Wo5erR+iEYh6IrMY8ud4k2uHY5VaBQ=="
                 length="5759707"
                 type="application/octet-stream"/>
@@ -65,7 +65,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Der Abgleich zwischen Schalter und System ist jetzt Ende-zu-Ende nachgewiesen: Ein Wächter liest alle fünfzehn Sekunden, was pmset meldet, und zieht die Anzeige nach — in beide Richtungen, egal ob im Terminal oder in der App geschaltet wurde.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v2.5/Claude-Max-Monitor-2.5.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.5/Claude-Max-Monitor-2.5.dmg"
                 sparkle:edSignature="rz6W5fkI1yigYtMx+khaT+SDrhkwF1Abmx6A5XB2+ctKzkznBOtJ62Xqd+wqg6wbBMfxjQoPM26ttdTZxx7DBA=="
                 length="5736688"
                 type="application/octet-stream"/>
@@ -78,7 +78,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Schalter und System stimmen jetzt immer überein: Ein Wächter sieht alle fünfzehn Sekunden nach, was pmset meldet, und zieht die Anzeige nach — egal ob im Terminal oder in der App geschaltet wurde. In 2.3 lief dieser Abgleich nur beim Start, weil der Takt an einer Run-Loop hing, die es im Hintergrund nicht gab.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v2.4/Claude-Max-Monitor-2.4.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.4/Claude-Max-Monitor-2.4.dmg"
                 sparkle:edSignature="sqfih6GGTirydAPsJ+ybRm1XJ3bc6bS2h/XKSFycCodvlBhJSY02uu6r54mAHQNfl3saX7EJWmqRGvAvhLdoAg=="
                 length="5736633"
                 type="application/octet-stream"/>
@@ -91,7 +91,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Claude Always On zeigt jetzt, was wirklich eingestellt ist: Wer 'sudo pmset -a disablesleep 1' im Terminal setzt, sieht den Schalter umspringen — beim Start und immer, wenn die App in den Vordergrund kommt. Übernommen wird nur gelesen: Die App schreibt die Einstellung ausschließlich, wenn der Schalter angeklickt wird, und nimmt beim Beenden nur zurück, was sie selbst eingeschaltet hat.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v2.3/Claude-Max-Monitor-2.3.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.3/Claude-Max-Monitor-2.3.dmg"
                 sparkle:edSignature="kkdN6bG0eE12ecwdYpQolFKQlZeOZGjUHCGtNsDfuvRXLTkuJmL4ygFpXW1TFdDfLU2BCAzZVX00K7//tex5BA=="
                 length="5730388"
                 type="application/octet-stream"/>
@@ -104,7 +104,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Die Claudies sind doppelt so groß und haben viel mehr Auslauf: Die Parade ist aus dem Kopf in die Statuszeile gewandert — links die Punkte je Account, rechts der Laufsteg. Die Sonderformen kommen jetzt zehnmal so oft vorbei, und eine ist neu: Einer stapft den ganzen Weg rückwärts. Der Raucher zieht eine richtige Rauchfahne hinter sich her.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v2.2/Claude-Max-Monitor-2.2.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.2/Claude-Max-Monitor-2.2.dmg"
                 sparkle:edSignature="RUpFXwdbCeMwcBhVZRMu9aqavZyKUPlih2WZIK7EwLV4HS+1s0vkYL38QrcFC1yGqdrLIJwI8JFqKKZnL+BEBg=="
                 length="5728287"
                 type="application/octet-stream"/>
@@ -117,7 +117,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Die Claudies halten jetzt Abstand: Ihre Startzeiten streuen, die Lücken sind unterschiedlich groß, aber nie kleiner als ein Wesen breit ist — niemand läuft mehr auf den Vordermann auf. Und jeder zehnte ist besonders: Partyhut, Zylinder, ein Raucher mit einem Hauch Rauch, oder ein Sprinter, der sich in die Kurve legt und alle überholt.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v2.1/Claude-Max-Monitor-2.1.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.1/Claude-Max-Monitor-2.1.dmg"
                 sparkle:edSignature="CXuNO7JzAwGb6DYu32I1wyOWdTVozgx/01L77RUl2f5f0bYMDRQCHtKbBgeVHX8R2wL6CmEV+eUYQNX5+zw6Bw=="
                 length="5726348"
                 type="application/octet-stream"/>
@@ -130,7 +130,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Claude Always On: Der Wach-Schalter heißt jetzt so, wie er wirkt. Beim ersten Einschalten fragt macOS einmal nach dem Passwort — danach hält er den Mac auch zugeklappt wach, laufende Claude-Sessions arbeiten einfach weiter. Solange er aktiv ist, laufen kleine Pixel-Claudies durch den Kopf der Übersicht. Außerdem: feste Signatur — der Schlüsselbund fragt nach diesem Update ein letztes Mal und danach nie wieder.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v2.0/Claude-Max-Monitor-2.0.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.0/Claude-Max-Monitor-2.0.dmg"
                 sparkle:edSignature="JEat0zD+eOFrYBF7irPCRhcdnYMLwWuErsk7YOun3tbywwmFI0WBdMGk0ZRup5uoVKI6t+0rJxJTJ86avt9+Bw=="
                 length="5716688"
                 type="application/octet-stream"/>
@@ -143,7 +143,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Das Team läuft jetzt ausschließlich über den Server — der Weg über den geteilten Ordner ist entfallen, eine vorhandene Ordner-Verbindung wird beim Start still entfernt. Die Team-Karte besteht nur noch aus Verbinden, Rolle und Mitglieder-Verwaltung. Außerdem kennen die Wachhalte-Schalter jetzt die Systemeinstellungen: Steht der Mac systemweit auf 'nie schlafen', sagt Always On das offen, statt Wirkung vorzutäuschen.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v1.9/Claude-Max-Monitor-1.9.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v1.9/Claude-Max-Monitor-1.9.dmg"
                 sparkle:edSignature="aDV6Oa/3sun9iFgZOnpsAyQQ6XP7jYXtzzrWJtdWpnAJx3npjOyqSTIBKyoMFDVr578yeyx+Lo/7sUGwAhmYDA=="
                 length="5666212"
                 type="application/octet-stream"/>
@@ -156,7 +156,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Team-Übersicht: alle Claude-Konten des Teams auf einen Blick. Der Inhaber legt Mitglieder mit Namen an und verschickt deren Token samt fertigem Einladungstext; Admins sehen alle Meldungen, Mitglieder nur die eigene. Verbunden meldet die App die eigene Auslastung alle fünfzehn Minuten von selbst — übertragen werden nur Prozentwerte, niemals Zugangsdaten. Ohne Server funktioniert alternativ ein geteilter Ordner. Dazu: Die Wachhalte-Schalter heißen jetzt Always On und Bildschirm an, und die pmset-Systembefehle stehen kopierbereit in den Einstellungen.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v1.8/Claude-Max-Monitor-1.8.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v1.8/Claude-Max-Monitor-1.8.dmg"
                 sparkle:edSignature="x9jkcIoex8f/puKk+IEtBhNP2FMiuBglsHS2ze7yGEC06XUjGS630cArss2cpXAM6PSbdDotY1e99lfdn1ngDQ=="
                 length="5816889"
                 type="application/octet-stream"/>
@@ -169,7 +169,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Die Karte kennt nur noch zwei Sperrzustände: Eine gesperrte Woche schließt das Sitzungsfenster ohnehin ein, deshalb entfällt 'Alles gesperrt'. Neben den beiden Symbolen zum Wachhalten steht jetzt ein kurzes Wort, sodass auch ohne Mauszeiger klar ist, was sie bewirken. Und Accounts lassen sich als Firma oder privat markieren und zeigen ein passendes Symbol neben dem Namen.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v1.7/Claude-Max-Monitor-1.7.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v1.7/Claude-Max-Monitor-1.7.dmg"
                 sparkle:edSignature="d2p6Y5571ujUAc2lr8y8nHSyNaiWXxpSPyPa/FM7qz12F2gaca2tpWH6C8ToszvaEBFeq3z6AmthF3+ZSy0GDA=="
                 length="5173874"
                 type="application/octet-stream"/>
@@ -182,7 +182,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Die Meldung 'neue Version verfügbar' verschwindet endlich — die App trug intern dauerhaft die Nummer 1.0, weshalb dieselbe Fassung endlos als Update angeboten wurde. Die Einstellungen enthalten nur noch, was gebraucht wird: die Menüleiste zeigt fest einen Punkt je Account, Symbol- und Prozentauswahl, Limit-Kästchen, Verbindungstest, Session-Key-Anleitung und Kontoauswahl sind entfallen. Die Karten benennen jetzt, was gesperrt ist — Sitzung, Woche oder alles — und zählen zum passenden Reset herunter. Die beiden Wachhalte-Symbole in der Übersicht erklären in der Kurzinfo, was sie bewirken.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v1.6/Claude-Max-Monitor-1.6.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v1.6/Claude-Max-Monitor-1.6.dmg"
                 sparkle:edSignature="/s/4cN822DUXOPMDwgO+iyJCFPJ9jQAgX7IYk79BTzOwcPcgU/aWHMODedlEzct6i78oXE74Vayy0p/s4KQyDg=="
                 length="5118300"
                 type="application/octet-stream"/>
@@ -195,7 +195,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Die Schalter zum Wachhalten sitzen jetzt als Symbole oben in der Übersicht — ein Klick, kein Menü. Das Fenster ordnet die Karten nach seiner Breite: schmal gezogen stapeln sie sich in einer Spalte, breit gezogen verteilen sie sich. Und die Punkte in der Menüleiste stehen in derselben Reihenfolge wie die Karten.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v1.5/Claude-Max-Monitor-1.5.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v1.5/Claude-Max-Monitor-1.5.dmg"
                 sparkle:edSignature="fWupNdEDda1NNOYH75f5zLqpoYrdjs9qP0KUbpIFmh8kM1bbOdvLn4VQ7IWUCvkq5DyWz7tFAspyCDzRcO/qAQ=="
                 length="5343558"
                 type="application/octet-stream"/>
@@ -208,7 +208,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Die Punkte oben zeigen jetzt beide Fenster: Die Füllung folgt dem Wochenlimit (grün bis fünf Prozent, blau in Nutzung, rot ab neunzig), ein roter Ring markiert ein aufgebrauchtes Fünf-Stunden-Fenster. Neu ist eine Menüleisten-Anzeige aus einem Punkt je Konto — schmal genug für die Notch. Die Schalter zum Wachhalten stehen jetzt auch im Menü der Übersicht, und Über-Fenster, Hilfe und Diagnosebericht verweisen endlich auf das richtige Projekt.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v1.4/Claude-Max-Monitor-1.4.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v1.4/Claude-Max-Monitor-1.4.dmg"
                 sparkle:edSignature="bgH6q1JJLzLly/6DvyDqrgNwLhTZOy9qHfvJEAo4VuIuEIGD8vCmw4PpGXQP7I8Q1h1ZrdIoT1OYYNwOVu2bBQ=="
                 length="5322434"
                 type="application/octet-stream"/>
@@ -221,7 +221,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Fast erschöpfte Konten werden nicht mehr ausgegraut — stattdessen zeigt ein Countdown, wann das Limit wieder frei ist. Der Kartenkopf trennt Stunden- und Wochenlimit, beide mit eigener Restzeit. Modell-Wochenlimits wie Fable erscheinen als Prozentbalken. Die Ampelpunkte oben sind grün bis fünf Prozent, blau in Nutzung, rot ab hundert. Neu: zwei Schalter im Menü halten Bildschirm oder Mac wach, das Fenster lässt sich in der Größe ziehen und merkt sie sich, die Version steht unten in der Übersicht, und ein Klick auf die App öffnet die Übersicht.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v1.3/Claude-Max-Monitor-1.3.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v1.3/Claude-Max-Monitor-1.3.dmg"
                 sparkle:edSignature="eQaare6tdO2ifLpWq8QFGQreQTeDiaE1FEMIf9oFUQBTU4pPB6OL0lI01hqALXiKFL+5oEXJtF1mqeNOOD8SCA=="
                 length="5257878"
                 type="application/octet-stream"/>
@@ -234,7 +234,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Nur noch die Gesamtübersicht: ein Klick zeigt alle Konten. Neu ist die Ampelzeile darüber — ein Punkt je Konto, eingefärbt nach dem Wochenlimit. Konten sortieren sich nach freier Kapazität, fast erschöpfte werden gedämpft. Das Fable-Wochenlimit ist jetzt ein eigenständiges Limit mit eigener Farbe und Form. Dazu: größere Restzeiten, deutlich seltener "Zu viele Anfragen", und beim Hinzufügen eines Kontos wird eine frische Anmeldung erzwungen.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v1.2/Claude-Max-Monitor-1.2.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v1.2/Claude-Max-Monitor-1.2.dmg"
                 sparkle:edSignature="K+FEPYOdSYn5Qap9kLwzls3xFq8m07dyoNyNa2nhmZdgOuOw+N2FSE3hIGwrku9B4lV7mxzg6h8gBJCz92unDA=="
                 length="5230683"
                 type="application/octet-stream"/>
@@ -247,12 +247,12 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Neues App-Symbol: der Wasserstand aus der Übersicht, statt des nachgezeichneten Claude-Sternchens.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v1.1/Claude-Max-Monitor-1.1.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v1.1/Claude-Max-Monitor-1.1.dmg"
                 sparkle:edSignature="c3aYTP1vLlYuHYRVCCNKbN9lkIIpfG4PF/cmmu2LPr6x5161Tn7r8bPAES+zcDcGaZtnoBjq05ePpH4mKwotBA=="
                 length="5613260"
                 type="application/octet-stream"/>
         </item>
-        <link>https://raw.githubusercontent.com/AurelianSteiner/Claude-Max-Monitor/main/appcast.xml</link>
+        <link>https://raw.githubusercontent.com/AurelianSteiner/Max-Monitor/main/appcast.xml</link>
         <description>Updates</description>
         <language>de</language>
         <item>
@@ -263,7 +263,7 @@ Und sehr selten passiert auf dem Laufsteg etwas, das hier nicht verraten wird.]]
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <description><![CDATA[Erste Veröffentlichung. Alle Claude-Max-Konten gleichzeitig in der Menüleiste: Wochenlimit als Leitzahl, Sitzungsfenster als Wasserstand, Farbe zeigt wie eng es wird.]]></description>
             <enclosure
-                url="https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/download/v1.0/Claude-Max-Monitor-1.0.dmg"
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v1.0/Claude-Max-Monitor-1.0.dmg"
                 sparkle:edSignature="Cg8/lbcNNcmIdvMUNlhoZIbPA/FGMTFpARN+PS2GsWtd6kqOlAjplAxkTgELz1Sb9cFX0wNCgg/u5dJ2gqAoAA=="
                 length="5899070"
                 type="application/octet-stream"/>

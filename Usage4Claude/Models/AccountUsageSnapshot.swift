@@ -21,6 +21,10 @@ struct AccountUsageSnapshot: Identifiable {
     var codexUsageData: CodexUsageData?
     /// 本账户最近一次拉取的错误描述，nil 表示无错误
     var errorMessage: String?
+    /// Der letzte Fehler war eine abgelaufene oder widerrufene Anmeldung: Ein
+    /// erneuter Abruf hilft nicht, nur eine Neuanmeldung. Die Karte zeigt dann
+    /// „Neu anmelden" statt „Erneut versuchen".
+    var needsReauth: Bool = false
     /// 是否正在拉取
     var isLoading: Bool = false
     /// 最近一次成功拉取的时间

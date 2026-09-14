@@ -169,9 +169,22 @@ enum ClaudeOAuthService {
             }
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 let bodyText = String(data: data, encoding: .utf8) ?? ""
-                Logger.api.error("Claude OAuth token HTTP \(http.statusCode): \(bodyText.prefix(200))")
-                completion(.failure(http.statusCode == 401 ? UsageError.unauthorized
-                                    : UsageError.httpError(statusCode: http.statusCode)))
+                // Der Fehlertext enthält keine Geheimnisse (nur error/error_description)
+                // und ist die einzige Spur, warum eine Anmeldung scheitert — deshalb
+                // ungeschwärzt ins Log.
+                Logger.api.error("Claude OAuth token HTTP \(http.statusCode): \(bodyText.prefix(200), privacy: .public)")
+                // Ein totes Refresh-Token (400 + invalid_grant, siehe OAuthGrantFailure)
+                // ist kein HTTP-Fehler, sondern eine abgelaufene Anmeldung: Nur eine
+                // Neuanmeldung hilft, und die Karte muss genau das sagen.
+                let failure: UsageError
+                if OAuthGrantFailure.isDeadGrant(statusCode: http.statusCode, body: bodyText) {
+                    failure = .sessionExpired
+                } else if http.statusCode == 429 {
+                    failure = .rateLimited
+                } else {
+                    failure = .httpError(statusCode: http.statusCode)
+                }
+                completion(.failure(failure))
                 return
             }
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

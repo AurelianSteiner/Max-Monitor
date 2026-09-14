@@ -16,7 +16,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
-    <string>Claude Max Monitor</string>
+    <string>Max Monitor</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIconFile</key>
@@ -57,7 +57,7 @@
         updates whose signature doesn't match the embedded SUPublicEDKey.
     -->
     <key>SUFeedURL</key>
-    <string>https://raw.githubusercontent.com/AurelianSteiner/Claude-Max-Monitor/main/appcast.xml</string>
+    <string>https://raw.githubusercontent.com/AurelianSteiner/Max-Monitor/main/appcast.xml</string>
     <key>SUPublicEDKey</key>
     <string>cT/cR7yslmm2uJap/vc9uDLzmYHJgso3dkW16WuXHsU=</string>
     <key>SUEnableAutomaticChecks</key>

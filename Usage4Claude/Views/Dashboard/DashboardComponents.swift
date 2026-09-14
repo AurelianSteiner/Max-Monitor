@@ -12,11 +12,18 @@ import AppKit
 
 // MARK: - Farbskala
 
-/// Vierstufige Auslastungsskala: Blau → Gelb → Orange → Rot.
+/// Vierstufige Auslastungsskala — je Anbieter eine eigene Farbreihe.
 ///
-/// Bewusst nicht die Ampelskala der Originalapp — Blau als Ruhezustand nimmt sich
-/// zurück, statt ein entspanntes Konto grün anzustrahlen. Die dritte Stufe ist
-/// Claudes Clay-Orange, dadurch bleibt die Skala in der Hausfarbe.
+/// **Claude:** Blau → Gelb → Orange → Rot. Bewusst nicht die Ampelskala der
+/// Originalapp — Blau als Ruhezustand nimmt sich zurück, statt ein entspanntes
+/// Konto grün anzustrahlen. Die dritte Stufe ist Claudes Clay-Orange, dadurch
+/// bleibt die Skala in der Hausfarbe.
+///
+/// **Codex:** alles in Blaurichtung — Himmelblau → Azur → Königsblau → Indigo.
+/// Die Warnstufen liegen in Sättigung und Tiefe statt im Farbton: Je enger es
+/// wird, desto dunkler und dichter das Blau. So sind Claude- und Codex-Karten
+/// auf einen Blick auseinanderzuhalten, und die Codex-Seite trägt nicht mehr
+/// Claudes Orange (seit 2.8).
 ///
 /// Jede Stufe hat zwei Töne: `fill` für Flächen (Wasser, Balken) und `ink` für Text.
 /// Der Flächenton wäre als Schrift auf hellem Grund zu schwach — besonders Gelb.
@@ -39,29 +46,39 @@ enum DashboardPalette {
     }
 
     /// Flächenton (Wasser, Balken)
-    static func fill(_ percentage: Double) -> Color {
-        Color(nsColor: nsFill(percentage))
+    static func fill(_ percentage: Double, provider: ProviderType = .claude) -> Color {
+        Color(nsColor: nsFill(percentage, provider: provider))
     }
 
     /// Flächenton als NSColor — für AppKit-Zeichnung (Wasserstände in der
     /// Menüleiste). Löst sich wie alle Töne hier dynamisch nach der beim
     /// Zeichnen aktiven Appearance auf.
-    static func nsFill(_ percentage: Double) -> NSColor {
-        switch Level.forPercentage(percentage) {
-        case .calm:     return dynamicNS(light: 0x5E86C4, dark: 0x6E96D4)
-        case .moderate: return dynamicNS(light: 0xE0A93F, dark: 0xE8B855)
-        case .high:     return dynamicNS(light: 0xD97757, dark: 0xE08767)
-        case .full:     return dynamicNS(light: 0xC9503F, dark: 0xD9604F)
+    static func nsFill(_ percentage: Double, provider: ProviderType = .claude) -> NSColor {
+        switch (provider, Level.forPercentage(percentage)) {
+        case (.claude, .calm):     return dynamicNS(light: 0x5E86C4, dark: 0x6E96D4)
+        case (.claude, .moderate): return dynamicNS(light: 0xE0A93F, dark: 0xE8B855)
+        case (.claude, .high):     return dynamicNS(light: 0xD97757, dark: 0xE08767)
+        case (.claude, .full):     return dynamicNS(light: 0xC9503F, dark: 0xD9604F)
+
+        case (.codex, .calm):      return dynamicNS(light: 0x7FB5E9, dark: 0x86BCEE)
+        case (.codex, .moderate):  return dynamicNS(light: 0x4A92DB, dark: 0x5A9EE4)
+        case (.codex, .high):      return dynamicNS(light: 0x2B5FC7, dark: 0x3E74D6)
+        case (.codex, .full):      return dynamicNS(light: 0x2C2F9E, dark: 0x4A4CC0)
         }
     }
 
     /// Textton derselben Stufe — dunkler, damit Zahlen auf hellem Grund tragen
-    static func ink(_ percentage: Double) -> Color {
-        switch Level.forPercentage(percentage) {
-        case .calm:     return dynamic(light: 0x3E6DA8, dark: 0x8FB0DC)
-        case .moderate: return dynamic(light: 0xA9761B, dark: 0xE0B45C)
-        case .high:     return dynamic(light: 0xB4553A, dark: 0xE59A80)
-        case .full:     return dynamic(light: 0xA33528, dark: 0xE8796A)
+    static func ink(_ percentage: Double, provider: ProviderType = .claude) -> Color {
+        switch (provider, Level.forPercentage(percentage)) {
+        case (.claude, .calm):     return dynamic(light: 0x3E6DA8, dark: 0x8FB0DC)
+        case (.claude, .moderate): return dynamic(light: 0xA9761B, dark: 0xE0B45C)
+        case (.claude, .high):     return dynamic(light: 0xB4553A, dark: 0xE59A80)
+        case (.claude, .full):     return dynamic(light: 0xA33528, dark: 0xE8796A)
+
+        case (.codex, .calm):      return dynamic(light: 0x2F6FB5, dark: 0x9DC4EE)
+        case (.codex, .moderate):  return dynamic(light: 0x1F5EA6, dark: 0x8DB8EA)
+        case (.codex, .high):      return dynamic(light: 0x1B479C, dark: 0x7FA4E4)
+        case (.codex, .full):      return dynamic(light: 0x1E1F78, dark: 0x9C9EE8)
         }
     }
 
@@ -148,6 +165,8 @@ struct MiniWaterGauge: View {
     /// Sitzungsfenster praktisch aufgebraucht?
     let sessionExhausted: Bool
     var diameter: CGFloat = 16
+    /// Farbreihe des Anbieters (Codex läuft in Blau, siehe `DashboardPalette`)
+    var provider: ProviderType = .claude
 
     private var clamped: Double? {
         weeklyUtilization.map { min(100, max(0, $0)) }
@@ -172,7 +191,7 @@ struct MiniWaterGauge: View {
 
             if let clamped {
                 WaterShape(level: clamped / 100.0)
-                    .fill(DashboardPalette.fill(clamped))
+                    .fill(DashboardPalette.fill(clamped, provider: provider))
                     .clipShape(Circle())
             } else {
                 // Ohne Daten ein durchgehend mattes Grau statt eines leeren
@@ -201,6 +220,8 @@ struct WaterLevelGauge: View {
     let percentage: Double
     let caption: String
     var diameter: CGFloat = 74
+    /// Farbreihe des Anbieters (Codex läuft in Blau, siehe `DashboardPalette`)
+    var provider: ProviderType = .claude
 
     private var clamped: Double { min(100, max(0, percentage)) }
 
@@ -209,12 +230,12 @@ struct WaterLevelGauge: View {
             Circle().fill(Color(NSColor.windowBackgroundColor))
 
             WaterShape(level: clamped / 100.0)
-                .fill(DashboardPalette.fill(clamped))
+                .fill(DashboardPalette.fill(clamped, provider: provider))
                 .clipShape(Circle())
 
             Circle().strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
 
-            numberStack(color: DashboardPalette.ink(clamped))
+            numberStack(color: DashboardPalette.ink(clamped, provider: provider))
             numberStack(color: DashboardPalette.onFill)
                 .clipShape(WaterShape(level: clamped / 100.0))
         }

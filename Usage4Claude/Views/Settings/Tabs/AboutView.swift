@@ -29,7 +29,7 @@ struct AboutView: View {
             
             // 应用名称和版本
             VStack(spacing: 4) {
-                Text("Claude Max Monitor")
+                Text("Max Monitor")
                     .font(.title)
                     .fontWeight(.bold)
                 
@@ -59,7 +59,7 @@ struct AboutView: View {
             // 链接按钮
             VStack(spacing: 8) {
                 Button(action: {
-                    if let url = URL(string: "https://github.com/AurelianSteiner/Claude-Max-Monitor") {
+                    if let url = URL(string: "https://github.com/AurelianSteiner/Max-Monitor") {
                         NSWorkspace.shared.open(url)
                     }
                 }) {

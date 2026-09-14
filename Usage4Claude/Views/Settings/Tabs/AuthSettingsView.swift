@@ -99,7 +99,7 @@ struct AuthSettingsView: View {
             title: L.Account.listTitle,
             hint: settings.accounts.isEmpty && !hasCodex
                 ? ""
-                : "\(L.Account.aliasHint) \(L.Account.kindHint)"
+                : "\(L.Account.aliasHint) \(L.Account.kindHint) \(L.Account.cancellationHint)"
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 if settings.accounts.isEmpty && !hasCodex {
@@ -314,14 +314,88 @@ struct AuthSettingsView: View {
                 .help(L.Account.deleteAccount)
             }
 
-            Text(account.organizationName)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .padding(.leading, 22)
+            HStack(spacing: 8) {
+                Text(account.organizationName)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer(minLength: 8)
+
+                cancellationControls(for: account, provider: provider)
+            }
+            .padding(.leading, 22)
         }
         .padding(.vertical, 2)
+    }
+
+    // MARK: - Gekündigt bis
+
+    /// Häkchen „Gekündigt" und daneben der Tag, bis zu dem das Abo noch läuft.
+    /// Reine Handeingabe — keine Schnittstelle liefert das Datum. Die Karte in
+    /// der Übersicht zeigt es als Plakette („endet 9. Okt."). Das Häkchen setzt
+    /// beim Anhaken einen Vorschlag (in 30 Tagen), der sich sofort ändern lässt;
+    /// abhaken löscht das Datum wieder.
+    private func cancellationControls(for account: Account, provider: ProviderType) -> some View {
+        HStack(spacing: 6) {
+            Toggle(isOn: cancelledBinding(for: account, provider: provider)) {
+                Text(L.Account.cancellationLabel)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .toggleStyle(.checkbox)
+            .controlSize(.small)
+            .help(L.Account.cancellationHint)
+
+            if let end = account.subscriptionEndsAt {
+                DatePicker(
+                    L.Account.cancellationLabel,
+                    selection: endDateBinding(for: account, provider: provider, current: end),
+                    displayedComponents: .date
+                )
+                .labelsHidden()
+                .datePickerStyle(.field)
+                .controlSize(.small)
+                .frame(width: 92)
+                .help(L.Account.cancellationHint)
+
+                Button(action: { updateCancellation(nil, for: account, provider: provider) }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(L.Account.cancellationClear)
+            }
+        }
+        .fixedSize()
+    }
+
+    private func cancelledBinding(for account: Account, provider: ProviderType) -> Binding<Bool> {
+        Binding(
+            get: { account.subscriptionEndsAt != nil },
+            set: { isOn in
+                let proposal = Calendar.current.startOfDay(
+                    for: Calendar.current.date(byAdding: .day, value: 30, to: Date()) ?? Date()
+                )
+                updateCancellation(isOn ? (account.subscriptionEndsAt ?? proposal) : nil, for: account, provider: provider)
+            }
+        )
+    }
+
+    private func endDateBinding(for account: Account, provider: ProviderType, current: Date) -> Binding<Date> {
+        Binding(
+            get: { current },
+            set: { updateCancellation(Calendar.current.startOfDay(for: $0), for: account, provider: provider) }
+        )
+    }
+
+    private func updateCancellation(_ date: Date?, for account: Account, provider: ProviderType) {
+        if provider == .codex {
+            settings.updateCodexAccount(account, subscriptionEndsAt: date)
+        } else {
+            settings.updateAccount(account, subscriptionEndsAt: date)
+        }
     }
 
     // MARK: - Art (Firma / Privat)

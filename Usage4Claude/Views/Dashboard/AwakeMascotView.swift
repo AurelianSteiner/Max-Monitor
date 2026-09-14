@@ -2,10 +2,15 @@
 //  AwakeMascotView.swift
 //  Usage4Claude
 //
-//  Die Claudie-Parade im Kopf der Übersicht: Solange „Claude Always On" aktiv
-//  ist, laufen kleine korallenfarbene Pixel-Wesen von links nach rechts durch
-//  einen schmalen Streifen — links blenden sie ein, rechts aus. Ist der Modus
-//  aus, bleibt der Streifen leer.
+//  Die Maskottchen-Parade im Kopf der Übersicht: Solange „Claude Always On"
+//  aktiv ist, laufen kleine Pixel-Wesen von links nach rechts durch einen
+//  schmalen Streifen — links blenden sie ein, rechts aus. Ist der Modus aus,
+//  bleibt der Streifen leer.
+//
+//  Seit 2.8 richtet sich die Besetzung nach den Konten (`MascotRoster`): Jedes
+//  Claude-Konto schickt einen korallenfarbenen Claudie, jedes Codex-Konto ein
+//  blaues Codex-Pet mit Prompt-Gesicht (`>_`), und es sind nie mehr Wesen
+//  gleichzeitig unterwegs, als Konten eingetragen sind (`MascotParadeTiming`).
 //
 //  Seit die Wasserstände der Konten in die Kopfzeile gewandert sind, gehört der
 //  Parade die ganze Zeilenbreite: Sie läuft von ganz links nach ganz rechts und
@@ -13,8 +18,9 @@
 //
 //  Die kleine Parade-Engine: Jeder Läufer ist eine Nummer im unendlichen
 //  Strom. Aus der Nummer werden deterministisch (Splitmix-Hash) sein
-//  Startzeitpunkt (Abstände zufällig zwischen ~3,0 s und ~4,2 s — nie so
-//  knapp, dass zwei aufeinandersitzen) und seine Art abgeleitet: Die Hälfte
+//  Startzeitpunkt (Abstände zufällig zwischen ~3,0 s und ~4,2 s bei voller
+//  Besetzung — nie so knapp, dass zwei aufeinandersitzen; bei wenigen Konten
+//  entsprechend weiter) und sein Kostüm abgeleitet: Die Hälfte
 //  läuft normal, die andere Hälfte fällt auf — Partyhut, Zylinder, ein
 //  Raucher mit Rauchfahne, ein Sprinter, der alle überholt, einer, der
 //  seelenruhig rückwärts stapft, und einer, der im kleinen roten Auto an
@@ -46,13 +52,39 @@ struct AwakeMascotView: View {
 
     @ObservedObject private var sleepGuard = SleepGuard.shared
 
+    /// Wer mitläuft: ein Läufer je Konto, Art nach Anbieter
+    let roster: MascotRoster
+    /// Breite, auf die die Obergrenze „nie mehr Läufer als Konten" gerechnet
+    /// wird — die Wunschbreite aus der Spaltenwahl, nicht die Live-Breite
+    /// (Begründung in `MascotParadeTiming`).
+    let referenceWidth: CGFloat
+
     static let height: CGFloat = 34
+
+    init(roster: MascotRoster = MascotRoster(claudeCount: 1, codexCount: 0),
+         referenceWidth: CGFloat = 400) {
+        self.roster = roster
+        self.referenceWidth = referenceWidth
+    }
+
+    private var timing: MascotParadeTiming {
+        MascotParadeTiming.capped(
+            walkers: roster.walkerCap,
+            width: Double(referenceWidth),
+            speed: MascotParadeCanvas.baseSpeed,
+            overshoot: Double(MascotParadeCanvas.overshoot)
+        )
+    }
 
     var body: some View {
         Group {
             if sleepGuard.isAwake {
                 TimelineView(.periodic(from: .now, by: 0.1)) { timeline in
-                    MascotParadeCanvas(time: timeline.date.timeIntervalSinceReferenceDate)
+                    MascotParadeCanvas(
+                        time: timeline.date.timeIntervalSinceReferenceDate,
+                        roster: roster,
+                        timing: timing
+                    )
                 }
             } else {
                 // Aus = leerer Streifen (gleiche Größe, damit der Kopf nicht springt)
@@ -107,6 +139,10 @@ enum MascotPose: Equatable {
 struct MascotParadeCanvas: View {
 
     let time: TimeInterval
+    /// Besetzung — bestimmt Art (Claudie/Codex-Pet) je Nummer
+    var roster = MascotRoster(claudeCount: 1, codexCount: 0)
+    /// Startabstände — gestreckt, wenn wenige Konten mitlaufen
+    var timing = MascotParadeTiming.base
 
     static let cell: CGFloat = 4
 
@@ -114,6 +150,11 @@ struct MascotParadeCanvas: View {
     static let coral = Color(red: 0.910, green: 0.573, blue: 0.486)     // #e8927c
     static let coralDark = Color(red: 0.753, green: 0.416, blue: 0.333) // #c06a55
     static let faceInk = Color(red: 0.227, green: 0.122, blue: 0.086)   // #3a1f16
+    // Das Codex-Pet: Blau wie die Codex-Farbreihe der Karten, helle
+    // Terminalschrift fürs Prompt-Gesicht
+    static let codexBody = Color(red: 0.322, green: 0.588, blue: 0.886) // #5296e2
+    static let codexDark = Color(red: 0.180, green: 0.400, blue: 0.741) // #2e66bd
+    static let codexFace = Color(red: 0.925, green: 0.957, blue: 1.0)   // #ecf4ff
     static let partyPink = Color(red: 0.855, green: 0.353, blue: 0.545) // Partyhut
     static let partyTip = Color(red: 0.980, green: 0.800, blue: 0.235)  // Bommel & Sheriffstern
     static let hatBlack = Color(red: 0.16, green: 0.16, blue: 0.19)     // Zylinder
@@ -124,13 +165,11 @@ struct MascotParadeCanvas: View {
     static let wheel = Color(red: 0.13, green: 0.13, blue: 0.15)
     static let smoke = Color.secondary
 
-    // Taktung der Parade
+    // Taktung der Parade. Die Startabstände (früher fest 3,6 s / 3,0 s) leben
+    // in `MascotParadeTiming` und hängen an der Kontenzahl.
     static let baseSpeed: Double = 26        // pt/s, alle Normalen exakt gleich
     static let sprintSpeed: Double = 74      // der Eilige
     static let carSpeed: Double = 96         // das Auto überholt sogar den
-    static let avgInterval: Double = 3.6     // mittlerer Start-Abstand (s)
-    static let minInterval: Double = 3.0     // nie enger — verhindert Aufsitzen,
-                                             // auch wenn jemand am Grab hält
     static let stepsPerSecond: Double = 4
     static let fadeZone: CGFloat = 34
     static let spriteWidth: CGFloat = 32
@@ -139,20 +178,10 @@ struct MascotParadeCanvas: View {
     // MARK: Deterministischer Zufall (Splitmix64)
 
     /// Stabiler Pseudozufall 0…1 aus Läufer-Nummer und Salz — keine gespeicherten
-    /// Zustände, dieselbe Nummer würfelt immer dasselbe.
+    /// Zustände, dieselbe Nummer würfelt immer dasselbe. Die Rechnung selbst
+    /// liegt in `MascotRandom` (ohne SwiftUI, damit `swift test` sie prüfen kann).
     static func roll(_ index: Int, _ salt: UInt64) -> Double {
-        var z = UInt64(bitPattern: Int64(index)) &+ (salt &* 0x9E37_79B9_7F4A_7C15)
-        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
-        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
-        z ^= z >> 31
-        return Double(z % 1_000_000) / 1_000_000
-    }
-
-    /// Startzeitpunkt des Läufers `index`: fixes Raster plus Jitter, der die
-    /// Lücken zwischen `minInterval` und ~2 × `avgInterval − minInterval` streut.
-    static func spawnTime(_ index: Int) -> Double {
-        let jitterMax = avgInterval - minInterval
-        return Double(index) * avgInterval + roll(index, 1) * jitterMax
+        MascotRandom.roll(index, salt)
     }
 
     /// Je 10 % für die klassischen Sonderformen, 8 % fürs Auto, gut 40 %
@@ -188,34 +217,37 @@ struct MascotParadeCanvas: View {
         Canvas { context, size in
             guard size.width > 4 else { return }
             let span = Double(size.width + Self.overshoot * 2)
-            let incident = MascotIncident.active(at: time, width: size.width)
+            let incident = MascotIncident.active(at: time, width: size.width, timing: timing)
 
             // Matsch und Grabstein liegen hinter allen Läufern — die Trauernden
-            // gehen davor vorbei, nicht dahinter.
+            // gehen davor vorbei, nicht dahinter. Der Matsch trägt die Farbe des
+            // Opfers: koralle für einen Claudie, blau für ein Codex-Pet.
             if let incident {
-                MascotIncident.drawGround(in: context, incident: incident)
+                MascotIncident.drawGround(in: context, incident: incident,
+                                          species: roster.species(for: incident.victimIndex))
             }
 
             // Nur die Nummern anschauen, die jetzt überhaupt sichtbar sein können:
             // Langsamste Reisezeit rückwärts vom aktuellen Zeitpunkt, plus die
             // längste Pause, die ein Zwischenfall verursachen kann.
             let slowestTravel = span / Self.baseSpeed + MascotIncident.maxHold
-            let newest = Int((time / Self.avgInterval).rounded(.down)) + 1
-            let oldest = Int(((time - slowestTravel - 1) / Self.avgInterval).rounded(.down))
+            let newest = Int((time / timing.interval).rounded(.down)) + 1
+            let oldest = Int(((time - slowestTravel - 1) / timing.interval).rounded(.down))
 
             for index in oldest...newest {
-                let spawn = Self.spawnTime(index)
+                let spawn = timing.spawnTime(index)
                 let rawElapsed = time - spawn
                 guard rawElapsed > 0 else { continue }
 
                 let role = MascotIncident.role(of: index)
+                let species = roster.species(for: index)
 
                 // Das Opfer übernimmt ab seinem Halt die Vorfall-Logik: erst
                 // stehen, dann kippen, dann ausblenden. Danach steht dort nur
                 // noch Matsch bzw. der Grabstein.
                 if role == .victim, let incident, incident.victimIndex == index {
                     MascotIncident.drawVictim(in: context, incident: incident,
-                                              time: time, seed: index)
+                                              time: time, seed: index, species: species)
                     continue
                 }
 
@@ -259,12 +291,14 @@ struct MascotParadeCanvas: View {
                 let stepRate = kind == .sprinter ? Self.stepsPerSecond * 2.2 : Self.stepsPerSecond
                 let step = Int(time * stepRate + Double(index) * 0.7) % 2 == 0
                 Self.drawWalker(in: context, x: x, step: step, alpha: alpha,
-                                variant: kind, time: time, seed: index, pose: pose)
+                                variant: kind, time: time, seed: index,
+                                species: species, pose: pose)
             }
 
             // Mündungsfeuer und Geschosse liegen vor allem anderen
             if let incident {
-                MascotIncident.drawShots(in: context, incident: incident)
+                MascotIncident.drawShots(in: context, incident: incident, timing: timing,
+                                         species: roster.species(for: incident.victimIndex))
             }
         }
     }
@@ -276,6 +310,9 @@ struct MascotParadeCanvas: View {
     /// gewöhnliche Aufrufer.
     ///
     /// - Parameters:
+    ///   - species: Claudie (koralle, zwei Augen) oder Codex-Pet (blau,
+    ///     Prompt-Gesicht `>_` mit blinkendem Cursor). Kostüme (Hüte, Auto,
+    ///     Sheriffstern) sitzen auf beiden gleich, der Körperblock ist derselbe.
     ///   - pose: Was er gerade tut. `.walking` ist der Normalfall; die übrigen
     ///     Haltungen stehen still und tauchen nur im seltenen Zwischenfall auf.
     ///   - collapse: 0 = steht aufrecht, 1 = liegt platt am Boden. Dazwischen
@@ -284,9 +321,14 @@ struct MascotParadeCanvas: View {
     static func drawWalker(in ctx: GraphicsContext, x: CGFloat, step: Bool,
                            alpha: Double, variant: MascotVariant,
                            time: TimeInterval, seed: Int,
+                           species: MascotSpecies = .claudie,
                            pose: MascotPose = .walking, collapse: Double = 0) {
         var walker = ctx
         walker.opacity = alpha
+
+        // Körperfarben nach Art — alles Weitere (Hüte, Auto, Rauch) ist artneutral
+        let body = species == .codex ? codexBody : coral
+        let bodyDark = species == .codex ? codexDark : coralDark
 
         // Leichtes Hüpfen im Schritt-Takt; Grundlinie so, dass die Beinchen
         // am unteren Rand des 24-pt-Streifens aufsetzen. Wer steht, hüpft nicht —
@@ -356,26 +398,47 @@ struct MascotParadeCanvas: View {
         }
 
         // Ohren-Nubs (der Zylinder verdeckt sie ohnehin fast)
-        px(1, -1, coral)
-        px(6, -1, coral)
+        px(1, -1, body)
+        px(6, -1, body)
 
         // Körperblock 8 × 4, Ecken frei, Kanten dunkler
         for row in 0..<4 {
             for col in 0..<8 {
                 if row == 0 && (col == 0 || col == 7) { continue }
                 let edge = (col == 0 || col == 7 || row == 3)
-                px(Double(col), Double(row), edge ? coralDark : coral)
+                px(Double(col), Double(row), edge ? bodyDark : body)
             }
         }
 
-        // Augen — beim Weinen und beim Umkippen zugekniffen, sonst offen und
-        // in Laufrichtung
-        if pose == .mourning || fall > 0.3 {
-            px(2.8, 1.3, faceInk, 1.4, 0.4)
-            px(5.8, 1.3, faceInk, 1.4, 0.4)
-        } else {
-            px(3, 1, faceInk)
-            px(6, 1, faceInk)
+        switch species {
+        case .claudie:
+            // Augen — beim Weinen und beim Umkippen zugekniffen, sonst offen und
+            // in Laufrichtung
+            if pose == .mourning || fall > 0.3 {
+                px(2.8, 1.3, faceInk, 1.4, 0.4)
+                px(5.8, 1.3, faceInk, 1.4, 0.4)
+            } else {
+                px(3, 1, faceInk)
+                px(6, 1, faceInk)
+            }
+
+        case .codex:
+            // Prompt-Gesicht: ein „>" und dahinter der Cursor „_", der blinkt.
+            // Die Spiegelung für Rückwärtsläufer und Schützen dreht das Zeichen
+            // mit — es schaut immer in Laufrichtung, wie Claudies Augen.
+            if pose == .mourning || fall > 0.3 {
+                px(2.4, 1.3, codexFace, 1.4, 0.4)
+                px(4.8, 1.3, codexFace, 1.4, 0.4)
+            } else {
+                px(2.3, 0.7, codexFace, 0.6, 0.6)
+                px(2.9, 1.25, codexFace, 0.6, 0.6)
+                px(2.3, 1.8, codexFace, 0.6, 0.6)
+                // Blinken: Phase je Nummer versetzt, damit nicht alle im Takt zucken
+                let blink = (time * 1.6 + roll(seed, 61)).truncatingRemainder(dividingBy: 1)
+                if blink < 0.72 {
+                    px(4.0, 1.85, codexFace, 1.7, 0.5)
+                }
+            }
         }
 
         // Beinchen: wechseln nur beim Gehen, sonst ruhiger Stand.
@@ -384,17 +447,17 @@ struct MascotParadeCanvas: View {
             // keine Beinchen
         } else if pose == .walking, fall == 0 {
             if step {
-                px(1, 4, coralDark)
-                px(4.5, 4, coralDark)
-                px(6.5, 4.6, coralDark, 0.9, 0.7)
+                px(1, 4, bodyDark)
+                px(4.5, 4, bodyDark)
+                px(6.5, 4.6, bodyDark, 0.9, 0.7)
             } else {
-                px(1.5, 4.6, coralDark, 0.9, 0.7)
-                px(3.5, 4, coralDark)
-                px(6, 4, coralDark)
+                px(1.5, 4.6, bodyDark, 0.9, 0.7)
+                px(3.5, 4, bodyDark)
+                px(6, 4, bodyDark)
             }
         } else {
-            px(1, 4, coralDark)
-            px(6, 4, coralDark)
+            px(1, 4, bodyDark)
+            px(6, 4, bodyDark)
         }
 
         drawPoseExtras(px: px, pose: pose, time: time, seed: seed)
@@ -438,8 +501,8 @@ struct MascotParadeCanvas: View {
         case .sprinter:
             // Tempolinien hinter dem Eiligen — nur, wenn er auch eilt
             if pose == .walking {
-                px(-1.6, 1, coralDark.opacity(0.35), 1.2, 0.5)
-                px(-2.6, 2.2, coralDark.opacity(0.25), 1.4, 0.5)
+                px(-1.6, 1, bodyDark.opacity(0.35), 1.2, 0.5)
+                px(-2.6, 2.2, bodyDark.opacity(0.25), 1.4, 0.5)
             }
 
         case .sheriff:
@@ -479,8 +542,8 @@ struct MascotParadeCanvas: View {
         case .driver:
             // Ein kleines rotes Blechauto ums Untergestell: Karosserie über
             // den Beinen, Räder darunter, Auspuffwölkchen hinterher. Der
-            // Fahrer ist ein ganz normaler Claudie, dem das Laufen zu
-            // langsam wurde.
+            // Fahrer ist ein ganz normales Wesen, dem das Laufen zu langsam
+            // wurde — Claudie oder Codex-Pet.
             px(-1.2, 2.4, carDark, 1.2, 1.4)                        // Heck
             px(-0.6, 2.7, carBody, 9.6, 1.7)                        // Karosserie
             px(8.4, 2.2, carBody, 0.9, 0.7)                         // Haube vorn

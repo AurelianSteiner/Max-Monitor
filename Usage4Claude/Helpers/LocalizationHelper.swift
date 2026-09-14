@@ -54,6 +54,32 @@ enum L {
         /// Beschriftung und Erklärung des Auswahlfelds in den Einstellungen
         static var kindLabel: String { localized("account.kind.label") }
         static var kindHint: String { localized("account.kind.hint") }
+
+        // Gekündigtes Abo: Datum von Hand, Plakette auf der Karte
+        static var cancellationLabel: String { localized("account.cancellation.label") }
+        static var cancellationHint: String { localized("account.cancellation.hint") }
+        static var cancellationClear: String { localized("account.cancellation.clear") }
+        /// „endet 9. Okt." — Plakette auf der Karte
+        static func cancellationEndsOn(_ date: String) -> String {
+            String(format: localized("account.cancellation.ends_on"), date)
+        }
+        /// „beendet 9. Okt." — wenn der Tag schon vorbei ist
+        static func cancellationEnded(_ date: String) -> String {
+            String(format: localized("account.cancellation.ended"), date)
+        }
+        /// Tooltip der Plakette: volles Datum plus Restzeit
+        static func cancellationHelp(_ date: String, _ remaining: String) -> String {
+            String(format: localized("account.cancellation.help"), date, remaining)
+        }
+        /// Restzeit in Tagen: heute / 1 Tag / n Tage / vorbei
+        static func cancellationDaysLeft(_ days: Int) -> String {
+            switch days {
+            case ..<0: return localized("account.cancellation.days_past")
+            case 0:    return localized("account.cancellation.days_today")
+            case 1:    return localized("account.cancellation.days_one")
+            default:   return String(format: localized("account.cancellation.days_other"), days)
+            }
+        }
     }
     
     // MARK: - Usage Detail View
@@ -90,6 +116,8 @@ enum L {
         static var refreshAccount: String { localized("dashboard.refresh_account") }
         static var makeActive: String { localized("dashboard.make_active") }
         static var retry: String { localized("dashboard.retry") }
+        /// Knopf auf einer Karte, deren Anmeldung abgelaufen ist — öffnet den Login
+        static var reauth: String { localized("dashboard.reauth") }
         static var tapHint: String { localized("dashboard.tap_hint") }
         /// Eintrag im „…"-Menü, der das Team-Fenster öffnet
         static var openTeamWindow: String { localized("dashboard.open_team_window") }
@@ -437,6 +465,8 @@ enum L {
         static var claudeOAuthManualPrompt: String { localized("weblogin.claude_oauth_manual_prompt") }
         static var claudeOAuthManualSubmit: String { localized("weblogin.claude_oauth_manual_submit") }
         static var claudeOAuthManualInvalid: String { localized("weblogin.claude_oauth_manual_invalid") }
+        /// 429 am Token-Endpunkt: Drosselung, kein Fehler der Anmeldung
+        static var claudeOAuthRateLimited: String { localized("weblogin.claude_oauth_rate_limited") }
 
         // MARK: Codex OAuth 登录（系统浏览器）
         static var codexOAuthPreparing: String { localized("weblogin.codex_oauth_preparing") }

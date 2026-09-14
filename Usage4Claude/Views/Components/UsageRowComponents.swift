@@ -227,7 +227,7 @@ struct UnifiedLimitRow: View {
 
     private var iconColor: Color {
         if usesUtilizationTint {
-            return DashboardPalette.fill(percentageValue ?? 0)
+            return DashboardPalette.fill(percentageValue ?? 0, provider: type.provider)
         }
         switch type {
         case .fiveHour:

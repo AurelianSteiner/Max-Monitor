@@ -49,6 +49,11 @@ struct Account: Codable, Identifiable, Equatable {
     /// Firma oder privat. Beim Login bestmöglich erkannt, in den Einstellungen
     /// überschreibbar — die manuelle Angabe ist die verlässliche Quelle.
     var kind: AccountKind
+    /// Gekündigtes Abo: der Tag, bis zu dem es noch läuft. Von Hand in den
+    /// Einstellungen eingetragen — die Schnittstellen liefern kein Enddatum
+    /// (das OAuth-Profil kennt nur `subscription_status`, keinen Zeitpunkt).
+    /// `nil` heißt: nicht gekündigt bzw. nichts eingetragen.
+    var subscriptionEndsAt: Date?
 
     var displayName: String {
         if let alias = alias, !alias.isEmpty {
@@ -65,10 +70,20 @@ struct Account: Codable, Identifiable, Equatable {
         return email
     }
 
+    /// Ganze Kalendertage bis zum Ende des gekündigten Abos, gemessen an `now`.
+    /// 0 = endet heute, negativ = schon vorbei, nil = nicht gekündigt.
+    func subscriptionDaysRemaining(from now: Date = Date(), calendar: Calendar = .current) -> Int? {
+        guard let end = subscriptionEndsAt else { return nil }
+        let start = calendar.startOfDay(for: now)
+        let target = calendar.startOfDay(for: end)
+        return calendar.dateComponents([.day], from: start, to: target).day
+    }
+
     // MARK: - CodingKeys
 
     private enum CodingKeys: String, CodingKey {
         case id, sessionKey, organizationId, organizationName, alias, createdAt, provider, email, kind
+        case subscriptionEndsAt
     }
 
     // MARK: - Codable
@@ -95,6 +110,8 @@ struct Account: Codable, Identifiable, Equatable {
         // (z. B. aus einer neueren Version) darf das Laden nicht sprengen.
         let decodedKind = (try? container.decodeIfPresent(String.self, forKey: .kind)) ?? nil
         kind = decodedKind.flatMap(AccountKind.init(rawValue:)) ?? .unknown
+        // Neu seit 2.8 — ältere Datensätze haben das Feld nicht.
+        subscriptionEndsAt = (try? container.decodeIfPresent(Date.self, forKey: .subscriptionEndsAt)) ?? nil
     }
 
     // MARK: - Initialization
@@ -106,7 +123,8 @@ struct Account: Codable, Identifiable, Equatable {
         alias: String? = nil,
         provider: ProviderType = .claude,
         email: String? = nil,
-        kind: AccountKind = .unknown
+        kind: AccountKind = .unknown,
+        subscriptionEndsAt: Date? = nil
     ) {
         self.id = UUID()
         self.sessionKey = sessionKey
@@ -117,6 +135,7 @@ struct Account: Codable, Identifiable, Equatable {
         self.provider = provider
         self.email = (email?.isEmpty == false) ? email : (organizationName.contains("@") ? organizationName : nil)
         self.kind = kind
+        self.subscriptionEndsAt = subscriptionEndsAt
     }
 
     init(
@@ -128,7 +147,8 @@ struct Account: Codable, Identifiable, Equatable {
         createdAt: Date,
         provider: ProviderType = .claude,
         email: String? = nil,
-        kind: AccountKind = .unknown
+        kind: AccountKind = .unknown,
+        subscriptionEndsAt: Date? = nil
     ) {
         self.id = id
         self.sessionKey = sessionKey
@@ -139,6 +159,7 @@ struct Account: Codable, Identifiable, Equatable {
         self.provider = provider
         self.email = (email?.isEmpty == false) ? email : (organizationName.contains("@") ? organizationName : nil)
         self.kind = kind
+        self.subscriptionEndsAt = subscriptionEndsAt
     }
 
     // MARK: - Equatable

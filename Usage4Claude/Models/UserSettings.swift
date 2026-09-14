@@ -806,6 +806,18 @@ class UserSettings: ObservableObject {
         accountStore.updateAccount(account, kind: kind)
     }
 
+    /// Kündigungsdatum eines Claude-Kontos setzen oder löschen
+    func updateAccount(_ account: Account, subscriptionEndsAt date: Date?) {
+        accountStore.updateAccount(account, subscriptionEndsAt: date)
+    }
+
+    /// Neuanmeldung eines bekannten Kontos: Zugangsdaten an Ort und Stelle ersetzen
+    /// (ID, Alias, Art und Kündigungsdatum bleiben). nil, wenn die Organisation unbekannt ist.
+    @discardableResult
+    func replaceClaudeCredentials(organizationId: String, sessionKey: String, email: String?, kind: AccountKind) -> Account? {
+        accountStore.replaceClaudeCredentials(organizationId: organizationId, sessionKey: sessionKey, email: email, kind: kind)
+    }
+
     /// 用于显示的账户列表
     var displayAccounts: [Account] { accountStore.displayAccounts }
 
@@ -829,6 +841,11 @@ class UserSettings: ObservableObject {
 
     func updateCodexAccount(_ account: Account, alias: String?) {
         accountStore.updateCodexAccount(account, alias: alias)
+    }
+
+    /// Kündigungsdatum eines Codex-Kontos setzen oder löschen
+    func updateCodexAccount(_ account: Account, subscriptionEndsAt date: Date?) {
+        accountStore.updateCodexAccount(account, subscriptionEndsAt: date)
     }
 
     /// 静默更新当前 Codex 账户的 session-token（不触发 accountChanged 通知）

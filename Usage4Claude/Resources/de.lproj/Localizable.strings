@@ -9,7 +9,7 @@
 "menu.general_settings" = "Einstellungen …";
 "menu.check_updates" = "Auf Updates prüfen";
 "menu.about" = "Über";
-"menu.quit" = "Claude Max Monitor beenden";
+"menu.quit" = "Max Monitor beenden";
 "menu.account" = "Account";
 "menu.account_prefix" = "Account:";
 
@@ -66,7 +66,7 @@
 
 // MARK: - Settings - About
 "settings.about.version" = "Version %@";
-"settings.about.description" = "Überwacht das 5-Stunden-Nutzungslimit von Claude AI";
+"settings.about.description" = "Alle Claude- und Codex-Konten auf einen Blick in der Menüleiste";
 "settings.about.developer" = "Entwickler";
 "settings.about.license" = "Lizenz";
 "settings.about.license_value" = "MIT-Lizenz";
@@ -97,7 +97,7 @@
 "language.german" = "Deutsch";
 
 // MARK: - Window Titles
-"window.settings_title" = "Claude Max Monitor Einstellungen";
+"window.settings_title" = "Max Monitor Einstellungen";
 
 // MARK: - Usage Data Formatting
 "usage_data.not_started_reset" = "Reset-Zeit wird nach Nutzungsbeginn angezeigt";
@@ -113,7 +113,7 @@
 // MARK: - Error Messages
 "error.invalid_url" = "Ungültige URL";
 "error.no_data" = "Keine Daten empfangen";
-"error.session_expired" = "Sitzung abgelaufen, bitte in den Einstellungen neu konfigurieren";
+"error.session_expired" = "Anmeldung abgelaufen – bitte neu anmelden";
 "error.cloudflare_blocked" = "Anfrage vom Sicherheitssystem blockiert. Bitte claude.ai im Browser aufrufen, um zu bestätigen, kein Roboter zu sein, und es erneut versuchen.";
 "error.no_credentials" = "Bitte zuerst die Anmeldedaten in den Einstellungen konfigurieren";
 "error.network_failed" = "Netzwerkanfrage fehlgeschlagen. Bitte die Internetverbindung prüfen.";
@@ -240,6 +240,19 @@
 "account.kind.label" = "Art";
 "account.kind.hint" = "Die Art ändert nur das Symbol auf der Karte.";
 
+/* Gekündigtes Abo: der Tag, an dem es ausläuft — von Hand eingetragen, keine
+   Schnittstelle liefert ihn. Steht als kleine Plakette auf der Karte. */
+"account.cancellation.label" = "Gekündigt";
+"account.cancellation.hint" = "Gekündigt: anhaken und den letzten Tag des Abos wählen. Die Karte zeigt dann, bis wann das Konto noch nutzbar ist – die Schnittstellen liefern dieses Datum nicht.";
+"account.cancellation.clear" = "Kündigungsdatum entfernen";
+"account.cancellation.ends_on" = "endet %@";
+"account.cancellation.ended" = "beendet %@";
+"account.cancellation.help" = "Abo gekündigt – läuft bis %1$@ (%2$@).";
+"account.cancellation.days_today" = "endet heute";
+"account.cancellation.days_one" = "noch 1 Tag";
+"account.cancellation.days_other" = "noch %d Tage";
+"account.cancellation.days_past" = "bereits abgelaufen";
+
 /* Codex OAuth Login (system browser) */
 "weblogin.codex_oauth_preparing" = "Anmeldung wird vorbereitet…";
 "weblogin.codex_oauth_waiting_browser" = "Im Browser fortsetzen";
@@ -255,10 +268,11 @@
 "weblogin.claude_oauth_manual_prompt" = "Den Link aus der Adressleiste des Browsers einfügen (beginnt mit http://localhost)";
 "weblogin.claude_oauth_manual_submit" = "Mit diesem Link anmelden";
 "weblogin.claude_oauth_manual_invalid" = "Kein Autorisierungscode gefunden. Den vollständigen Link aus der Adressleiste des Browsers kopieren und erneut versuchen.";
+"weblogin.claude_oauth_rate_limited" = "Anthropic drosselt gerade Anmeldungen aus diesem Netz. Ein paar Minuten warten, dann erneut versuchen.";
 
 /* Dashboard / Mehrkonten-Übersicht */
 "dashboard.title" = "Übersicht";
-"dashboard.window_title" = "Claude Max Monitor – Übersicht";
+"dashboard.window_title" = "Max Monitor – Übersicht";
 "dashboard.show_dashboard" = "Übersicht anzeigen";
 "dashboard.show_classic_detail" = "Einzelansicht anzeigen";
 "dashboard.open_window" = "Übersicht in Fenster öffnen";
@@ -269,6 +283,7 @@
 "dashboard.refresh_account" = "Diesen Account aktualisieren";
 "dashboard.make_active" = "Als aktiven Account setzen";
 "dashboard.retry" = "Erneut versuchen";
+"dashboard.reauth" = "Neu anmelden";
 "dashboard.tap_hint" = "Klick auf die Limit-Zeilen zeigt, was übrig ist";
 "dashboard.updated_at" = "Aktualisiert %@";
 "dashboard.columns_one" = "1 Spalte";
@@ -300,7 +315,7 @@
    Er setzt BEIDE Assertions — Bildschirm und Mac. */
 "dashboard.sleep.label" = "Claude Always On";
 "dashboard.sleep.info" = "Claude Always On hält Mac und Bildschirm wach, solange die App läuft. Nach einer einmaligen Freischaltung (macOS fragt nach dem Passwort) bleibt der Laptop sogar zugeklappt an — laufende Claude-Sessions arbeiten dann einfach weiter. Zum Beenden den Schalter ausmachen.";
-"dashboard.sleep.help" = "Hält Bildschirm und Mac wach, solange Claude Max Monitor läuft.";
+"dashboard.sleep.help" = "Hält Bildschirm und Mac wach, solange Max Monitor läuft.";
 "dashboard.sleep.lid_note" = "Zugeklappt schläft der Mac derzeit trotzdem ein. Beim nächsten Einschalten fragt macOS einmal nach dem Passwort — danach hält der Schalter auch den zugeklappten Mac wach.";
 "dashboard.sleep.state_on" = "Aktiv";
 "dashboard.sleep.state_off" = "Aus";
@@ -312,8 +327,8 @@
 "dashboard.sleep.system_override" = "Dein Mac ist systemweit auf „nie schlafen“ gestellt (pmset disablesleep 1) — er bleibt auch ohne diesen Schalter wach, zugeklappt eingeschlossen.";
 
 /* Tooltip des kleinen Arbeiters im Kopf der Übersicht */
-"dashboard.mascot.awake_help" = "Die Claudies laufen — Claude Always On ist aktiv.";
-"dashboard.mascot.asleep_help" = "Alles ruhig. „Claude Always On“ einschalten, und die Claudies laufen los.";
+"dashboard.mascot.awake_help" = "Die Maskottchen laufen — eins je Konto, Claudies für Claude, Codex-Pets für Codex. Claude Always On ist aktiv.";
+"dashboard.mascot.asleep_help" = "Alles ruhig. „Claude Always On“ einschalten, und die Maskottchen laufen los.";
 
 /* Allgemeine Einstellungen: der eingeklappte Abschnitt mit den drei
    pmset-Befehlen. Nur anzeigen und kopieren — die App führt nichts aus. */
@@ -388,7 +403,7 @@
 "team.members.delete_confirm_message" = "%@ kann danach nicht mehr melden; das Token wird ungültig.";
 
 /* Fertige Einladung — kommt in die Zwischenablage */
-"team.invite.template" = "Claude-Auslastung im Team teilen\n\n1. App laden: https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/latest\n2. In der App: Einstellungen → Konten → Team → Mit Server verbinden\n3. Team-ID: %@\n4. Token: %@\n\nGeteilt werden nur Prozentwerte und Reset-Zeiten — keine Schlüssel, keine Inhalte.";
+"team.invite.template" = "Claude-Auslastung im Team teilen\n\n1. App laden: https://github.com/AurelianSteiner/Max-Monitor/releases/latest\n2. In der App: Einstellungen → Konten → Team → Mit Server verbinden\n3. Team-ID: %@\n4. Token: %@\n\nGeteilt werden nur Prozentwerte und Reset-Zeiten — keine Schlüssel, keine Inhalte.";
 
 /* Team-Übersicht — Verbindungszeile und Server-Zustände */
 "team.view.connected_as" = "Verbunden als %@";

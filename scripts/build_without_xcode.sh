@@ -258,6 +258,9 @@ ENT
 # gespeicherten Konten. Mit demselben selbst erstellten Zertifikat („Claude Max
 # Monitor Signing") bleibt die Identität über Versionen stabil und „Immer
 # erlauben" gilt dauerhaft. Fehlt das Zertifikat (z. B. auf CI), ad-hoc wie bisher.
+# Der Zertifikatsname trägt weiter den alten Produktnamen: Er ist in den
+# Schlüsselbunden der Nutzer hinterlegt — ein neuer Name wäre eine neue
+# Identität, und der Schlüsselbund fragte bei jedem Update wieder nach.
 SIGN_IDENTITY="-"
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "Claude Max Monitor Signing"; then
     SIGN_IDENTITY="Claude Max Monitor Signing"

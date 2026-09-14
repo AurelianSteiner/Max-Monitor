@@ -1,7 +1,58 @@
 # Änderungen
 
-## 2.7.2 (in Arbeit)
+## 2.8
 
+Die App heißt jetzt **Max Monitor** — sie zeigt längst nicht mehr nur Claude.
+
+- **Neuer Name, überall.** „Claude Max Monitor" wird zu „Max Monitor": App,
+  Menü, Fenster, About, Einladungstext, Release-Skript, DMG-Name und das
+  GitHub-Repository (`AurelianSteiner/Max-Monitor`; die alten Adressen leiten
+  weiter, installierte Kopien finden ihren Update-Feed also weiterhin). Was
+  auf den Macs der Nutzer bereits hinterlegt ist, behält bewusst den alten
+  Namen: Bundle-ID, Schlüsselbund-Dienst, die sudoers-Datei der Einmal-Freigabe
+  und der Name des Signatur-Zertifikats — sonst fragte der Schlüsselbund nach
+  dem Update wieder nach jedem Konto.
+- **Claude-Konten lassen sich wieder verbinden.** Anthropic hatte alle
+  hinterlegten Refresh-Tokens für ungültig erklärt (HTTP 400 `invalid_grant`).
+  Die App hielt das für einen allgemeinen HTTP-Fehler und versuchte es bei
+  jedem Konto jede Minute erneut — über 3 000 Fehlversuche an einem Vormittag,
+  bis der Token-Endpunkt das ganze Netz drosselte (429) und damit auch jede
+  Neuanmeldung scheitern ließ. Jetzt erkennt die App ein totes Token (nach
+  RFC 6749: 400 + `invalid_grant`), meldet „Anmeldung abgelaufen – bitte neu
+  anmelden" und fragt mit genau diesem Token nie wieder an. Die Karte zeigt
+  dafür den Knopf **Neu anmelden**, der direkt den Browser-Login öffnet. Eine
+  Drosselung beim Anmelden wird als solche benannt („ein paar Minuten warten")
+  statt als „Anmeldung fehlgeschlagen". Fehlertexte des Token-Endpunkts
+  stehen ungeschwärzt im Log — sie enthalten keine Geheimnisse und sind die
+  einzige Spur, warum eine Anmeldung scheitert.
+- **Neuanmeldung behält das Konto.** Wer sich für ein bekanntes Konto neu
+  anmeldet, bekommt keine neue Karte mehr: Die Zugangsdaten werden an Ort und
+  Stelle ersetzt, ID, Alias, Art und Kündigungsdatum bleiben. Vorher wurde das
+  Konto gelöscht und neu angelegt, und der Alias war weg.
+- **Codex in Blau.** Codex-Karten, ihre Wasserstände, Limit-Zeilen und die
+  Punkte in der Menüleiste laufen durch eine eigene Farbreihe in Blaurichtung:
+  Himmelblau → Azur → Königsblau → Indigo. Je enger es wird, desto dunkler
+  und dichter das Blau. Claude behält Blau → Gelb → Clay-Orange → Rot. So
+  sind die Anbieter auf einen Blick auseinanderzuhalten, und die Codex-Seite
+  trägt nicht mehr Claudes Orange.
+- **Gekündigt bis.** In den Konten-Einstellungen hat jedes Konto ein Häkchen
+  „Gekündigt" und daneben einen Datumswähler für den letzten Tag des Abos.
+  Die Karte zeigt es als kleine Plakette neben dem Namen („endet 9. Okt."),
+  der Tooltip nennt das volle Datum und die Restzeit; ab einer Woche vor dem
+  Ende wird die Plakette kräftig, danach steht „beendet". Das Datum kommt von
+  Hand: Keine Schnittstelle liefert es — Anthropics OAuth-Profil kennt nur
+  `subscription_status`, kein Enddatum.
+- **Die Parade richtet sich nach den Konten.** Jedes Claude-Konto schickt
+  einen Claudie, jedes Codex-Konto ein blaues Codex-Pet mit Prompt-Gesicht
+  (`>_`, der Cursor blinkt), und es sind nie mehr Wesen gleichzeitig
+  unterwegs, als Konten eingetragen sind — zwei Konten heißt zwei Läufer im
+  Streifen, sieben Konten die gewohnte dichte Parade. Das Verhältnis der Arten
+  stimmt genau und wechselt sich ab, statt in Blöcken zu kommen. Hüte, Auto,
+  Sheriff und Zwischenfall gibt es für beide Arten; ein getroffenes Codex-Pet
+  zerplatzt zu blauem Matsch. Die Taktung hängt an der Spaltenwahl, nicht an
+  der Fensterbreite, damit beim Ziehen am Fenster nichts flackert. Der
+  rechnende Teil (Besetzung, Verteilung, Startabstände) ist ohne SwiftUI
+  ausgelagert und per `swift test` abgedeckt.
 - Der Reihenfolge-/Spalten-Regler ist von oben rechts zu den Karten gezogen,
   die er ordnet — eine schmale Zeile direkt über dem Kartenbereich.
 - Der Sheriff kommt jetzt etwa jede Minute, trägt einen unübersehbaren
@@ -9,7 +60,7 @@
   Sekunden zieht er ihn zum Angeben in die Luft — gezogen wird oft,
   geschossen weiterhin nur manchmal. Wenn er schießt, sitzt das
   Mündungsfeuer jetzt an der Laufspitze des gezogenen Colts.
-- Neu in der Parade: ein Claudie im kleinen roten Auto — schneller als der
+- Neu in der Parade: ein Läufer im kleinen roten Auto — schneller als der
   Sprinter, mit Rädern statt Beinchen, Windschutzscheibe und Auspuffwölkchen.
 
 ## 2.7.1

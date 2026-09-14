@@ -1,7 +1,7 @@
 {
   "name": "claude-team-monitor-server",
   "version": "1.0.0",
-  "description": "Tiny relay for Claude Max Monitor team reports: accepts usage percentages, serves them back. No credentials ever touch this server.",
+  "description": "Tiny relay for Max Monitor team reports: accepts usage percentages, serves them back. No credentials ever touch this server.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

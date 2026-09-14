@@ -210,10 +210,10 @@ final class SleepGuard: ObservableObject {
     private func syncAssertions(to on: Bool) {
         if on {
             _ = createAssertion(type: kIOPMAssertionTypeNoDisplaySleep,
-                                reason: "Claude Max Monitor: Bildschirm wach halten",
+                                reason: "Max Monitor: Bildschirm wach halten",
                                 id: &displayAssertionID)
             _ = createAssertion(type: kIOPMAssertionTypePreventUserIdleSystemSleep,
-                                reason: "Claude Max Monitor: Mac wach halten",
+                                reason: "Max Monitor: Mac wach halten",
                                 id: &systemAssertionID)
         } else {
             releaseAssertion(&displayAssertionID, label: "NoDisplaySleep")
@@ -288,12 +288,12 @@ final class SleepGuard: ObservableObject {
         if enabled {
             let displayCreated = createAssertion(
                 type: kIOPMAssertionTypeNoDisplaySleep,
-                reason: "Claude Max Monitor: Bildschirm wach halten",
+                reason: "Max Monitor: Bildschirm wach halten",
                 id: &displayAssertionID
             )
             let systemCreated = createAssertion(
                 type: kIOPMAssertionTypePreventUserIdleSystemSleep,
-                reason: "Claude Max Monitor: Mac wach halten",
+                reason: "Max Monitor: Mac wach halten",
                 id: &systemAssertionID
             )
             isAwake = displayCreated || systemCreated

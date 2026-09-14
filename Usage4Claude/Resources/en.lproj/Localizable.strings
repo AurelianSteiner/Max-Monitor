@@ -10,7 +10,7 @@
 "menu.general_settings" = "Settings…";
 "menu.check_updates" = "Check for Updates";
 "menu.about" = "About";
-"menu.quit" = "Quit Claude Max Monitor";
+"menu.quit" = "Quit Max Monitor";
 "menu.account" = "Account";
 "menu.account_prefix" = "Account:";
 
@@ -67,7 +67,7 @@
 
 // MARK: - Settings - About
 "settings.about.version" = "Version %@";
-"settings.about.description" = "Monitor Claude AI 5-hour usage limit";
+"settings.about.description" = "All Claude and Codex accounts at a glance in the menu bar";
 "settings.about.developer" = "Developer";
 "settings.about.license" = "License";
 "settings.about.license_value" = "MIT License";
@@ -98,7 +98,7 @@
 "language.german" = "Deutsch";
 
 // MARK: - Window Titles
-"window.settings_title" = "Claude Max Monitor Settings";
+"window.settings_title" = "Max Monitor Settings";
 
 // MARK: - Usage Data Formatting
 "usage_data.not_started_reset" = "Reset time shown after usage begins";
@@ -114,7 +114,7 @@
 // MARK: - Error Messages
 "error.invalid_url" = "Invalid URL";
 "error.no_data" = "No data received";
-"error.session_expired" = "Session expired, please reconfigure in settings";
+"error.session_expired" = "Sign-in expired — please sign in again";
 "error.cloudflare_blocked" = "Request blocked by security system. Please visit claude.ai in browser to confirm you're not a robot, then try again.";
 "error.no_credentials" = "Please configure authentication information in settings first";
 "error.network_failed" = "Network request failed. Please check your internet connection.";
@@ -241,6 +241,19 @@
 "account.kind.label" = "Type";
 "account.kind.hint" = "The type only changes the icon on the card.";
 
+/* Cancelled subscription: the day it runs out, entered by hand — no API
+   provides it. Shown as a small badge on the card. */
+"account.cancellation.label" = "Cancelled";
+"account.cancellation.hint" = "Cancelled: tick it and pick the last day of the subscription. The card then shows until when the account is still usable — the APIs don't provide that date.";
+"account.cancellation.clear" = "Remove cancellation date";
+"account.cancellation.ends_on" = "ends %@";
+"account.cancellation.ended" = "ended %@";
+"account.cancellation.help" = "Subscription cancelled — runs until %1$@ (%2$@).";
+"account.cancellation.days_today" = "ends today";
+"account.cancellation.days_one" = "1 day left";
+"account.cancellation.days_other" = "%d days left";
+"account.cancellation.days_past" = "already over";
+
 /* Codex OAuth Login (system browser) */
 "weblogin.codex_oauth_preparing" = "Preparing sign-in…";
 "weblogin.codex_oauth_waiting_browser" = "Continue in your browser";
@@ -256,10 +269,11 @@
 "weblogin.claude_oauth_manual_prompt" = "Paste the link from your browser's address bar (starts with http://localhost)";
 "weblogin.claude_oauth_manual_submit" = "Sign in with this link";
 "weblogin.claude_oauth_manual_invalid" = "No authorization code found. Copy the full link from your browser's address bar and try again.";
+"weblogin.claude_oauth_rate_limited" = "Anthropic is throttling sign-ins from this network right now. Wait a few minutes, then try again.";
 
 /* Dashboard / multi-account overview */
 "dashboard.title" = "Overview";
-"dashboard.window_title" = "Claude Max Monitor — Overview";
+"dashboard.window_title" = "Max Monitor — Overview";
 "dashboard.show_dashboard" = "Show overview";
 "dashboard.show_classic_detail" = "Show single account";
 "dashboard.open_window" = "Open overview window";
@@ -270,6 +284,7 @@
 "dashboard.refresh_account" = "Refresh this account";
 "dashboard.make_active" = "Make active account";
 "dashboard.retry" = "Retry";
+"dashboard.reauth" = "Sign in again";
 "dashboard.tap_hint" = "Click the limit rows to show what is left";
 "dashboard.updated_at" = "Updated %@";
 "dashboard.columns_one" = "1 column";
@@ -301,7 +316,7 @@
    It sets BOTH assertions — screen and Mac. */
 "dashboard.sleep.label" = "Claude Always On";
 "dashboard.sleep.info" = "Claude Always On keeps the Mac and the screen awake while the app is running. After a one-time approval (macOS asks for your password), the laptop even stays on with the lid closed — running Claude sessions simply keep working. Switch it off to end it.";
-"dashboard.sleep.help" = "Keeps the screen and the Mac awake while Claude Max Monitor is running.";
+"dashboard.sleep.help" = "Keeps the screen and the Mac awake while Max Monitor is running.";
 "dashboard.sleep.lid_note" = "Closing the lid still puts the Mac to sleep right now. The next time you turn this on, macOS asks for your password once — after that the switch also keeps a closed Mac awake.";
 "dashboard.sleep.state_on" = "On";
 "dashboard.sleep.state_off" = "Off";
@@ -313,8 +328,8 @@
 "dashboard.sleep.system_override" = "Your Mac is set to never sleep system-wide (pmset disablesleep 1) — it stays awake even without this switch, lid closed included.";
 
 /* Tooltip of the little worker in the overview header */
-"dashboard.mascot.awake_help" = "The Claudies are marching — Claude Always On is active.";
-"dashboard.mascot.asleep_help" = "All quiet. Turn on \"Claude Always On\" and the Claudies start marching.";
+"dashboard.mascot.awake_help" = "The mascots are marching — one per account, Claudies for Claude, Codex pets for Codex. Claude Always On is active.";
+"dashboard.mascot.asleep_help" = "All quiet. Turn on \"Claude Always On\" and the mascots start marching.";
 
 /* General settings: the collapsed section with the three pmset commands.
    Display and copy only — the app never runs them. */
@@ -389,7 +404,7 @@
 "team.members.delete_confirm_message" = "%@ can no longer report afterwards; the token becomes invalid.";
 
 /* Ready-made invitation — goes to the clipboard */
-"team.invite.template" = "Share your Claude usage with the team\n\n1. Get the app: https://github.com/AurelianSteiner/Claude-Max-Monitor/releases/latest\n2. In the app: Settings → Accounts → Team → Connect to server\n3. Team ID: %@\n4. Token: %@\n\nOnly percentages and reset times are shared — no keys, no content.";
+"team.invite.template" = "Share your Claude usage with the team\n\n1. Get the app: https://github.com/AurelianSteiner/Max-Monitor/releases/latest\n2. In the app: Settings → Accounts → Team → Connect to server\n3. Team ID: %@\n4. Token: %@\n\nOnly percentages and reset times are shared — no keys, no content.";
 
 /* Team overview — connection line and server states */
 "team.view.connected_as" = "Connected as %@";
