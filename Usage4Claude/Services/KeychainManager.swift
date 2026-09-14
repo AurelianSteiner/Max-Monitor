@@ -13,6 +13,10 @@ import OSLog
 /// 凭据存储后端协议：Debug 用 UserDefaults（便于开发测试、不触发系统弹窗），
 /// Release 用 Keychain（安全存储）。两种实现各自独立，`KeychainManager` 只在
 /// 选择实现时区分 `#if DEBUG`，业务方法本身不再重复。
+///
+/// Release seit 2.8.1: `VaultCredentialStorage` — die Daten liegen verschlüsselt
+/// in einer Datei, im Schlüsselbund steht nur noch der Schlüssel dazu. Warum,
+/// steht im Dateikopf von `CredentialVault.swift`.
 protocol CredentialStorage {
     func save(key: String, value: String) -> Bool
     func load(key: String) -> String?
@@ -55,7 +59,14 @@ private struct KeychainCredentialStorage: CredentialStorage {
         ]
 
         // 先尝试删除已存在的项，再添加新项
-        SecItemDelete(query as CFDictionary)
+        let deleteStatus = SecItemDelete(query as CFDictionary)
+        if deleteStatus != errSecSuccess && deleteStatus != errSecItemNotFound {
+            // Typisch nach einem Update: Der Eintrag gehört der partition ID eines
+            // anderen Builds, Löschen wird still verweigert — das Add darunter
+            // meldet dann „Duplikat". Genau deshalb speichert Release seit 2.8.1
+            // nicht mehr hier (VaultCredentialStorage).
+            Logger.keychain.error("Keychain 删除失败: \(key), 状态码: \(deleteStatus)")
+        }
         let status = SecItemAdd(query as CFDictionary, nil)
 
         if status == errSecSuccess {
@@ -106,6 +117,129 @@ private struct KeychainCredentialStorage: CredentialStorage {
     }
 }
 
+/// Release-Speicher seit 2.8.1: Zugangsdaten in `CredentialVault` (verschlüsselte
+/// Datei im App-Container), im Schlüsselbund nur der Schlüssel dazu.
+///
+/// Der Schlüsselbund-Eintrag `vault-key` wird genau einmal angelegt und danach
+/// nur noch gelesen — Lesen erlaubt der Schlüsselbund jedem Build derselben
+/// Signatur (nach der Einmal-Frage), Schreiben nur dem Build, der den Eintrag
+/// angelegt hat (partition ID). Deshalb landet alles, was sich ändert, in der
+/// Datei, die die App selbst schreibt.
+///
+/// Altbestand: Was noch als eigener Schlüsselbund-Eintrag liegt (`accounts`,
+/// `accounts_codex`, …), wird beim Start in den Tresor übernommen und im
+/// Schlüsselbund gelöscht, sofern der Schlüsselbund das zulässt. Lässt er es
+/// nicht zu (Eintrag eines anderen Builds), bleibt der alte Eintrag stehen,
+/// wird aber nicht mehr gelesen, sobald der Tresor ihn hat.
+///
+/// Ist der Schlüssel weder lesbar (Frage verneint) noch anlegbar (fremder
+/// Eintrag blockiert), bleibt es beim reinen Schlüsselbund wie bis 2.8.
+private final class VaultCredentialStorage: CredentialStorage {
+
+    /// Name des Schlüssel-Eintrags im Schlüsselbund
+    static let vaultKeyAccount = "vault-key"
+    /// Einträge, die aus dem Schlüsselbund in den Tresor wandern
+    static let migratedKeys = ["accounts", "accounts_codex", "teamServerToken", "sessionKey", "organizationId"]
+
+    private let keychain: KeychainCredentialStorage
+    private let vault: CredentialVault?
+
+    init(service: String) {
+        keychain = KeychainCredentialStorage(service: service)
+        vault = Self.openVault(service: service, keychain: keychain)
+        migrateLegacyEntries()
+    }
+
+    // MARK: - CredentialStorage
+
+    func save(key: String, value: String) -> Bool {
+        guard let vault else { return keychain.save(key: key, value: value) }
+        let saved = vault.save(key: key, value: value)
+        if !saved {
+            Logger.keychain.error("Tresor: Speichern fehlgeschlagen (\(key))")
+        }
+        return saved
+    }
+
+    func load(key: String) -> String? {
+        if let vault, let value = vault.load(key: key) {
+            return value
+        }
+        // Noch nicht übernommener Altbestand — oder gar kein Tresor
+        return keychain.load(key: key)
+    }
+
+    func delete(key: String) -> Bool {
+        let vaultDone = vault?.delete(key: key) ?? true
+        let keychainDone = keychain.delete(key: key)
+        return vaultDone && keychainDone
+    }
+
+    // MARK: - Tresor öffnen
+
+    private static func openVault(service: String, keychain: KeychainCredentialStorage) -> CredentialVault? {
+        guard let fileURL = vaultFileURL(service: service) else {
+            Logger.keychain.error("Tresor: Application-Support-Ordner nicht erreichbar")
+            return nil
+        }
+
+        let keyData: Data
+        if let stored = keychain.load(key: vaultKeyAccount),
+           let data = Data(base64Encoded: stored), data.count == CredentialVault.keyLength {
+            keyData = data
+        } else {
+            // Kein Schlüssel lesbar: entweder gibt es noch keinen (erster Start
+            // mit dem Tresor) — dann anlegen — oder das Lesen wurde verweigert.
+            // Im zweiten Fall scheitert das Anlegen am vorhandenen Eintrag
+            // (Duplikat), und es bleibt beim Schlüsselbund; nichts wird überschrieben.
+            let fresh = CredentialVault.generateKey()
+            guard keychain.save(key: vaultKeyAccount, value: fresh.base64EncodedString()) else {
+                Logger.keychain.error("Tresor-Schlüssel weder lesbar noch anlegbar – Zugangsdaten bleiben im Schlüsselbund")
+                return nil
+            }
+            Logger.keychain.notice("Tresor-Schlüssel angelegt")
+            keyData = fresh
+        }
+
+        do {
+            return try CredentialVault(fileURL: fileURL, key: keyData)
+        } catch {
+            Logger.keychain.error("Tresor konnte nicht geöffnet werden: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// `~/Library/Containers/<bundle id>/Data/Library/Application Support/<service>/credentials.vault`
+    /// (die App ist sandboxed, FileManager liefert den Container-Pfad)
+    private static func vaultFileURL(service: String) -> URL? {
+        guard let base = try? FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        ) else { return nil }
+        return base
+            .appendingPathComponent(service, isDirectory: true)
+            .appendingPathComponent("credentials.vault")
+    }
+
+    // MARK: - Altbestand übernehmen
+
+    /// Einmal je Eintrag: Was noch im Schlüsselbund liegt und im Tresor fehlt,
+    /// wird kopiert und — wenn der Schlüsselbund es zulässt — dort gelöscht.
+    private func migrateLegacyEntries() {
+        guard let vault else { return }
+        for key in Self.migratedKeys where !vault.contains(key: key) {
+            guard let value = keychain.load(key: key) else { continue }
+            guard vault.save(key: key, value: value) else {
+                Logger.keychain.error("Tresor: Übernahme fehlgeschlagen (\(key)) – bleibt im Schlüsselbund")
+                continue
+            }
+            // Löschen gelingt nur dem Build, der den Eintrag angelegt hat. Sonst
+            // bleibt eine (ab jetzt ungelesene) Kopie liegen — `delete` loggt das.
+            _ = keychain.delete(key: key)
+            Logger.keychain.notice("Tresor: \(key) übernommen")
+        }
+    }
+}
+
 /// 管理认证凭据存储的类
 /// 用于安全存储敏感信息（如 Organization ID 和 Session Key）
 /// Debug 模式：使用 UserDefaults（便于开发测试，不弹窗）
@@ -120,7 +254,9 @@ class KeychainManager {
         storage = UserDefaultsCredentialStorage()
         #else
         // 动态获取 Bundle ID，如果获取失败则使用默认值
-        storage = KeychainCredentialStorage(service: Bundle.main.bundleIdentifier ?? "xyz.fi5h.Usage4Claude")
+        // Seit 2.8.1: Tresor-Datei plus Schlüssel im Schlüsselbund statt Einträge im
+        // Schlüsselbund — siehe VaultCredentialStorage / CredentialVault.swift.
+        storage = VaultCredentialStorage(service: Bundle.main.bundleIdentifier ?? "xyz.fi5h.Usage4Claude")
         #endif
     }
 
