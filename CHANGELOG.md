@@ -1,5 +1,41 @@
 # Änderungen
 
+## 2.9
+
+- **Privat oder Firma jetzt auch für Codex.** Die Angabe gab es bisher nur auf
+  der Claude-Seite. Wer bei Codex dieselbe Trennung fährt — Arbeitskonto neben
+  privatem Abo, oft auf derselben Email —, konnte die beiden Karten nicht
+  auseinanderhalten. Die Auswahl steht jetzt in jeder Kontozeile, für beide
+  Anbieter. Codex' Anmeldung liefert dazu nichts, dort ist die Handeingabe die
+  einzige Quelle; bei Claude bleibt es dabei, dass der Login rät und die
+  Auswahl sein Ergebnis überschreibt.
+- **Die Art steht groß auf der Karte.** Statt eines grauen 9-pt-Symbols, das man
+  suchen musste, steht die Art ausgeschrieben in einer getönten Plakette —
+  grün „Privat", violett „Firma". Die Töne liegen bewusst außerhalb der
+  Auslastungsskala: In Orange oder Blau läse man sie als Messwert. Bei
+  unbekannter Art bleibt die Stelle weiter leer, statt zu raten.
+- **Claude links, Codex rechts.** Die Übersicht trennt die Konten auf zwei
+  Bahnen, jede mit Logo, Namen und Kartenzahl im Kopf. Vorher lagen alle Karten
+  in einem Gitter, und die Sortierung „Freieste zuerst" mischte Claude- und
+  Codex-Karten gerade absichtlich durcheinander. Die gewählte Sortierung gilt
+  weiter, nur eben innerhalb jeder Bahn. Umschalten über denselben Regler wie
+  Sortierung und Spalten („Nach Anbieter trennen", standardmäßig an). Wer nur
+  einen Anbieter nutzt, merkt nichts: Dann gibt es eine Bahn und das gewohnte
+  Gitter. Im eigenen Fenster wächst jede Bahn beim Breiterziehen auf mehrere
+  Spalten. Die Menüleisten-Punktreihe folgt derselben Regel, damit Punkte und
+  Karten nie in verschiedener Folge stehen.
+- **Ein eigenes Claude-Logo.** Bisher diente das App-Symbol als Claude-Zeichen —
+  auf der Claude-Bahn hätte also das Symbol der App selbst gestanden. Claude hat
+  jetzt sein eigenes Bild (der Clay-orange Stern), gezeichnet von
+  `scripts/make_provider_icons.swift`. Karte, Bahnkopf und Einstellungen zeigen
+  über `ProviderLogo` dasselbe Bild; die Abschnittsköpfe in den Einstellungen
+  stehen jetzt immer da, nicht erst wenn beide Anbieter hinterlegt sind.
+- **Neues App-Symbol: ein Monitor.** Die App heißt Max **Monitor**, und der alte
+  Wasserkreis war von Claudes eigenem Zeichen kaum zu unterscheiden — im Dock
+  standen zwei orange Kreise nebeneinander. Der Pegel steckt jetzt im
+  Bildschirm: Das Motiv sagt „Monitor", der Inhalt weiter „Auslastung". Wie
+  bisher gezeichnet von `scripts/make_icon.swift`, also Code statt Binärdatei.
+
 ## 2.8.1
 
 - **Speichern funktioniert nach Updates wieder.** Der Schlüsselbund bindet jeden

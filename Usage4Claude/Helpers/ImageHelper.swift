@@ -37,7 +37,14 @@ enum ImageHelper {
         return iconCopy
     }
 
-    // MARK: - Codex Icon
+    // MARK: - Anbieter-Symbole
+
+    /// Claudes Zeichen — der Clay-orange Stern. Bis 2.9 stand hier das
+    /// App-Symbol; seit das ein Monitor ist, trägt Claude ein eigenes Bild
+    /// (erzeugt von `scripts/make_provider_icons.swift`).
+    static func createClaudeIcon(size: CGFloat) -> NSImage? {
+        createSquareIcon(named: "ClaudeIcon", size: size, isTemplate: false)
+    }
 
     static func createCodexIcon(size: CGFloat) -> NSImage? {
         createSquareIcon(named: "CodexIcon", size: size, isTemplate: false, sourceInset: 2)

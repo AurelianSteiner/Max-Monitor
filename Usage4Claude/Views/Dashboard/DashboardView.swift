@@ -33,6 +33,8 @@ enum DashboardMetrics {
     static let outerPadding: CGFloat = 12
     static let headerHeight: CGFloat = 36
     static let footerHeight: CGFloat = 24
+    /// Kopf einer Anbieter-Bahn (Logo + Name + Zähler) über deren Karten.
+    static let laneHeaderHeight: CGFloat = 24
     /// 网格区域的最大高度，超过则内部滚动
     static let maxGridHeight: CGFloat = 520
 
@@ -117,11 +119,37 @@ enum DashboardMetrics {
         return min(max(1, fitting), max(1, snapshotCount))
     }
 
-    static func width(columns: Int) -> CGFloat {
+    /// Reine Kartenfläche (ohne den Außenabstand) für n Spalten — das Maß einer
+    /// Anbieter-Bahn.
+    static func cardsWidth(columns: Int) -> CGFloat {
         let columns = max(1, columns)
-        return CGFloat(columns) * cardWidth
-            + CGFloat(columns - 1) * cardSpacing
-            + outerPadding * 2
+        return CGFloat(columns) * cardWidth + CGFloat(columns - 1) * cardSpacing
+    }
+
+    static func width(columns: Int) -> CGFloat {
+        cardsWidth(columns: columns) + outerPadding * 2
+    }
+
+    /// Höhe der zweibahnigen Ansicht: die höhere Bahn gibt sie vor, dazu der
+    /// Bahnkopf. Beide Bahnen stehen oben bündig, die kürzere lässt unten Luft.
+    static func groupedHeight(for groups: [ProviderGroup], laneColumns: Int) -> CGFloat {
+        guard !groups.isEmpty else { return 120 }
+        let tallest = groups
+            .map { gridHeight(for: $0.snapshots, columns: laneColumns) }
+            .max() ?? ringSlotWidth
+        return tallest + laneHeaderHeight
+    }
+
+    /// Spalten *je Bahn* aus der vorhandenen Breite. Nur das eigene Fenster
+    /// rechnet so — im popover ist jede Bahn genau eine Karte breit, sonst
+    /// würde das Fenster bei zwei Anbietern sofort über den Bildschirm laufen.
+    static func laneColumnCount(fittingWidth width: CGFloat, laneCount: Int, maxCards: Int) -> Int {
+        let lanes = max(1, laneCount)
+        let available = width - outerPadding * 2 - CGFloat(lanes - 1) * cardSpacing
+        let laneWidth = available / CGFloat(lanes)
+        // Halber Punkt Toleranz, gleiche Begründung wie bei `columnCount(fittingWidth:)`
+        let fitting = Int(floor((laneWidth + cardSpacing + 0.5) / (cardWidth + cardSpacing)))
+        return min(max(1, fitting), max(1, maxCards))
     }
 }
 
@@ -171,7 +199,34 @@ struct DashboardView: View {
     /// Sie steht bewusst nur an *einer* Stelle: Solange die Übersicht hier eine
     /// eigene Kopie hielt, konnten Karten und Punkte auseinanderlaufen.
     private var orderedSnapshots: [AccountUsageSnapshot] {
-        AccountUsageSnapshot.ordered(manager.snapshots, mode: settings.dashboardSortMode)
+        AccountUsageSnapshot.ordered(
+            manager.snapshots,
+            mode: settings.dashboardSortMode,
+            groupByProvider: settings.dashboardGroupByProvider
+        )
+    }
+
+    /// Die Konten je Anbieter, schon sortiert — eine Gruppe je Bahn.
+    private var providerGroups: [ProviderGroup] {
+        AccountUsageSnapshot.grouped(manager.snapshots, mode: settings.dashboardSortMode)
+    }
+
+    /// Zwei Bahnen nebeneinander (Claude links, Codex rechts). Bei nur einem
+    /// Anbieter gibt es nichts zu trennen — dann bleibt es beim gewohnten
+    /// Gitter, sonst hätte ein reiner Claude-Nutzer plötzlich eine Spalte.
+    private var isGrouped: Bool {
+        settings.dashboardGroupByProvider && providerGroups.count > 1
+    }
+
+    /// Spalten innerhalb einer Bahn. Im popover immer eine; im eigenen Fenster
+    /// so viele, wie die halbe Breite hergibt.
+    private var laneColumnCount: Int {
+        guard isStandaloneWindow, measuredWidth > 0 else { return 1 }
+        return DashboardMetrics.laneColumnCount(
+            fittingWidth: measuredWidth,
+            laneCount: providerGroups.count,
+            maxCards: providerGroups.map { $0.snapshots.count }.max() ?? 1
+        )
     }
 
     /// 当前最空闲的账户 id：只有存在至少两个有数据的账户时才标注，
@@ -209,10 +264,10 @@ struct DashboardView: View {
     }
 
     private var gridHeight: CGFloat {
-        min(
-            DashboardMetrics.gridHeight(for: orderedSnapshots, columns: columnCount),
-            DashboardMetrics.maxGridHeight
-        )
+        let raw = isGrouped
+            ? DashboardMetrics.groupedHeight(for: providerGroups, laneColumns: laneColumnCount)
+            : DashboardMetrics.gridHeight(for: orderedSnapshots, columns: columnCount)
+        return min(raw, DashboardMetrics.maxGridHeight)
     }
 
     /// Wunschbreite des Inhalts (= exakte Breite im popover, Startbreite des Fensters).
@@ -220,13 +275,18 @@ struct DashboardView: View {
     /// hinge die Idealbreite an der gemessenen Breite und beide würden sich
     /// gegenseitig nachziehen.
     private var contentWidth: CGFloat {
-        DashboardMetrics.width(columns: settingColumnCount)
+        isGrouped
+            ? DashboardMetrics.width(columns: providerGroups.count)
+            : DashboardMetrics.width(columns: settingColumnCount)
     }
 
     /// Untergrenze: im eigenen Fenster genau eine Spalte, damit man es wirklich
     /// schmal ziehen kann; im popover die volle Inhaltsbreite.
     private var minContentWidth: CGFloat {
-        isStandaloneWindow ? DashboardMetrics.width(columns: 1) : contentWidth
+        // Getrennte Bahnen brauchen ihre Bahnen: schmaler als „eine Karte je
+        // Anbieter" darf das Fenster nicht werden, sonst überlappen sie.
+        if isGrouped { return DashboardMetrics.width(columns: providerGroups.count) }
+        return isStandaloneWindow ? DashboardMetrics.width(columns: 1) : contentWidth
     }
 
     /// Im eigenen Fenster darf der Inhalt mitwachsen, im popover nicht:
@@ -615,12 +675,31 @@ struct DashboardView: View {
                 }
             }
             Divider()
-            ForEach(1...3, id: \.self) { count in
-                Button(action: { applyColumns(count) }) {
-                    HStack {
-                        Text(L.Dashboard.columns(count))
-                        if settings.dashboardColumns == count {
-                            Spacer(); Image(systemName: "checkmark")
+
+            // Anbieter trennen: Claude links, Codex rechts. Steht direkt unter
+            // der Sortierung, weil beides dieselbe Frage betrifft — in welcher
+            // Ordnung die Karten liegen.
+            Button(action: { toggleGrouping() }) {
+                HStack {
+                    Text(L.Dashboard.groupByProvider)
+                    if settings.dashboardGroupByProvider {
+                        Spacer(); Image(systemName: "checkmark")
+                    }
+                }
+            }
+
+            // Die Spaltenwahl gilt nur für das durchgehende Gitter. Bei
+            // getrennten Bahnen bestimmen die Bahnen die Breite, der Eintrag
+            // wäre dort ein Schalter ohne Wirkung.
+            if !isGrouped {
+                Divider()
+                ForEach(1...3, id: \.self) { count in
+                    Button(action: { applyColumns(count) }) {
+                        HStack {
+                            Text(L.Dashboard.columns(count))
+                            if settings.dashboardColumns == count {
+                                Spacer(); Image(systemName: "checkmark")
+                            }
                         }
                     }
                 }
@@ -647,6 +726,19 @@ struct DashboardView: View {
         settings.dashboardColumns = count
         if isStandaloneWindow {
             DashboardWindowManager.shared.resize(toColumns: count)
+        }
+    }
+
+    /// Anbieter-Trennung umschalten. Im eigenen Fenster muss dabei die Breite
+    /// mitwachsen: Zwei Bahnen brauchen zwei Kartenbreiten, sonst klickt man
+    /// den Eintrag an und sieht nur ein enger gewordenes Gitter.
+    private func toggleGrouping() {
+        settings.dashboardGroupByProvider.toggle()
+        guard isStandaloneWindow else { return }
+        if settings.dashboardGroupByProvider {
+            DashboardWindowManager.shared.widen(toAtLeastColumns: providerGroups.count)
+        } else {
+            DashboardWindowManager.shared.resize(toColumns: settings.dashboardColumns)
         }
     }
 
@@ -769,23 +861,11 @@ struct DashboardView: View {
                 .frame(height: sortRowHeight)
 
                 ScrollView(.vertical, showsIndicators: true) {
-                    // Im eigenen Fenster mittig, damit der Rest der Breite links und
-                    // rechts gleichmäßig verteilt wird; im popover deckungsgleich.
-                    LazyVGrid(columns: gridColumns, alignment: isStandaloneWindow ? .center : .leading, spacing: DashboardMetrics.cardSpacing) {
-                        ForEach(orderedSnapshots) { snapshot in
-                            AccountUsageCard(
-                                snapshot: snapshot,
-                                showRemainingMode: $showRemainingMode,
-                                onSelect: { select(snapshot) },
-                                onRefresh: { manager.refreshAccount(id: snapshot.id) },
-                                onOpenAuthSettings: { onMenuAction?(.authSettings) }
-                            )
-                        }
-                    }
-                    .padding(.horizontal, DashboardMetrics.outerPadding)
-                    .padding(.bottom, DashboardMetrics.outerPadding)
-                    .padding(.top, 2)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                    cards
+                        .padding(.horizontal, DashboardMetrics.outerPadding)
+                        .padding(.bottom, DashboardMetrics.outerPadding)
+                        .padding(.top, 2)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
             .frame(
@@ -794,6 +874,92 @@ struct DashboardView: View {
                 maxHeight: isStandaloneWindow ? .infinity : boxHeight + sortRowHeight
             )
         }
+    }
+
+    /// Die Karten selbst — entweder getrennt nach Anbieter (zwei Bahnen) oder
+    /// als ein durchgehendes Gitter.
+    @ViewBuilder
+    private var cards: some View {
+        if isGrouped {
+            HStack(alignment: .top, spacing: DashboardMetrics.cardSpacing) {
+                ForEach(providerGroups) { group in
+                    lane(group)
+                }
+            }
+        } else {
+            // Im eigenen Fenster mittig, damit der Rest der Breite links und
+            // rechts gleichmäßig verteilt wird; im popover deckungsgleich.
+            LazyVGrid(
+                columns: gridColumns,
+                alignment: isStandaloneWindow ? .center : .leading,
+                spacing: DashboardMetrics.cardSpacing
+            ) {
+                ForEach(orderedSnapshots) { snapshot in
+                    card(snapshot)
+                }
+            }
+        }
+    }
+
+    /// Eine Anbieter-Bahn: Kopf mit Logo, darunter die Karten dieses Anbieters
+    /// in der gewählten Sortierung.
+    private func lane(_ group: ProviderGroup) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            laneHeader(group)
+
+            LazyVGrid(
+                columns: laneGridColumns,
+                alignment: .leading,
+                spacing: DashboardMetrics.cardSpacing
+            ) {
+                ForEach(group.snapshots) { snapshot in
+                    card(snapshot)
+                }
+            }
+        }
+        .frame(width: DashboardMetrics.cardsWidth(columns: laneColumnCount), alignment: .topLeading)
+    }
+
+    private var laneGridColumns: [GridItem] {
+        Array(
+            repeating: GridItem(.fixed(DashboardMetrics.cardWidth), spacing: DashboardMetrics.cardSpacing, alignment: .top),
+            count: laneColumnCount
+        )
+    }
+
+    /// Logo, Name und Kartenzahl über einer Bahn. Das Logo ist der eigentliche
+    /// Punkt: Ohne es waren Claude- und Codex-Karten nur an der Farbe der
+    /// Wasserstände zu unterscheiden — und die ändert sich mit der Auslastung.
+    private func laneHeader(_ group: ProviderGroup) -> some View {
+        HStack(spacing: 6) {
+            ProviderLogo(provider: group.provider, size: 15)
+
+            Text(group.provider.displayName)
+                .font(.system(size: 12, weight: .semibold))
+                .fixedSize()
+
+            Text(verbatim: "\(group.snapshots.count)")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                .fixedSize()
+
+            VStack { Divider() }
+        }
+        .frame(height: DashboardMetrics.laneHeaderHeight)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func card(_ snapshot: AccountUsageSnapshot) -> some View {
+        AccountUsageCard(
+            snapshot: snapshot,
+            showRemainingMode: $showRemainingMode,
+            onSelect: { select(snapshot) },
+            onRefresh: { manager.refreshAccount(id: snapshot.id) },
+            onOpenAuthSettings: { onMenuAction?(.authSettings) }
+        )
     }
 
     /// Leerer Zustand: kein Konto hinterlegt. Statt einer leeren Karten-Grid

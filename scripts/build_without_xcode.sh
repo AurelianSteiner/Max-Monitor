@@ -152,7 +152,7 @@ for lproj in "$PROJECT_ROOT/$APP_NAME/Resources"/*.lproj; do
     cp -R "$lproj" "$CONTENTS/Resources/"
 done
 
-# Icons: ohne actool kein Assets.car — die vier benötigten Bilder kommen als
+# Icons: ohne actool kein Assets.car — die benötigten Bilder kommen als
 # lose Dateien ins Bundle, NSImage(named:) findet sie dort ebenfalls.
 ASSETS="$PROJECT_ROOT/$APP_NAME/Resources/Assets.xcassets"
 # AppIcon.icns aus den PNGs des Asset-Katalogs erzeugen, statt eine vorgebaute
@@ -167,6 +167,7 @@ done
 iconutil -c icns "$ICONSET" -o "$CONTENTS/Resources/AppIcon.icns" || fail "AppIcon.icns konnte nicht erzeugt werden"
 rm -rf "$ICONSET"
 cp "$ASSETS/AppIconReverse.imageset/icon.reverse@2x.png"               "$CONTENTS/Resources/AppIconReverse@2x.png"
+cp "$ASSETS/ClaudeIcon.imageset/icon.claude@2x.png"                    "$CONTENTS/Resources/ClaudeIcon@2x.png"
 cp "$ASSETS/CodexIcon.imageset/icon.codex@2x.png"                      "$CONTENTS/Resources/CodexIcon@2x.png"
 cp "$ASSETS/CodexIconReverse.imageset/icon.codex.reverse@2x.png"       "$CONTENTS/Resources/CodexIconReverse@2x.png"
 

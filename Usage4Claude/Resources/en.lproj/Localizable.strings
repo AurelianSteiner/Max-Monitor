@@ -239,7 +239,7 @@
 "account.kind.personal" = "Personal";
 "account.kind.unknown" = "Unknown";
 "account.kind.label" = "Type";
-"account.kind.hint" = "The type only changes the icon on the card.";
+"account.kind.hint" = "Personal or company — shown as a badge on the card. Applies to Claude and Codex accounts.";
 
 /* Cancelled subscription: the day it runs out, entered by hand — no API
    provides it. Shown as a small badge on the card. */
@@ -280,6 +280,7 @@
 "dashboard.open_team_window" = "Team overview";
 "dashboard.sort_by_order" = "Account order";
 "dashboard.sort_by_availability" = "Most free first";
+"dashboard.group_by_provider" = "Separate by provider";
 "dashboard.sort_help" = "Sorting and columns";
 "dashboard.refresh_account" = "Refresh this account";
 "dashboard.make_active" = "Make active account";

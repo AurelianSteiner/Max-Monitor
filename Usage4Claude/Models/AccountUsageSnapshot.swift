@@ -210,7 +210,34 @@ extension AccountUsageSnapshot {
     ///   - mode: Sortierwunsch des Nutzers
     /// - Returns: Die Konten in Anzeigereihenfolge — bei `.availability` das freieste
     ///   zuerst, das vollste zuletzt.
-    static func ordered(_ snapshots: [AccountUsageSnapshot], mode: DashboardSortMode) -> [AccountUsageSnapshot] {
+    ///   - groupByProvider: Konten desselben Anbieters zusammenhalten (Claude
+    ///     zuerst, dann Codex). Die Sortierung greift dann innerhalb jeder
+    ///     Gruppe — genau das, was die zweibahnige Übersicht zeigt.
+    static func ordered(
+        _ snapshots: [AccountUsageSnapshot],
+        mode: DashboardSortMode,
+        groupByProvider: Bool = false
+    ) -> [AccountUsageSnapshot] {
+        guard groupByProvider else { return sorted(snapshots, mode: mode) }
+        return grouped(snapshots, mode: mode).flatMap { $0.snapshots }
+    }
+
+    /// Dieselben Konten, aber nach Anbieter getrennt: Claude zuerst, dann Codex,
+    /// jede Gruppe für sich nach `mode` sortiert. Leere Gruppen fallen weg — wer
+    /// nur einen Anbieter nutzt, bekommt genau eine.
+    ///
+    /// Die Übersicht rendert daraus ihre zwei Bahnen, die Menüleisten-Punktreihe
+    /// hängt dieselben Gruppen einfach hintereinander. Beide teilen sich damit
+    /// weiterhin *eine* Reihenfolge-Regel.
+    static func grouped(_ snapshots: [AccountUsageSnapshot], mode: DashboardSortMode) -> [ProviderGroup] {
+        ProviderType.allCases.compactMap { provider in
+            let members = sorted(snapshots.filter { $0.provider == provider }, mode: mode)
+            guard !members.isEmpty else { return nil }
+            return ProviderGroup(provider: provider, snapshots: members)
+        }
+    }
+
+    private static func sorted(_ snapshots: [AccountUsageSnapshot], mode: DashboardSortMode) -> [AccountUsageSnapshot] {
         switch mode {
         case .accountOrder:
             // Layout-Stabilität geht vor: die Karten sollen nicht herumspringen
@@ -226,4 +253,15 @@ extension AccountUsageSnapshot {
             }
         }
     }
+}
+
+// MARK: - Anbieter-Bahn
+
+/// Eine Bahn der Übersicht: alle Konten eines Anbieters, schon sortiert.
+/// `ProviderType` ist der Schlüssel — je Anbieter gibt es genau eine Bahn.
+struct ProviderGroup: Identifiable {
+    let provider: ProviderType
+    let snapshots: [AccountUsageSnapshot]
+
+    var id: ProviderType { provider }
 }

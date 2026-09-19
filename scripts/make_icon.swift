@@ -1,9 +1,14 @@
 //
 //  make_icon.swift — erzeugt die App-Symbol-PNGs
 //
-//  Zeichnet das Symbol (Wasserstand im Ring auf Creme) in allen Größen, die der
-//  Asset-Katalog braucht, und schreibt sie direkt dorthin. Damit ist das Symbol
-//  Code und keine Binärdatei, die niemand mehr ändern kann.
+//  Zeichnet das Symbol in allen Größen, die der Asset-Katalog braucht, und
+//  schreibt sie direkt dorthin. Damit ist das Symbol Code und keine Binärdatei,
+//  die niemand mehr ändern kann.
+//
+//  Das Motiv (seit 2.9): ein Monitor. Die App heißt Max **Monitor**, und der
+//  frühere Wasserkreis war von Claudes eigenem Zeichen kaum zu unterscheiden —
+//  im Dock standen zwei orange Kreise nebeneinander. Der Pegel steckt jetzt im
+//  Bildschirm: Das Motiv sagt „Monitor" und der Inhalt weiter „Auslastung".
 //
 //  Aufruf:  swift scripts/make_icon.swift
 //
@@ -13,12 +18,13 @@ import Foundation
 
 // Farben aus der Auslastungsskala der App
 let cream = NSColor(red: 0xF5 / 255.0, green: 0xF1 / 255.0, blue: 0xEC / 255.0, alpha: 1)
+let creamDeep = NSColor(red: 0xE9 / 255.0, green: 0xE3 / 255.0, blue: 0xDB / 255.0, alpha: 1)
 let well = NSColor(red: 0xE8 / 255.0, green: 0xE2 / 255.0, blue: 0xDA / 255.0, alpha: 1)
 let water = NSColor(red: 0xD9 / 255.0, green: 0x77 / 255.0, blue: 0x57 / 255.0, alpha: 1)
 let outline = NSColor(red: 0x2B / 255.0, green: 0x2A / 255.0, blue: 0x28 / 255.0, alpha: 1)
 
-/// Anteil, bis zu dem der Ring gefüllt ist. Bewusst nicht halb — ein leicht
-/// asymmetrischer Pegel liest sich als Messwert, genau in der Mitte als Dekor.
+/// Anteil, bis zu dem der Bildschirm gefüllt ist. Bewusst nicht halb — ein
+/// leicht asymmetrischer Pegel liest sich als Messwert, genau in der Mitte als Dekor.
 let fillLevel: CGFloat = 0.62
 
 func drawIcon(size: CGFloat) -> NSImage {
@@ -34,50 +40,86 @@ func drawIcon(size: CGFloat) -> NSImage {
     let inset = size * 0.0977
     let tile = NSRect(x: inset, y: inset, width: size - inset * 2, height: size - inset * 2)
     let corner = tile.width * 0.2245
+    let t = tile.width
 
     let tilePath = NSBezierPath(roundedRect: tile, xRadius: corner, yRadius: corner)
-    cream.setFill()
-    tilePath.fill()
-
-    // Ring
-    let radius = tile.width * 0.34
-    let center = NSPoint(x: tile.midX, y: tile.midY)
-    let circleRect = NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
-    let circle = NSBezierPath(ovalIn: circleRect)
-
-    well.setFill()
-    circle.fill()
-
-    // Wasser mit ruhiger Welle an der Oberkante, auf den Ring beschnitten
     NSGraphicsContext.saveGraphicsState()
-    circle.addClip()
+    tilePath.addClip()
+    // Ein Hauch Verlauf nach unten: Ohne ihn wirkt die große 1024er Kachel flach,
+    // im Dock sieht man ihn kaum — genau so ist er gemeint.
+    NSGradient(starting: cream, ending: creamDeep)?.draw(in: tile, angle: -90)
+    NSGraphicsContext.restoreGraphicsState()
 
-    let surfaceY = circleRect.minY + circleRect.height * fillLevel
-    let waveHeight = radius * 0.075
+    // Maße des Monitors, alle an der Kachelkante gemessen. Gehäuse + Hals + Fuß
+    // ergeben zusammen 0,67 t und sitzen damit mittig mit gleich viel Luft
+    // oben wie unten.
+    let bodyWidth = t * 0.74
+    let bodyHeight = t * 0.54
+    let neckWidth = t * 0.13
+    let neckHeight = t * 0.075
+    let footWidth = t * 0.34
+    let footHeight = t * 0.052
+    let bottom = tile.minY + (t - (bodyHeight + neckHeight + footHeight)) / 2
+
+    // Fuß
+    let foot = NSRect(
+        x: tile.midX - footWidth / 2, y: bottom,
+        width: footWidth, height: footHeight
+    )
+    outline.setFill()
+    NSBezierPath(roundedRect: foot, xRadius: footHeight / 2, yRadius: footHeight / 2).fill()
+
+    // Hals — überlappt Fuß und Gehäuse um einen Hauch, damit an den Übergängen
+    // keine hellen Nähte stehen bleiben.
+    let neck = NSRect(
+        x: tile.midX - neckWidth / 2, y: bottom + footHeight - t * 0.004,
+        width: neckWidth, height: neckHeight + t * 0.008
+    )
+    NSBezierPath(rect: neck).fill()
+
+    // Gehäuse: gefüllte Fläche statt Kontur — bei 16 px trägt ein Rahmen aus
+    // Fläche, eine dünne Linie verschwindet.
+    let body = NSRect(
+        x: tile.midX - bodyWidth / 2, y: bottom + footHeight + neckHeight,
+        width: bodyWidth, height: bodyHeight
+    )
+    let bodyCorner = t * 0.075
+    NSBezierPath(roundedRect: body, xRadius: bodyCorner, yRadius: bodyCorner).fill()
+
+    // Bildschirm
+    let bezel = t * 0.055
+    let screen = body.insetBy(dx: bezel, dy: bezel)
+    let screenCorner = bodyCorner - bezel * 0.55
+    let screenPath = NSBezierPath(roundedRect: screen, xRadius: screenCorner, yRadius: screenCorner)
+    well.setFill()
+    screenPath.fill()
+
+    // Wasser mit ruhiger Welle an der Oberkante, auf den Bildschirm beschnitten
+    NSGraphicsContext.saveGraphicsState()
+    screenPath.addClip()
+
+    let surfaceY = screen.minY + screen.height * fillLevel
+    let waveHeight = screen.height * 0.05
+    let overhang = screen.width * 0.5
     let wave = NSBezierPath()
-    wave.move(to: NSPoint(x: circleRect.minX - radius, y: surfaceY))
+    wave.move(to: NSPoint(x: screen.minX - overhang, y: surfaceY))
     wave.curve(
-        to: NSPoint(x: center.x, y: surfaceY),
-        controlPoint1: NSPoint(x: circleRect.minX - radius * 0.4, y: surfaceY + waveHeight),
-        controlPoint2: NSPoint(x: circleRect.minX + radius * 0.4, y: surfaceY + waveHeight)
+        to: NSPoint(x: screen.midX, y: surfaceY),
+        controlPoint1: NSPoint(x: screen.minX - overhang * 0.4, y: surfaceY + waveHeight),
+        controlPoint2: NSPoint(x: screen.minX + overhang * 0.4, y: surfaceY + waveHeight)
     )
     wave.curve(
-        to: NSPoint(x: circleRect.maxX + radius, y: surfaceY),
-        controlPoint1: NSPoint(x: center.x + radius * 0.6, y: surfaceY - waveHeight),
-        controlPoint2: NSPoint(x: circleRect.maxX + radius * 0.4, y: surfaceY - waveHeight)
+        to: NSPoint(x: screen.maxX + overhang, y: surfaceY),
+        controlPoint1: NSPoint(x: screen.midX + overhang * 0.6, y: surfaceY - waveHeight),
+        controlPoint2: NSPoint(x: screen.maxX + overhang * 0.4, y: surfaceY - waveHeight)
     )
-    wave.line(to: NSPoint(x: circleRect.maxX + radius, y: circleRect.minY - radius))
-    wave.line(to: NSPoint(x: circleRect.minX - radius, y: circleRect.minY - radius))
+    wave.line(to: NSPoint(x: screen.maxX + overhang, y: screen.minY - overhang))
+    wave.line(to: NSPoint(x: screen.minX - overhang, y: screen.minY - overhang))
     wave.close()
     water.setFill()
     wave.fill()
 
     NSGraphicsContext.restoreGraphicsState()
-
-    // Kontur zuletzt, damit sie über der Wasserkante liegt
-    outline.setStroke()
-    circle.lineWidth = max(1, radius * 0.1)
-    circle.stroke()
 
     image.unlockFocus()
     return image

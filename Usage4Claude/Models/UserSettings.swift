@@ -329,6 +329,18 @@ class UserSettings: ObservableObject {
         }
     }
 
+    /// Konten nach Anbieter in zwei Bahnen trennen: Claude links, Codex rechts.
+    /// Gemischt nebeneinander war auf einen Blick nicht zu sehen, welche Karte
+    /// zu welchem Dienst gehört — die Sortierung nach Verfügbarkeit mischt die
+    /// beiden Reihen ja gerade absichtlich durcheinander. Die gewählte
+    /// Sortierung gilt weiterhin, nur eben innerhalb jeder Bahn.
+    @Published var dashboardGroupByProvider: Bool {
+        didSet {
+            defaults.set(dashboardGroupByProvider, forKey: "dashboardGroupByProvider")
+            NotificationCenter.default.post(name: .settingsChanged, object: nil)
+        }
+    }
+
     /// 参与 Dashboard 展示的全部账户（Claude 在前、Codex 在后）
     var dashboardAccounts: [Account] {
         accounts + codexAccounts
@@ -595,6 +607,9 @@ class UserSettings: ObservableObject {
         }
         let savedColumns = defaults.integer(forKey: "dashboardColumns")
         self.dashboardColumns = (1...3).contains(savedColumns) ? savedColumns : 2
+        // Standard: an. Wer nur einen Anbieter nutzt, merkt davon nichts —
+        // dann gibt es genau eine Bahn und das Gitter bleibt wie bisher.
+        self.dashboardGroupByProvider = defaults.object(forKey: "dashboardGroupByProvider") as? Bool ?? true
 
         // 检查是否首次启动（如果没有保存过认证信息，就是首次启动）
         if !defaults.bool(forKey: "hasLaunched") {
@@ -708,6 +723,7 @@ class UserSettings: ObservableObject {
         language = Self.detectSystemLanguage()
         dashboardSortMode = .availability
         dashboardColumns = 2
+        dashboardGroupByProvider = true
 
         // 重置智能模式状态
         lastUtilization = nil
@@ -841,6 +857,11 @@ class UserSettings: ObservableObject {
 
     func updateCodexAccount(_ account: Account, alias: String?) {
         accountStore.updateCodexAccount(account, alias: alias)
+    }
+
+    /// Art eines Codex-Kontos (Firma / privat) — reine Handeingabe
+    func updateCodexAccount(_ account: Account, kind: AccountKind) {
+        accountStore.updateCodexAccount(account, kind: kind)
     }
 
     /// Kündigungsdatum eines Codex-Kontos setzen oder löschen
