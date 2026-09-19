@@ -5,10 +5,13 @@
 //  schreibt sie direkt dorthin. Damit ist das Symbol Code und keine Binärdatei,
 //  die niemand mehr ändern kann.
 //
-//  Das Motiv (seit 2.9): ein Monitor. Die App heißt Max **Monitor**, und der
-//  frühere Wasserkreis war von Claudes eigenem Zeichen kaum zu unterscheiden —
-//  im Dock standen zwei orange Kreise nebeneinander. Der Pegel steckt jetzt im
-//  Bildschirm: Das Motiv sagt „Monitor" und der Inhalt weiter „Auslastung".
+//  Das Motiv: ein Monitor, in dessen Schirm ein Prompt steht. Die App heißt
+//  Max **Monitor**, und sie beobachtet Entwicklerwerkzeuge — beides steckt im
+//  Bild. Der frühere Wasserkreis (bis 2.8) und der Pegel im Schirm (2.9) sind
+//  weg: Sie trugen Claudes Clay-Orange, und ein Symbol, das die Hausfarbe eines
+//  der beiden überwachten Anbieter trägt, behauptet eine Zugehörigkeit, die es
+//  nicht gibt — die App zeigt Claude *und* Codex. Graphit und Limette gehören
+//  keinem von beiden.
 //
 //  Aufruf:  swift scripts/make_icon.swift
 //
@@ -16,16 +19,25 @@
 import AppKit
 import Foundation
 
-// Farben aus der Auslastungsskala der App
-let cream = NSColor(red: 0xF5 / 255.0, green: 0xF1 / 255.0, blue: 0xEC / 255.0, alpha: 1)
-let creamDeep = NSColor(red: 0xE9 / 255.0, green: 0xE3 / 255.0, blue: 0xDB / 255.0, alpha: 1)
-let well = NSColor(red: 0xE8 / 255.0, green: 0xE2 / 255.0, blue: 0xDA / 255.0, alpha: 1)
-let water = NSColor(red: 0xD9 / 255.0, green: 0x77 / 255.0, blue: 0x57 / 255.0, alpha: 1)
-let outline = NSColor(red: 0x2B / 255.0, green: 0x2A / 255.0, blue: 0x28 / 255.0, alpha: 1)
+func rgb(_ hex: Int) -> NSColor {
+    NSColor(
+        red: CGFloat((hex >> 16) & 0xFF) / 255.0,
+        green: CGFloat((hex >> 8) & 0xFF) / 255.0,
+        blue: CGFloat(hex & 0xFF) / 255.0,
+        alpha: 1
+    )
+}
 
-/// Anteil, bis zu dem der Bildschirm gefüllt ist. Bewusst nicht halb — ein
-/// leicht asymmetrischer Pegel liest sich als Messwert, genau in der Mitte als Dekor.
-let fillLevel: CGFloat = 0.62
+/// Kachel: dunkles Schiefergrau mit einem Hauch Verlauf nach unten.
+let slate = rgb(0x2E2D36)
+let slateDeep = rgb(0x22212A)
+/// Gehäuse des Monitors — dasselbe Creme wie die Flächen in der App.
+let cream = rgb(0xF5F1EC)
+/// Der Schirm ist dunkler als die Kachel, sonst verschwimmt er mit ihr.
+let screenInk = rgb(0x121116)
+/// Der Prompt. Limette, weil sie weder Claudes Clay noch Codex' Blau ist und
+/// auf dem dunklen Schirm ohne Verlauf trägt.
+let lime = rgb(0xC3F53C)
 
 func drawIcon(size: CGFloat) -> NSImage {
     let image = NSImage(size: NSSize(width: size, height: size))
@@ -45,32 +57,27 @@ func drawIcon(size: CGFloat) -> NSImage {
     let tilePath = NSBezierPath(roundedRect: tile, xRadius: corner, yRadius: corner)
     NSGraphicsContext.saveGraphicsState()
     tilePath.addClip()
-    // Ein Hauch Verlauf nach unten: Ohne ihn wirkt die große 1024er Kachel flach,
-    // im Dock sieht man ihn kaum — genau so ist er gemeint.
-    NSGradient(starting: cream, ending: creamDeep)?.draw(in: tile, angle: -90)
+    NSGradient(starting: slate, ending: slateDeep)?.draw(in: tile, angle: -90)
     NSGraphicsContext.restoreGraphicsState()
 
     // Maße des Monitors, alle an der Kachelkante gemessen. Gehäuse + Hals + Fuß
-    // ergeben zusammen 0,67 t und sitzen damit mittig mit gleich viel Luft
-    // oben wie unten.
-    let bodyWidth = t * 0.74
-    let bodyHeight = t * 0.54
+    // stehen zusammen mittig, mit gleich viel Luft oben wie unten.
+    let bodyWidth = t * 0.80
+    let bodyHeight = t * 0.56
     let neckWidth = t * 0.13
-    let neckHeight = t * 0.075
+    let neckHeight = t * 0.07
     let footWidth = t * 0.34
-    let footHeight = t * 0.052
+    let footHeight = t * 0.05
     let bottom = tile.minY + (t - (bodyHeight + neckHeight + footHeight)) / 2
 
+    cream.setFill()
+
     // Fuß
-    let foot = NSRect(
-        x: tile.midX - footWidth / 2, y: bottom,
-        width: footWidth, height: footHeight
-    )
-    outline.setFill()
+    let foot = NSRect(x: tile.midX - footWidth / 2, y: bottom, width: footWidth, height: footHeight)
     NSBezierPath(roundedRect: foot, xRadius: footHeight / 2, yRadius: footHeight / 2).fill()
 
     // Hals — überlappt Fuß und Gehäuse um einen Hauch, damit an den Übergängen
-    // keine hellen Nähte stehen bleiben.
+    // keine dunklen Nähte stehen bleiben.
     let neck = NSRect(
         x: tile.midX - neckWidth / 2, y: bottom + footHeight - t * 0.004,
         width: neckWidth, height: neckHeight + t * 0.008
@@ -83,43 +90,36 @@ func drawIcon(size: CGFloat) -> NSImage {
         x: tile.midX - bodyWidth / 2, y: bottom + footHeight + neckHeight,
         width: bodyWidth, height: bodyHeight
     )
-    let bodyCorner = t * 0.075
-    NSBezierPath(roundedRect: body, xRadius: bodyCorner, yRadius: bodyCorner).fill()
+    NSBezierPath(roundedRect: body, xRadius: t * 0.075, yRadius: t * 0.075).fill()
 
-    // Bildschirm
-    let bezel = t * 0.055
-    let screen = body.insetBy(dx: bezel, dy: bezel)
-    let screenCorner = bodyCorner - bezel * 0.55
-    let screenPath = NSBezierPath(roundedRect: screen, xRadius: screenCorner, yRadius: screenCorner)
-    well.setFill()
-    screenPath.fill()
+    // Schirm
+    let screen = body.insetBy(dx: t * 0.042, dy: t * 0.042)
+    screenInk.setFill()
+    NSBezierPath(roundedRect: screen, xRadius: t * 0.045, yRadius: t * 0.045).fill()
 
-    // Wasser mit ruhiger Welle an der Oberkante, auf den Bildschirm beschnitten
-    NSGraphicsContext.saveGraphicsState()
-    screenPath.addClip()
+    /// Punkt in Schirm-Koordinaten (0…1)
+    func sp(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+        NSPoint(x: screen.minX + screen.width * x, y: screen.minY + screen.height * y)
+    }
 
-    let surfaceY = screen.minY + screen.height * fillLevel
-    let waveHeight = screen.height * 0.05
-    let overhang = screen.width * 0.5
-    let wave = NSBezierPath()
-    wave.move(to: NSPoint(x: screen.minX - overhang, y: surfaceY))
-    wave.curve(
-        to: NSPoint(x: screen.midX, y: surfaceY),
-        controlPoint1: NSPoint(x: screen.minX - overhang * 0.4, y: surfaceY + waveHeight),
-        controlPoint2: NSPoint(x: screen.minX + overhang * 0.4, y: surfaceY + waveHeight)
+    // Das Eingabezeichen „>"
+    let chevron = NSBezierPath()
+    chevron.move(to: sp(0.20, 0.74))
+    chevron.line(to: sp(0.42, 0.50))
+    chevron.line(to: sp(0.20, 0.26))
+    chevron.lineWidth = t * 0.058
+    chevron.lineJoinStyle = .round
+    chevron.lineCapStyle = .round
+    lime.setStroke()
+    chevron.stroke()
+
+    // Der Cursor daneben
+    let cursor = NSRect(
+        x: screen.minX + screen.width * 0.52, y: screen.minY + screen.height * 0.22,
+        width: screen.width * 0.28, height: screen.height * 0.11
     )
-    wave.curve(
-        to: NSPoint(x: screen.maxX + overhang, y: surfaceY),
-        controlPoint1: NSPoint(x: screen.midX + overhang * 0.6, y: surfaceY - waveHeight),
-        controlPoint2: NSPoint(x: screen.maxX + overhang * 0.4, y: surfaceY - waveHeight)
-    )
-    wave.line(to: NSPoint(x: screen.maxX + overhang, y: screen.minY - overhang))
-    wave.line(to: NSPoint(x: screen.minX - overhang, y: screen.minY - overhang))
-    wave.close()
-    water.setFill()
-    wave.fill()
-
-    NSGraphicsContext.restoreGraphicsState()
+    lime.setFill()
+    NSBezierPath(roundedRect: cursor, xRadius: cursor.height / 2, yRadius: cursor.height / 2).fill()
 
     image.unlockFocus()
     return image

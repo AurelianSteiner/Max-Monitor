@@ -1,5 +1,15 @@
 # Änderungen
 
+## 2.9.1
+
+- **Neues App-Symbol.** Ein Monitor, in dessen Schirm ein Prompt steht — der
+  Name der App und das, was sie beobachtet, in einem Bild. Der Wasserpegel aus
+  2.9 ist raus: Er trug Claudes Clay-Orange, und ein Symbol in der Hausfarbe
+  eines der beiden überwachten Anbieter behauptet eine Zugehörigkeit, die es
+  nicht gibt — die App zeigt Claude *und* Codex. Graphit und Limette gehören
+  keinem von beiden. Weiterhin gezeichnet von `scripts/make_icon.swift`, also
+  Code statt Binärdatei.
+
 ## 2.9
 
 - **Privat oder Firma jetzt auch für Codex.** Die Angabe gab es bisher nur auf
