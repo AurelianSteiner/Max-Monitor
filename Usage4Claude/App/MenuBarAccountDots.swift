@@ -7,7 +7,7 @@
 //  `DataRefreshManager` kennt nur das *aktuelle* Konto. Für „ein Wasserstand je
 //  Konto" braucht es alle Konten — die liegen bereits in
 //  `DashboardRefreshManager.shared.snapshots`. Diese Klasse abonniert sie einmalig,
-//  bringt sie über `AccountUsageSnapshot.ordered(_:mode:)` in *dieselbe* Reihenfolge
+//  bringt sie über `AccountUsageSnapshot.ordered(_:mode:groupByProvider:)` in *dieselbe* Reihenfolge
 //  wie die Übersicht, destilliert jeden Snapshot auf das, was ein Punkt tatsächlich
 //  zeigt (gerasterter Wochenpegel + Sitzung aufgebraucht), und legt das Ergebnis
 //  hinter einem Lock ab: Der Renderer darf so von jedem Thread lesen, ohne den
@@ -103,6 +103,21 @@ final class MenuBarAccountDots {
             }
             .store(in: &cancellables)
 
+        // Gruppierung: Trennt die Übersicht nach Anbieter, folgt die Punktreihe —
+        // sonst stünden Punkte und Karten in verschiedener Folge. Gleicher Grund
+        // wie beim Sortiermodus, deshalb auch hier der Wert aus dem Sink.
+        UserSettings.shared.$dashboardGroupByProvider
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] grouped in
+                self?.apply(
+                    DashboardRefreshManager.shared.snapshots,
+                    mode: UserSettings.shared.dashboardSortMode,
+                    groupByProvider: grouped
+                )
+            }
+            .store(in: &cancellables)
+
         apply(DashboardRefreshManager.shared.snapshots, mode: UserSettings.shared.dashboardSortMode)
 
         // Die Punktreihe braucht Daten *aller* Konten. Ohne geöffnete Übersicht
@@ -125,10 +140,14 @@ final class MenuBarAccountDots {
 
     // MARK: - Schreiben (nur Main-Thread)
 
-    private func apply(_ snapshots: [AccountUsageSnapshot], mode: DashboardSortMode) {
+    private func apply(
+        _ snapshots: [AccountUsageSnapshot],
+        mode: DashboardSortMode,
+        groupByProvider: Bool = UserSettings.shared.dashboardGroupByProvider
+    ) {
         // Dieselbe Reihenfolge wie die Übersicht — die Regel steht nur einmal,
-        // in `AccountUsageSnapshot.ordered(_:mode:)`.
-        let ordered = AccountUsageSnapshot.ordered(snapshots, mode: mode)
+        // in `AccountUsageSnapshot.ordered(_:mode:groupByProvider:)`.
+        let ordered = AccountUsageSnapshot.ordered(snapshots, mode: mode, groupByProvider: groupByProvider)
 
         // Solange kein einziges Konto Daten geliefert hat, bleibt die Reihe leer.
         let hasAnyData = ordered.contains { $0.hasData }

@@ -85,6 +85,18 @@ enum DashboardPalette {
     /// Farbe für Text, der auf der Wasserfläche liegt
     static let onFill = Color.white
 
+    /// Ton der Kontoart-Plakette (Privat / Firma). Bewusst **außerhalb** der
+    /// Auslastungsskala: Die Plakette sagt nichts über die Auslastung, und in
+    /// Orange oder Blau läse man sie als Messwert. Grün für privat, Violett für
+    /// Firma — in beiden Erscheinungsbildern eigene Töne.
+    static func kindInk(_ kind: AccountKind) -> Color {
+        switch kind {
+        case .personal: return dynamic(light: 0x2C7D5E, dark: 0x6CC3A0)
+        case .company:  return dynamic(light: 0x6B4FC4, dark: 0xAE9BEF)
+        case .unknown:  return .secondary
+        }
+    }
+
     /// Hex-Paar als NSColor mit Dynamic Provider: heller und dunkler Modus je eigener
     /// Wert, damit die Töne in beiden Erscheinungsbildern tragen.
     private static func dynamic(light: Int, dark: Int) -> Color {
@@ -105,6 +117,39 @@ enum DashboardPalette {
             blue: CGFloat(hex & 0xFF) / 255.0,
             alpha: 1.0
         )
+    }
+}
+
+// MARK: - Anbieter-Logo
+
+/// Das Logo eines Anbieters in fester Kantenlänge — Claudes App-Symbol bzw. das
+/// Codex-Symbol. Eine Stelle für beide, damit Übersicht und Einstellungen
+/// dasselbe Bild zeigen; fehlt das Asset, tritt ein SF-Symbol an seine Stelle,
+/// statt eine Lücke zu lassen.
+struct ProviderLogo: View {
+    let provider: ProviderType
+    var size: CGFloat = 16
+
+    var body: some View {
+        Group {
+            if let icon = logo {
+                Image(nsImage: icon)
+                    .resizable()
+            } else {
+                Image(systemName: "sparkles")
+                    .resizable()
+                    .scaledToFit()
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityLabel(provider.displayName)
+    }
+
+    private var logo: NSImage? {
+        switch provider {
+        case .claude: return ImageHelper.createClaudeIcon(size: size)
+        case .codex:  return ImageHelper.createCodexIcon(size: size)
+        }
     }
 }
 

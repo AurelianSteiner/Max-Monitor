@@ -106,7 +106,7 @@ struct AccountUsageCard: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
 
-                    kindIcon
+                    kindBadge
                     cancellationBadge
                 }
 
@@ -136,15 +136,34 @@ struct AccountUsageCard: View {
         }
     }
 
-    /// Firma oder privat — beides kann auf derselben Email liegen. Bei
-    /// unbekannter Art bleibt die Stelle leer, statt eine Vermutung zu zeigen.
+    /// Firma oder privat — beides kann auf derselben Email liegen, dann ist die
+    /// Plakette das einzige Unterscheidungsmerkmal der beiden Karten. Bis 2.9
+    /// stand hier nur ein graues 9-pt-Symbol; wer zwei Konten desselben Namens
+    /// nebeneinander hatte, musste es suchen. Jetzt steht die Art ausgeschrieben
+    /// in einer getönten Plakette — grün privat, violett Firma.
+    /// Bei unbekannter Art bleibt die Stelle leer, statt eine Vermutung zu zeigen.
     @ViewBuilder
-    private var kindIcon: some View {
+    private var kindBadge: some View {
         if let symbol = snapshot.account.kind.symbolName {
-            Image(systemName: symbol)
-                .font(.system(size: 9))
-                .foregroundColor(.secondary)
-                .help(snapshot.account.kind.localizedName)
+            let kind = snapshot.account.kind
+            let tone = DashboardPalette.kindInk(kind)
+            let label = "\(L.Account.kindLabel): \(kind.localizedName)"
+
+            HStack(spacing: 3) {
+                Image(systemName: symbol)
+                    .font(.system(size: 9, weight: .bold))
+                Text(kind.localizedName)
+                    .font(.system(size: 10, weight: .bold))
+                    .lineLimit(1)
+            }
+            .foregroundColor(tone)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1.5)
+            .background(Capsule().fill(tone.opacity(0.14)))
+            .overlay(Capsule().strokeBorder(tone.opacity(0.30), lineWidth: 0.5))
+            .fixedSize()
+            .help(label)
+            .accessibilityLabel(label)
         }
     }
 
@@ -204,20 +223,10 @@ struct AccountUsageCard: View {
         return formatter.string(from: date)
     }
 
-    @ViewBuilder
+    /// Dasselbe Bild wie im Kopf der Anbieter-Bahn und in den Einstellungen —
+    /// eine Karte muss auch dann zuzuordnen sein, wenn sie allein dasteht.
     private var providerIcon: some View {
-        let size: CGFloat = 14
-        if snapshot.provider == .claude {
-            if let icon = ImageHelper.createAppIcon(size: size) {
-                Image(nsImage: icon).resizable().frame(width: size, height: size)
-            } else {
-                Image(systemName: "chart.pie.fill").font(.system(size: size)).foregroundColor(.blue)
-            }
-        } else if let icon = ImageHelper.createCodexIcon(size: size) {
-            Image(nsImage: icon).resizable().frame(width: size, height: size)
-        } else {
-            Image(systemName: "chevron.left.forwardslash.chevron.right").font(.system(size: size - 2))
-        }
+        ProviderLogo(provider: snapshot.provider, size: 14)
     }
 
     // MARK: - Inhalt

@@ -91,7 +91,6 @@ struct AuthSettingsView: View {
 
     var accountListView: some View {
         let hasCodex = !settings.codexAccounts.isEmpty
-        let hasBothProviders = !settings.accounts.isEmpty && hasCodex
 
         return SettingCard(
             icon: "person.2.fill",
@@ -115,11 +114,11 @@ struct AuthSettingsView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 20)
                 } else {
-                    // Claude 账户组
+                    // Claude 账户组 — der Kopf steht auch bei nur einem
+                    // Anbieter da: Er trägt das Logo, und ohne Logo war den
+                    // Zeilen nicht anzusehen, zu welchem Dienst sie gehören.
                     if !settings.accounts.isEmpty {
-                        if hasBothProviders {
-                            providerSectionHeader(provider: .claude, label: L.Account.claudeAccounts)
-                        }
+                        providerSectionHeader(provider: .claude, label: L.Account.claudeAccounts)
                         ForEach(settings.accounts) { account in
                             accountRow(account: account, provider: .claude)
                         }
@@ -127,10 +126,8 @@ struct AuthSettingsView: View {
 
                     // Codex 账户组
                     if hasCodex {
-                        if hasBothProviders {
-                            providerSectionHeader(provider: .codex, label: L.Account.codexAccounts)
-                                .padding(.top, 4)
-                        }
+                        providerSectionHeader(provider: .codex, label: L.Account.codexAccounts)
+                            .padding(.top, settings.accounts.isEmpty ? 0 : 6)
                         ForEach(settings.codexAccounts) { account in
                             accountRow(account: account, provider: .codex)
                         }
@@ -224,48 +221,28 @@ struct AuthSettingsView: View {
         .accessibilityLabel(help)
     }
 
-    @ViewBuilder
     func providerIcon(provider: ProviderType, size: CGFloat) -> some View {
-        switch provider {
-        case .claude:
-            if let icon = ImageHelper.createAppIcon(size: size) {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: size, height: size)
-            } else {
-                Image(systemName: "sparkles")
-                    .frame(width: size, height: size)
-            }
-        case .codex:
-            if let icon = ImageHelper.createCodexIcon(size: size) {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: size, height: size)
-            } else {
-                Image(systemName: "sparkles")
-                    .frame(width: size, height: size)
-            }
-        }
+        ProviderLogo(provider: provider, size: size)
     }
 
     func providerSectionHeader(provider: ProviderType, label: String) -> some View {
-        HStack(spacing: 4) {
-            if provider == .codex, let icon = ImageHelper.createCodexIcon(size: 12) {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: 12, height: 12)
-            } else if provider == .claude, let icon = ImageHelper.createAppIcon(size: 12) {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: 12, height: 12)
-            }
+        HStack(spacing: 6) {
+            providerIcon(provider: provider, size: 16)
             Text(label)
-                .font(.caption)
+                .font(.subheadline)
                 .fontWeight(.semibold)
+            Text(verbatim: "\(count(of: provider))")
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(.secondary)
-            Divider()
-                .frame(height: 10)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(Color.secondary.opacity(0.15)))
+            VStack { Divider() }
         }
+    }
+
+    private func count(of provider: ProviderType) -> Int {
+        provider == .codex ? settings.codexAccounts.count : settings.accounts.count
     }
 
     // MARK: - Account Row
@@ -294,9 +271,7 @@ struct AuthSettingsView: View {
                     .help(L.Account.clearAlias)
                 }
 
-                if provider == .claude {
-                    kindPicker(for: account)
-                }
+                kindPicker(for: account, provider: provider)
 
                 Button(action: {
                     if provider == .codex {
@@ -400,12 +375,12 @@ struct AuthSettingsView: View {
 
     // MARK: - Art (Firma / Privat)
 
-    /// Firma oder privat, direkt in der Zeile. Der Login rät die Art beim
-    /// Anmelden; hier steht dann sein Ergebnis und lässt sich überschreiben.
-    /// Dieselben Symbole wie auf der Karte, damit die Zuordnung sichtbar ist.
-    /// Nur für Claude-Konten: Codex kennt die Unterscheidung bisher nicht.
-    private func kindPicker(for account: Account) -> some View {
-        Picker(L.Account.kindLabel, selection: kindBinding(for: account)) {
+    /// Firma oder privat, direkt in der Zeile — für beide Anbieter. Bei Claude
+    /// rät der Login die Art beim Anmelden und hier steht dann sein Ergebnis;
+    /// Codex' Anmeldung liefert dazu nichts, dort ist die Auswahl die einzige
+    /// Quelle. Dieselben Symbole wie auf der Karte, damit die Zuordnung sichtbar ist.
+    private func kindPicker(for account: Account, provider: ProviderType) -> some View {
+        Picker(L.Account.kindLabel, selection: kindBinding(for: account, provider: provider)) {
             ForEach(AccountKind.allCases, id: \.self) { kind in
                 kindOption(kind).tag(kind)
             }
@@ -424,10 +399,16 @@ struct AuthSettingsView: View {
         }
     }
 
-    private func kindBinding(for account: Account) -> Binding<AccountKind> {
+    private func kindBinding(for account: Account, provider: ProviderType) -> Binding<AccountKind> {
         Binding(
             get: { account.kind },
-            set: { settings.updateAccount(account, kind: $0) }
+            set: { newKind in
+                if provider == .codex {
+                    settings.updateCodexAccount(account, kind: newKind)
+                } else {
+                    settings.updateAccount(account, kind: newKind)
+                }
+            }
         )
     }
 

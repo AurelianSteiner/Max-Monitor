@@ -238,7 +238,7 @@
 "account.kind.personal" = "Privat";
 "account.kind.unknown" = "Unbekannt";
 "account.kind.label" = "Art";
-"account.kind.hint" = "Die Art ändert nur das Symbol auf der Karte.";
+"account.kind.hint" = "Privat oder Firma — steht als Plakette auf der Karte. Gilt für Claude- und Codex-Konten.";
 
 /* Gekündigtes Abo: der Tag, an dem es ausläuft — von Hand eingetragen, keine
    Schnittstelle liefert ihn. Steht als kleine Plakette auf der Karte. */
@@ -279,6 +279,7 @@
 "dashboard.open_team_window" = "Team-Übersicht";
 "dashboard.sort_by_order" = "Reihenfolge der Accounts";
 "dashboard.sort_by_availability" = "Freieste zuerst";
+"dashboard.group_by_provider" = "Nach Anbieter trennen";
 "dashboard.sort_help" = "Sortierung und Spalten";
 "dashboard.refresh_account" = "Diesen Account aktualisieren";
 "dashboard.make_active" = "Als aktiven Account setzen";

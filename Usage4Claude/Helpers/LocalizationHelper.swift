@@ -112,6 +112,7 @@ enum L {
         static var openWindow: String { localized("dashboard.open_window") }
         static var sortByOrder: String { localized("dashboard.sort_by_order") }
         static var sortByAvailability: String { localized("dashboard.sort_by_availability") }
+        static var groupByProvider: String { localized("dashboard.group_by_provider") }
         static var sortHelp: String { localized("dashboard.sort_help") }
         static var refreshAccount: String { localized("dashboard.refresh_account") }
         static var makeActive: String { localized("dashboard.make_active") }

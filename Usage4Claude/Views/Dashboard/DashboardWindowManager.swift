@@ -143,6 +143,25 @@ final class DashboardWindowManager {
         window.setFrame(frame, display: true)
     }
 
+    /// Nach dem Einschalten der Anbieter-Trennung: Das Fenster muss mindestens
+    /// so breit sein, dass jede Bahn eine Karte trägt — sonst stünden die
+    /// Bahnen übereinander geschoben da. Schmaler wird nie gezogen; wer das
+    /// Fenster breiter hatte, behält seine Breite.
+    func widen(toAtLeastColumns columns: Int) {
+        guard let window, window.isVisible else { return }
+
+        let screenWidth = (window.screen ?? NSScreen.main)?.visibleFrame.width
+        let wanted = min(DashboardMetrics.width(columns: columns), screenWidth ?? .greatestFiniteMagnitude)
+        guard window.frame.width < wanted else { return }
+
+        var frame = window.frame
+        frame.size.width = wanted
+        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame {
+            frame.origin.x = max(visible.minX, min(frame.origin.x, visible.maxX - frame.size.width))
+        }
+        window.setFrame(frame, display: true)
+    }
+
     /// Inhaltsbreite für eine Spaltenwahl: nie mehr Spalten als Konten, nie
     /// schmaler als eine Spalte, nie breiter als der sichtbare Bildschirm.
     private func contentWidth(forColumnSetting setting: Int) -> CGFloat {

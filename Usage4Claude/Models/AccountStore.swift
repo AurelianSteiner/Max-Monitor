@@ -455,6 +455,18 @@ final class AccountStore: ObservableObject {
         Logger.settings.notice("更新 Codex 账户别名: \(self.codexAccounts[index].displayName)")
     }
 
+    /// Firma oder privat, für Codex-Konten — siehe `updateAccount(_:kind:)`.
+    /// Bis 2.9 gab es die Angabe nur auf der Claude-Seite; wer dieselbe Trennung
+    /// auch bei Codex fährt (Arbeitskonto neben privatem Abo), konnte die beiden
+    /// Karten nicht auseinanderhalten. Codex' Anmeldung liefert keinen Hinweis
+    /// auf die Art, hier zählt also ausschließlich die Handeingabe.
+    func updateCodexAccount(_ account: Account, kind: AccountKind) {
+        guard let index = codexAccounts.firstIndex(where: { $0.id == account.id }) else { return }
+        guard codexAccounts[index].kind != kind else { return }
+        codexAccounts[index].kind = kind
+        Logger.settings.notice("更新 Codex 账户类型: \(self.codexAccounts[index].displayName) → \(kind.rawValue)")
+    }
+
     /// Kündigungsdatum eines Codex-Kontos — siehe `updateAccount(_:subscriptionEndsAt:)`.
     func updateCodexAccount(_ account: Account, subscriptionEndsAt date: Date?) {
         guard let index = codexAccounts.firstIndex(where: { $0.id == account.id }) else { return }
