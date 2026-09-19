@@ -3,6 +3,21 @@
     <channel>
         <title>Max Monitor</title>
         <item>
+            <title>2.9.1</title>
+            <pubDate>Sat, 19 Sep 2026 23:46:03 +0000</pubDate>
+            <sparkle:version>2.9.1</sparkle:version>
+            <sparkle:shortVersionString>2.9.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[Neues App-Symbol: ein Monitor, in dessen Schirm ein Prompt steht.
+
+Das bisherige Symbol trug Claudes Orange — und ein Symbol in der Hausfarbe eines der beiden überwachten Anbieter behauptet eine Zugehörigkeit, die es nicht gibt. Die App zeigt Claude und Codex; Graphit und Limette gehören keinem von beiden.]]></description>
+            <enclosure
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.9.1/Max-Monitor-2.9.1.dmg"
+                sparkle:edSignature="D+F49pp29VOH/hFR2RmCsqh/WC2ECi2uHN9QqHJZn6ha/0+2WSt7jisV+uQvLbPscaG22dZVyuWwAAP+SzmkCg=="
+                length="5434710"
+                type="application/octet-stream"/>
+        </item>
+        <item>
             <title>2.9</title>
             <pubDate>Sat, 19 Sep 2026 23:32:41 +0000</pubDate>
             <sparkle:version>2.9</sparkle:version>
