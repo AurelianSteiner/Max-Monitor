@@ -12,13 +12,18 @@ final class FleetReporter {
     private var timer: Timer?
     private var cancellables = Set<AnyCancellable>()
     private var isPosting = false
-    private var isDrivingRefresh = false
+    private var pendingReport = false
     private var lastAttemptAt: Date?
 
     private init() {
         NotificationCenter.default.publisher(for: .teamServerChanged)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.connectionDidChange() }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .fleetMonitoringChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.report(force: true) }
             .store(in: &cancellables)
 
         NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
@@ -33,11 +38,7 @@ final class FleetReporter {
         dispatchPrecondition(condition: .onQueue(.main))
         let connection = TeamServerConnection.shared
         let connected = connection.client != nil && connection.role != nil
-        if connected != isDrivingRefresh {
-            isDrivingRefresh = connected
-            if connected { DashboardRefreshManager.shared.activate() }
-            else { DashboardRefreshManager.shared.deactivate() }
-        }
+
         timer?.invalidate()
         timer = nil
         if connected {
@@ -52,30 +53,40 @@ final class FleetReporter {
     }
 
     /// Provider refresh is bounded: a stuck request must not hide a healthy Mac.
-    func report(now: Date = Date()) {
+    func report(now: Date = Date(), force: Bool = false) {
         dispatchPrecondition(condition: .onQueue(.main))
         let connection = TeamServerConnection.shared
         guard let teamId = connection.teamId, let client = connection.client,
-              connection.role != nil, !isPosting else { return }
-        if let lastAttemptAt, now.timeIntervalSince(lastAttemptAt) < 60 { return }
+              connection.role != nil else { return }
+        if isPosting {
+            if force { pendingReport = true }
+            return
+        }
+        if !force, let lastAttemptAt, now.timeIntervalSince(lastAttemptAt) < 60 { return }
         lastAttemptAt = now
         isPosting = true
-        DashboardRefreshManager.shared.refresh(force: false)
+        FleetMonitoringManager.shared.refresh()
 
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.isPosting = false }
-            // Account requests already run independently. Give them a chance to
-            // finish, then send their original stamps/errors even after timeout.
+            defer {
+                self.isPosting = false
+                if self.pendingReport {
+                    self.pendingReport = false
+                    self.report(force: true)
+                }
+            }
+            // Give the separate monitoring request time to finish. Device liveness
+            // still gets sent if Claude is unavailable; never refresh its data stamp.
             for _ in 0..<20 {
-                guard DashboardRefreshManager.shared.isRefreshing else { break }
+                guard FleetMonitoringManager.shared.isRefreshing else { break }
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
             let battery = await Task.detached(priority: .utility) { Self.readBattery() }.value
             guard TeamServerConnection.shared.teamId == teamId,
                   TeamServerConnection.shared.isConnected,
                   TeamServerConnection.shared.role != nil else { return }
-            let heartbeat = Self.buildHeartbeat(teamId: teamId, snapshots: DashboardRefreshManager.shared.snapshots,
+            let heartbeat = Self.buildHeartbeat(teamId: teamId, monitoring: FleetMonitoringManager.shared,
                                                 battery: battery, now: Date())
             do {
                 try await client.postHeartbeat(heartbeat)
@@ -89,22 +100,22 @@ final class FleetReporter {
         }
     }
 
-    static func buildHeartbeat(teamId: String, snapshots: [AccountUsageSnapshot],
+    static func buildHeartbeat(teamId: String, monitoring: FleetMonitoringManager,
                                battery: BatteryTelemetry, now: Date) -> FleetHeartbeat {
-        let claude = snapshots.filter { $0.provider == .claude }
-        let accounts = claude.map {
-            FleetUsageAccount(accountId: $0.id.uuidString.lowercased(), name: String($0.account.displayName.prefix(120)),
-                              provider: "claude", usageUpdatedAt: $0.updatedAt,
-                              usageError: $0.errorMessage.map { String($0.prefix(500)) })
-        }
+        let account = monitoring.account
+        let accountId = account?.id.uuidString.lowercased()
+        let accounts = account.map {
+            [FleetUsageAccount(accountId: $0.id.uuidString.lowercased(), name: String($0.name.prefix(120)),
+                provider: "claude", usageUpdatedAt: monitoring.updatedAt,
+                usageError: monitoring.errorMessage.map { String($0.prefix(500)) })]
+        } ?? []
         var limits: [FleetUsageLimit] = []
-        for snapshot in claude {
-            guard let data = snapshot.usageData else { continue }
+        if let account, let data = monitoring.usageData {
             func add(_ value: UsageData.LimitData?, kind: String, label: String) {
-                guard let value, let limit = FleetUsageLimit(accountId: snapshot.id.uuidString.lowercased(),
-                    accountName: snapshot.account.displayName, label: label, kind: kind,
+                guard let value, let limit = FleetUsageLimit(accountId: account.id.uuidString.lowercased(),
+                    accountName: account.name, label: label, kind: kind,
                     percent: value.percentage, resetsAt: value.resetsAt,
-                    usageUpdatedAt: snapshot.updatedAt, usageError: snapshot.errorMessage) else { return }
+                    usageUpdatedAt: monitoring.updatedAt, usageError: monitoring.errorMessage) else { return }
                 limits.append(limit)
             }
             add(data.fiveHour, kind: "session", label: "5h")
@@ -113,19 +124,16 @@ final class FleetReporter {
                 add(model.limit, kind: "model:\(index)", label: model.modelName ?? "Model \(index + 1)")
             }
         }
-        // An aggregate can only be as fresh as its oldest account. The server
-        // additionally tracks each account/limit independently.
-        let usageUpdatedAt = accounts.allSatisfy { $0.usageUpdatedAt != nil }
-            ? accounts.compactMap(\.usageUpdatedAt).min() : nil
-        let errors = accounts.compactMap { account in account.usageError.map { "\(account.name): \($0)" } }
-        return FleetHeartbeat(teamId: teamId, deviceId: FleetSettings.deviceId(),
+        var heartbeat = FleetHeartbeat(teamId: teamId, deviceId: FleetSettings.deviceId(),
             name: String((Host.current().localizedName ?? ProcessInfo.processInfo.hostName).prefix(120)),
             workerId: FleetSettings.workerId, reportedAt: now,
-            batteryPercent: FleetHeartbeat.normalizedBatteryPercent(battery.percent), powerSource: battery.powerSource, isCharging: battery.isCharging,
-            isAwake: true, stayAwakeEnabled: SleepGuard.shared.isAwake,
+            batteryPercent: FleetHeartbeat.normalizedBatteryPercent(battery.percent), powerSource: battery.powerSource,
+            isCharging: battery.isCharging, isAwake: true, stayAwakeEnabled: SleepGuard.shared.isAwake,
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
-            limits: Array(limits.prefix(50)), accounts: accounts,
-            usageUpdatedAt: usageUpdatedAt, usageError: errors.isEmpty ? nil : String(errors.joined(separator: "; ").prefix(500)))
+            limits: Array(limits.prefix(50)), accounts: accounts, usageUpdatedAt: monitoring.updatedAt,
+            usageError: monitoring.errorMessage.map { String($0.prefix(500)) })
+        heartbeat.monitoringAccountId = accountId
+        return heartbeat
     }
 
     struct BatteryTelemetry: Sendable {

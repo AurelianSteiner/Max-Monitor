@@ -379,6 +379,11 @@ main {
   height: 2px;
   background: var(--muted);
 }
+.machine-account {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .machine-name {
   flex: 1;
   min-width: 0;

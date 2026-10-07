@@ -18,6 +18,7 @@ struct FleetHeartbeat: Encodable, Sendable {
     let accounts: [FleetUsageAccount]
     let usageUpdatedAt: Date?
     let usageError: String?
+    var monitoringAccountId: String? = nil
 
     func jsonData() throws -> Data {
         let encoder = JSONEncoder()

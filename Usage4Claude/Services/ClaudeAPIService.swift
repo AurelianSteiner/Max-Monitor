@@ -25,7 +25,7 @@ class ClaudeAPIService {
     private let baseURL = "https://claude.ai/api/organizations"
 
     /// 用户设置实例，用于获取认证信息
-    private let settings = UserSettings.shared
+    private var settings: UserSettings { UserSettings.shared }
 
     /// 共享的 URLSession 实例
     private let session: URLSession
@@ -60,6 +60,8 @@ class ClaudeAPIService {
     // 构造时传入的 Account 而非当前账户，实例之间的 currentTask / OAuth 缓存
     // 天然隔离，互不取消也不串号。
     private let boundAccountId: UUID?
+    private let credentialReader: (() -> String)?
+    private let credentialWriter: ((String, String) -> Bool)?
     private let boundOrganizationId: String?
     /// 构造时的凭据快照，仅作为账户已从存储中消失时的兜底。
     private let boundSessionKeyFallback: String?
@@ -70,6 +72,7 @@ class ClaudeAPIService {
     /// 会在任意一条路径续期时轮换（也可能是菜单栏那条路径写回的），实例内缓存一份就会
     /// 变陈旧，下一轮拿着失效的 token 去刷新 → HTTP 400。
     private var activeSessionKey: String {
+        if let credentialReader { return credentialReader() }
         guard let id = boundAccountId else { return settings.sessionKey }
         return settings.accounts.first { $0.id == id }?.sessionKey
             ?? boundSessionKeyFallback
@@ -92,7 +95,10 @@ class ClaudeAPIService {
     // MARK: - Initialization
 
     /// - Parameter account: 绑定的账户。传 nil（默认）时跟随 `UserSettings` 的当前账户。
-    init(account: Account? = nil) {
+    init(account: Account? = nil, credentialReader: (() -> String)? = nil,
+         credentialWriter: ((String, String) -> Bool)? = nil) {
+        self.credentialReader = credentialReader
+        self.credentialWriter = credentialWriter
         self.boundAccountId = account?.id
         self.boundOrganizationId = account?.organizationId
         self.boundSessionKeyFallback = account?.sessionKey
@@ -142,7 +148,7 @@ class ClaudeAPIService {
     func fetchUsage(completion: @escaping (Result<UsageData, Error>) -> Void) {
         #if DEBUG
         // 调试模式：返回模拟数据（立即返回，无延迟）
-        if settings.debugModeEnabled {
+        if credentialReader == nil && settings.debugModeEnabled {
             let mockData = createMockData()
             DispatchQueue.main.async {
                 completion(.success(mockData))
@@ -564,8 +570,12 @@ class ClaudeAPIService {
                 // 绑定实例必须写回它自己的账户（而非"当前账户"），否则 Dashboard
                 // 并行拉取时会把 A 账户的新 token 覆盖到当前账户上。
                 let boundId = boundAccountId
-                await MainActor.run {
-                    if let boundId = boundId {
+                try await MainActor.run {
+                    if let credentialWriter = self.credentialWriter {
+                        guard credentialWriter(refreshToken, newRefresh) else {
+                            throw FleetMonitoringManager.BindingError.saveFailed
+                        }
+                    } else if let boundId = boundId {
                         UserSettings.shared.silentlyUpdateClaudeSessionToken(accountId: boundId, token: newRefresh)
                     } else {
                         UserSettings.shared.silentlyUpdateCurrentClaudeSessionToken(newRefresh)

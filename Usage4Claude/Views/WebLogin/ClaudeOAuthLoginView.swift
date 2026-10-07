@@ -13,8 +13,16 @@ import SwiftUI
 /// 实际认证在系统默认浏览器中完成，本窗口仅展示进度与结果，
 /// 彻底绕开 WKWebView 对 Google / passkey 等登录方式的限制（Issue #49）。
 struct ClaudeOAuthLoginView: View {
-    @StateObject private var coordinator = ClaudeOAuthCoordinator()
+    @StateObject private var coordinator: ClaudeOAuthCoordinator
     var onAccountCreated: ((Account) -> Void)?
+    private var onClose: (() -> Void)?
+
+    init(onAccountCreated: ((Account) -> Void)? = nil,
+         persistAccount: ((Account) throws -> Void)? = nil, onClose: (() -> Void)? = nil) {
+        _coordinator = StateObject(wrappedValue: ClaudeOAuthCoordinator(persistAccount: persistAccount))
+        self.onAccountCreated = onAccountCreated
+        self.onClose = onClose
+    }
 
     private let purple = Color(red: 122 / 255.0, green: 90 / 255.0, blue: 195 / 255.0)
 
@@ -33,7 +41,8 @@ struct ClaudeOAuthLoginView: View {
         .onChange(of: coordinator.loginState) { state in
             if case .success = state {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                    WebLoginWindowManager.shared.closeLoginWindow()
+                    if let onClose { onClose() }
+                    else { WebLoginWindowManager.shared.closeLoginWindow() }
                 }
             }
         }
@@ -53,7 +62,7 @@ struct ClaudeOAuthLoginView: View {
                 Text(L.WebLogin.codexOAuthWaitingBrowser)
                     .font(.headline)
                     .multilineTextAlignment(.center)
-                Text(L.WebLogin.codexOAuthWaitingHint)
+                Text(L.WebLogin.claudeOAuthWaitingHint)
                     .font(.callout)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)

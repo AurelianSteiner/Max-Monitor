@@ -113,7 +113,14 @@ function validateHeartbeat(body) {
     });
     if (limits.some((limit) => !accountIds.has(limit.accountId))) throw new FleetError(400, "limit.accountId fehlt in accounts");
   }
+  const monitoringAccountId = string(body.monitoringAccountId, "monitoringAccountId", 120, true);
+  if (monitoringAccountId && (!accounts || accounts.length !== 1 ||
+      accounts[0].accountId !== monitoringAccountId || accounts[0].provider !== "claude" ||
+      limits.some((limit) => limit.accountId !== monitoringAccountId))) {
+    throw new FleetError(400, "Monitoring muss genau einen zugeordneten Claude-Account melden");
+  }
   return optionalFields({
+    monitoringAccountId,
     deviceId: body.deviceId.toLowerCase(),
     name: string(body.name, "name", 120),
     workerId: string(body.workerId, "workerId", 120, true),
@@ -217,6 +224,14 @@ function machineStatus(machine, now) {
 
 function publicMachine(machine, now) {
   const { ownerId, derivedStatus, ...visible } = machine;
+  const boundAccount = machine.accounts?.length === 1 && machine.monitoringAccountId && machine.accounts.find((account) =>
+    account.accountId === machine.monitoringAccountId && account.provider === "claude");
+  // Old clients reported Account Limits. Never infer a worker account from them.
+  const sourceAccounts = boundAccount ? [boundAccount] : [];
+  const sourceLimits = boundAccount ? machine.limits.filter((limit) => limit.accountId === boundAccount.accountId) : [];
+  machine = { ...machine, accounts: sourceAccounts, limits: sourceLimits,
+    usageError: boundAccount ? machine.usageError : undefined,
+    usageUpdatedAt: boundAccount ? machine.usageUpdatedAt : undefined };
   const globalUsageError = machine.accounts?.length ? undefined : machine.usageError;
   function freshness(updatedAt, error, available = true) {
     const usageTime = Date.parse(updatedAt || "");
@@ -239,7 +254,11 @@ function publicMachine(machine, now) {
     name: machine.workerId || machine.name,
     deviceName: machine.name,
     limits,
-    ...(machine.accounts ? { accounts } : {}),
+    accounts,
+    monitoringAccountId: boundAccount?.accountId || null,
+    monitoringAccountStatus: boundAccount ? "connected" : "notConfigured",
+    usageUpdatedAt: machine.usageUpdatedAt,
+    usageError: machine.usageError,
     telemetrySource: "app",
     memberId: ownerId === "__team_owner__" ? null : ownerId,
     status: machineStatus(machine, now),
@@ -365,12 +384,14 @@ function createFleetStore(dataDir, now = Date.now) {
     };
     // Usage retrieval and device availability are independent. Preserve the last
     // known usage when this heartbeat reports a provider/API error.
-    if (incoming.usageError && !incoming.accounts?.length && previous) {
+    const sameMonitoringAccount = incoming.monitoringAccountId &&
+      incoming.monitoringAccountId === previous?.monitoringAccountId;
+    if (sameMonitoringAccount && incoming.usageError && !incoming.accounts?.length && previous) {
       machine.limits = previous.limits;
       if (previous.accounts && !machine.accounts) machine.accounts = previous.accounts;
       if (previous.usageUpdatedAt) machine.usageUpdatedAt = previous.usageUpdatedAt;
       else delete machine.usageUpdatedAt;
-    } else if (previous && incoming.accounts) {
+    } else if (sameMonitoringAccount && previous && incoming.accounts) {
       for (const account of machine.accounts) {
         if (!account.usageError) continue;
         const oldAccount = previous.accounts?.find((entry) => entry.accountId === account.accountId);

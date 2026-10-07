@@ -10,8 +10,54 @@ const deviceA = "610be10e-8a00-4e00-b000-000000000001";
 const deviceB = "610be10e-8a00-4e00-b000-000000000002";
 function heartbeat(deviceId = deviceA, overrides = {}) {
   const date = new Date().toISOString();
-  return { deviceId, name: "Mac Studio", workerId: "studio-1", reportedAt: date, batteryPercent: 78, powerSource: "ac", isCharging: true, isAwake: true, limits: [{ accountId: "account-a", label: "5 Stunden", kind: "session", percent: 43 }], usageUpdatedAt: date, ...overrides };
+  return { deviceId, name: "Mac Studio", workerId: "studio-1", reportedAt: date, batteryPercent: 78, powerSource: "ac", isCharging: true, isAwake: true, monitoringAccountId: "account-a", accounts: [{ accountId: "account-a", name: "Worker Claude", provider: "claude", usageUpdatedAt: overrides.usageUpdatedAt ?? date, usageError: overrides.usageError }], limits: [{ accountId: "account-a", label: "5 Stunden", kind: "session", percent: 43 }], usageUpdatedAt: date, ...overrides };
 }
+
+test("Mac quota is explicitly bound and never inferred from Account Limits", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "max-monitor-binding-"));
+  const clock = Date.now();
+  const store = createFleetStore(directory, () => clock);
+  const who = { role: "member", member: { id: "worker-1", name: "Worker" } };
+  const accounts = [
+    { accountId: "account-a", name: "Worker", provider: "claude" },
+    { accountId: "account-b", name: "Personal", provider: "claude" },
+  ];
+  const limits = [
+    { accountId: "account-a", label: "5h", kind: "session", percent: 0 },
+    { accountId: "account-b", label: "5h", kind: "session", percent: 12 },
+  ];
+  try {
+    const legacy = store.heartbeat("DEMO1234", who, heartbeat(deviceA, { monitoringAccountId: undefined, accounts, limits }));
+    assert.equal(legacy.monitoringAccountStatus, "notConfigured");
+    assert.deepEqual(legacy.limits, []);
+    assert.deepEqual(legacy.accounts, []);
+    assert.equal(legacy.batteryPercent, 78);
+    const before = store.snapshot("DEMO1234");
+    assert.throws(() => store.heartbeat("DEMO1234", who, heartbeat(deviceA, { accounts, limits })), /genau einen/);
+    assert.deepEqual(store.snapshot("DEMO1234"), before);
+
+    const bound = store.heartbeat("DEMO1234", who, heartbeat(deviceA, { accounts: [accounts[0]], limits: [limits[0]] }));
+    assert.equal(bound.monitoringAccountStatus, "connected");
+    assert.equal(bound.limits[0].percent, 0);
+    assert.equal(bound.accounts[0].name, "Worker");
+
+    const switched = store.heartbeat("DEMO1234", who, heartbeat(deviceA, {
+      monitoringAccountId: "account-b", accounts: [{ ...accounts[1], usageError: "Keine Messung" }],
+      limits: [], usageError: "Keine Messung",
+    }));
+    assert.deepEqual(switched.limits, []);
+    assert.equal(switched.accounts[0].accountId, "account-b");
+
+    const unlinked = store.heartbeat("DEMO1234", who, heartbeat(deviceA, {
+      monitoringAccountId: undefined, accounts: [], limits: [], usageError: "Abfrage fehlgeschlagen",
+    }));
+    assert.deepEqual(unlinked.limits, []);
+    assert.deepEqual(unlinked.accounts, []);
+    assert.equal(unlinked.monitoringAccountStatus, "notConfigured");
+    assert.equal(unlinked.status, "online");
+    assert.deepEqual(createFleetStore(directory).snapshot("DEMO1234").machines[0].limits, []);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
 function task(id = "clickup:newsletter:abc", overrides = {}) {
   return { id, title: "Newsletter erstellen", workflow: "newsletter", status: "queued", tags: ["pre gen.", "pre gen · wartet"], url: "https://app.clickup.com/t/abc", ...overrides };
 }
@@ -262,14 +308,13 @@ test("fleet status transitions, independent account freshness, and persisted err
     assert.equal(error.usageStale, true);
     assert.ok(store.snapshot("DEMO1234").events.some((event) => event.type === "machine_online"));
 
-    const accounts = [{ accountId: "account-a", name: "Account A", provider: "claude", usageUpdatedAt: date() }, { accountId: "account-b", name: "Account B", provider: "claude", usageUpdatedAt: date() }];
-    store.heartbeat("DEMO1234", who, heartbeat(deviceA, { reportedAt: date(), usageUpdatedAt: date(), accounts, limits: [{ accountId: "account-a", label: "A", kind: "session", percent: 12 }, { accountId: "account-b", label: "B", kind: "session", percent: 85 }] }));
+    const account = { accountId: "account-a", name: "Worker Claude", provider: "claude", usageUpdatedAt: date() };
+    store.heartbeat("DEMO1234", who, heartbeat(deviceA, { reportedAt: date(), usageUpdatedAt: date(), accounts: [account], limits: [{ accountId: "account-a", label: "5h", kind: "session", percent: 0 }] }));
     time += 16 * 60 * 1000;
-    const updated = store.heartbeat("DEMO1234", who, heartbeat(deviceA, { reportedAt: date(), usageUpdatedAt: date(), usageError: "Account B: Abfrage fehlgeschlagen", accounts: [{ ...accounts[0], usageUpdatedAt: date() }, { ...accounts[1], usageError: "Abfrage fehlgeschlagen" }], limits: [{ accountId: "account-a", label: "A", kind: "session", percent: 22 }] }));
-    assert.equal(updated.limits.find((item) => item.accountId === "account-a").usageStatus, "fresh");
-    assert.equal(updated.limits.find((item) => item.accountId === "account-b").percent, 85);
-    assert.equal(updated.limits.find((item) => item.accountId === "account-b").usageStatus, "error");
-    assert.equal(updated.limits.find((item) => item.accountId === "account-b").usageStale, true);
+    const updated = store.heartbeat("DEMO1234", who, heartbeat(deviceA, { reportedAt: date(), usageUpdatedAt: date(), usageError: "Abfrage fehlgeschlagen", accounts: [{ ...account, usageError: "Abfrage fehlgeschlagen" }], limits: [] }));
+    assert.equal(updated.limits[0].percent, 0);
+    assert.equal(updated.limits[0].usageStatus, "error");
+    assert.equal(updated.limits[0].usageStale, true);
     assert.equal(createFleetStore(directory, () => time).snapshot("DEMO1234").machines[0].usageStatus, "error");
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

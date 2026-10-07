@@ -41,6 +41,11 @@ final class ClaudeOAuthCoordinator: ObservableObject {
     private var finished = false
 
     private let loginTimeout: TimeInterval = 5 * 60
+    private let persistAccount: ((Account) throws -> Void)?
+
+    init(persistAccount: ((Account) throws -> Void)? = nil) {
+        self.persistAccount = persistAccount
+    }
 
     // MARK: - Public
 
@@ -233,7 +238,12 @@ final class ClaudeOAuthCoordinator: ObservableObject {
         // behält ID, Alias, Art und Kündigungsdatum — vorher wurde es gelöscht und
         // neu angelegt, und mit ihm gingen alle Handeinträge verloren.
         let account: Account
-        if let replaced = UserSettings.shared.replaceClaudeCredentials(
+        if let persistAccount {
+            account = Account(sessionKey: tokens.refreshToken, organizationId: stableOrgId,
+                organizationName: displayName, email: email, kind: kind)
+            do { try persistAccount(account) }
+            catch { fail(error.localizedDescription); return }
+        } else if let replaced = UserSettings.shared.replaceClaudeCredentials(
             organizationId: stableOrgId,
             sessionKey: tokens.refreshToken,
             email: email,
@@ -254,7 +264,7 @@ final class ClaudeOAuthCoordinator: ObservableObject {
             UserSettings.shared.addAccount(account)
             Logger.settings.notice("ClaudeOAuth: 账户创建成功 - \(account.displayName)")
         }
-        UserSettings.shared.switchToAccount(account)
+        if persistAccount == nil { UserSettings.shared.switchToAccount(account) }
 
         loginState = .success(accountName: account.displayName)
         onAccountCreated?(account)

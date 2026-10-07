@@ -35,6 +35,7 @@ extension Notification.Name {
     /// Server-Verbindung des Teams hergestellt, getrennt oder Rolle geändert.
     /// `TeamReportStore` lädt daraufhin neu, `TeamAutoReporter` startet/stoppt.
     static let teamServerChanged = Notification.Name("teamServerChanged")
+    static let fleetMonitoringChanged = Notification.Name("fleetMonitoringChanged")
 
     // MARK: - Window Related
 

@@ -421,6 +421,17 @@
 /* Fleet monitor */
 "fleet.queue_and_macs" = "Queue & Macs";
 "fleet.account_limits" = "Account Limits";
+"weblogin.claude_oauth_waiting_hint" = "Complete the Claude sign-in in your browser. You will return here automatically.";
+"fleet.monitoring_account" = "Monitoring account";
+"fleet.monitoring_intro" = "Connect the Claude account used by this Mac worker. This connection is separate from the accounts under Account Limits.";
+"fleet.monitoring_missing" = "No monitoring account is connected for this Mac yet.";
+"fleet.monitoring_connect" = "Connect Claude for this Mac";
+"fleet.monitoring_reconnect" = "Connect another account";
+"fleet.monitoring_disconnect" = "Disconnect account";
+"fleet.monitoring_disconnect_confirm" = "Disconnect the monitoring account for this Mac?";
+"fleet.monitoring_session" = "5-hour limit · used";
+"fleet.monitoring_weekly" = "Weekly limit · used";
+"fleet.monitoring_save_failed" = "The monitoring credentials could not be saved. Allow keychain access and try again.";
 "fleet.edit_connection" = "Edit connection";
 "fleet.token_stored" = "Stored securely on this Mac";
 "fleet.manage_accounts" = "Manage accounts";

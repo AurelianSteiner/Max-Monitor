@@ -150,7 +150,8 @@
     }
     if (machine.usageError || machine.usageStatus === "error")
       reasons.push("Claude-Kontingente konnten nicht geprüft werden");
-    if (!limits.length) reasons.push("Claude-Kontingente noch nicht gemeldet");
+    if (!limits.length) reasons.push(machine.monitoringAccountId
+      ? "Claude-Kontingente noch nicht gemeldet" : "Monitoring-Account auf diesem Worker-Mac verbinden");
     else if (
       machine.usageStale ||
       !timestamp(machine.usageUpdatedAt) ||
@@ -599,21 +600,21 @@
         work.append(node("span", "datum-value", `${active.length} aktiv`));
         data.append(battery, work);
         card.append(data);
-        const limits = Array.isArray(machine.limits) ? machine.limits : [];
-        const session = limits.filter((x) => x.kind === "session");
-        const weekly = limits.filter(
-          (x) =>
-            ["weekly", "modelWeekly", "accountWeekly"].includes(x.kind) ||
-            String(x.kind).startsWith("model:"),
-        );
+        const account = (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
+        const accountLabel = node("p", "machine-account meta", account
+          ? `Claude · ${account.name}` : "Monitoring-Account nicht verbunden");
+        accountLabel.title = account?.name || "Monitoring-Account auf diesem Worker-Mac verbinden";
+        card.append(accountLabel);
+        const limits = account && Array.isArray(machine.limits)
+          ? machine.limits.filter((item) => item.accountId === account.accountId) : [];
+        const session = limits.find((item) => item.kind === "session");
+        const weekly = limits.find((item) => item.kind === "weekly");
         const limitGroup = node("div", "machine-limits");
         for (const [label, list] of [
           ["5-Stunden-Limit", session],
           ["Wochenlimit", weekly],
         ]) {
-          const value = list.length
-            ? Math.max(...list.map((x) => x.percent))
-            : null;
+          const value = list?.percent ?? null;
           const limit = node("div", "machine-limit");
           const line = node("div", "usage-line");
           line.append(
@@ -639,7 +640,7 @@
               "usage-note",
               machine.usageError ||
                 (!limits.length
-                  ? "Claude-Kontingente noch nicht gemeldet."
+                  ? (account ? "Claude-Kontingente noch nicht gemeldet." : "Monitoring-Account auf diesem Worker-Mac verbinden.")
                   : `Kontingente veraltet · ${relative(machine.usageUpdatedAt)}`),
             ),
           );
@@ -851,6 +852,7 @@
     openDetail(task.title || task.id, children);
   }
   function machineDetails(machine) {
+    const account = (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
     const grid = node("div", "detail-grid");
     grid.append(
       detailField("macOS-Gerätename", machine.deviceName || (machine.name !== machine.workerId ? machine.name : null) || "Nicht gemeldet"),
@@ -868,6 +870,7 @@
         "Version",
         machine.appVersion || machine.workerVersion || "Unbekannt",
       ),
+      detailField("Monitoring-Account", account ? `Claude · ${account.name}` : "Auf diesem Worker-Mac unter Queue & Macs → Monitoring-Account verbinden", true),
       detailField("Kontingente geprüft", exact(machine.usageUpdatedAt)),
       detailField(
         "Always On",
