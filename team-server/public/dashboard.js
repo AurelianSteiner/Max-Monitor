@@ -508,6 +508,7 @@
             ["weekly", "modelWeekly", "accountWeekly"].includes(x.kind) ||
             String(x.kind).startsWith("model:"),
         );
+        const limitGroup = node("div", "machine-limits");
         for (const [label, list] of [
           ["5-Stunden-Limit", session],
           ["Wochenlimit", weekly],
@@ -515,12 +516,13 @@
           const value = list.length
             ? Math.max(...list.map((x) => x.percent))
             : null;
+          const limit = node("div", "machine-limit");
           const line = node("div", "usage-line");
           line.append(
             node("span", "", label),
             node("strong", "", value == null ? "—" : `${value} % genutzt`),
           );
-          card.append(line);
+          limit.append(line);
           const track = node("div", "usage-track");
           const fill = node(
             "div",
@@ -528,8 +530,10 @@
           );
           fill.style.width = `${Math.min(100, Math.max(0, value || 0))}%`;
           track.append(fill);
-          card.append(track);
+          limit.append(track);
+          limitGroup.append(limit);
         }
+        card.append(limitGroup);
         if (!limits.length || usageStale(machine) || machine.usageError)
           card.append(
             node(

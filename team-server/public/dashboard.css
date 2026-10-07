@@ -1205,9 +1205,52 @@ dialog .form-hint {
 .row-time {
   white-space: nowrap;
 }
-@media (min-width: 761px) and (max-width: 1200px) {
+.machine-limits {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.machine-limits .usage-line {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0 0 6px;
+}
+@media (min-width: 761px) {
+  .machine-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .machine {
+    padding: 12px;
+  }
+  .machine-title {
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .machine-data {
+    margin-bottom: 8px;
+  }
+  .machine-bottom {
+    margin-top: 8px;
+  }
+  .metrics {
+    margin: 16px 0 20px;
+    padding: 14px 8px;
+  }
+  .section-heading {
+    margin-bottom: 12px;
+  }
+}
+@media (min-width: 761px) and (max-width: 1000px) {
   .machine-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 761px) and (max-width: 1200px) {
+  .header-actions {
+    flex-direction: row;
+    align-items: center;
   }
 }
 
