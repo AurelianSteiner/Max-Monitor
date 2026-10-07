@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f5f6f8" />
+    <title>Max Monitor · Worker & Queue</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./fleet-assets/dashboard.css" />
+    <script src="./fleet-assets/dashboard.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Zur Übersicht</a>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Navigation">
+        <a class="brand" href="./fleet"
+          ><span class="brand-mark" aria-hidden="true">M</span
+          ><span>Max Monitor<small>Worker control</small></span></a
+        >
+        <div class="workspace-label">AI Newsletter Creation</div>
+        <nav>
+          <button class="nav-item selected" data-view="overview">
+            <span>Übersicht</span><span aria-hidden="true">↗</span>
+          </button>
+          <button class="nav-item" data-view="queue">
+            <span
+              ><span class="desktop-label">Aufgaben-Queue</span
+              ><span class="mobile-label">Queue</span></span
+            ><span id="nav-queue" class="nav-count">—</span>
+          </button>
+          <button class="nav-item" data-view="machines">
+            <span
+              ><span class="desktop-label">Mac-Worker</span
+              ><span class="mobile-label">Macs</span></span
+            ><span id="nav-machines" class="nav-count">—</span>
+          </button>
+          <button class="nav-item" data-view="log">
+            <span
+              ><span class="desktop-label">Queue-Log</span
+              ><span class="mobile-label">Log</span></span
+            ><span aria-hidden="true">≡</span>
+          </button>
+        </nav>
+        <div class="sidebar-bottom">
+          <span class="signal" aria-hidden="true"></span
+          ><strong>Eine gemeinsame Übersicht</strong>
+          <p>
+            Alle Macs melden an denselben Team-Server. Geräteprüfung alle 10
+            Minuten.
+          </p>
+          <button id="connection-button" class="text-button">
+            Verbindung anzeigen
+          </button>
+        </div>
+      </aside>
+      <main id="main" tabindex="-1">
+        <header class="page-header">
+          <div>
+            <div class="eyebrow">Fleet / Operations</div>
+            <h1 id="page-title">Alles im Blick.</h1>
+            <p>Deine Mac-Worker und die Arbeit, die als Nächstes dran ist.</p>
+          </div>
+          <div class="header-actions">
+            <span id="sync-status" role="status">Noch nicht verbunden</span
+            ><button
+              id="connection-top"
+              class="icon-button connection-top"
+              aria-label="Team-Verbindung"
+              title="Team-Verbindung"
+            >
+              ⚙</button
+            ><button id="refresh" class="button secondary">
+              Aktualisieren <span aria-hidden="true">↻</span>
+            </button>
+          </div>
+        </header>
+        <div id="notice" class="notice" role="status" hidden></div>
+        <section class="metrics" aria-label="Zusammenfassung">
+          <button class="metric" data-view="machines">
+            <span>Macs erreichbar</span><strong id="metric-online">—</strong
+            ><small id="metric-total">Noch keine Gerätedaten</small>
+          </button>
+          <button class="metric" data-view="queue" data-status="running">
+            <span>In Bearbeitung</span><strong id="metric-running">—</strong
+            ><small>Aktive Workflow-Aufgaben</small>
+          </button>
+          <button class="metric" data-view="queue" data-status="queued">
+            <span>In der Queue</span><strong id="metric-queued">—</strong
+            ><small>Wartet auf einen Worker</small>
+          </button>
+          <button
+            class="metric attention"
+            data-view="log"
+            data-log-filter="attention"
+          >
+            <span>Braucht Aufmerksamkeit</span
+            ><strong id="metric-attention">—</strong
+            ><small id="metric-attention-detail"
+              >Betroffene Macs & Aufgaben anzeigen</small
+            >
+          </button>
+        </section>
+        <section id="machines-section" class="content-section">
+          <div class="section-heading">
+            <div>
+              <h2>
+                Mac-Worker <span id="machine-count" class="count">—</span>
+              </h2>
+              <p>Erreichbarkeit und Kontingente pro Gerät.</p>
+            </div>
+            <span class="interval">Heartbeat · 10 min</span>
+          </div>
+          <div id="machine-grid" class="machine-grid" aria-live="polite">
+            <div class="empty-state">
+              Verbinde deinen Team-Server, um alle Macs zu sehen.
+            </div>
+          </div>
+        </section>
+        <section id="queue-section" class="content-section">
+          <div class="section-heading">
+            <div>
+              <h2>
+                Aufgaben-Queue <span id="queue-count" class="count">—</span>
+              </h2>
+              <p id="queue-source">
+                Pre-Gen, Uploads und weitere Automatisierungen.
+              </p>
+            </div>
+            <span id="queue-updated" class="interval"
+              >Quelle noch nicht verbunden</span
+            >
+          </div>
+          <div class="queue-toolbar">
+            <div
+              id="status-tabs"
+              class="status-tabs"
+              aria-label="Aufgabenstatus"
+            >
+              <button class="tab selected" data-status="open">
+                Offen <span id="open-count">0</span></button
+              ><button class="tab" data-status="running">Läuft</button
+              ><button class="tab" data-status="queued">Wartet</button
+              ><button class="tab" data-status="blocked">Blockiert</button
+              ><button class="tab" data-status="all">Alle</button>
+            </div>
+            <div class="filters">
+              <label class="search"
+                ><span aria-hidden="true">⌕</span
+                ><span class="sr-only">Aufgaben suchen</span
+                ><input
+                  id="search"
+                  name="search"
+                  type="search"
+                  placeholder="Aufgabe oder Mac suchen…"
+                  autocomplete="off" /></label
+              ><label
+                ><span class="sr-only">Workflow filtern</span
+                ><select id="workflow" name="workflow">
+                  <option value="">Alle Workflows</option>
+                </select></label
+              >
+            </div>
+          </div>
+          <div id="worker-filter" class="worker-filter" hidden>
+            <span id="worker-filter-label"></span
+            ><button id="clear-worker" class="text-button">
+              Filter entfernen ×
+            </button>
+          </div>
+          <div class="table-scroll">
+            <table class="queue-table">
+              <thead>
+                <tr>
+                  <th scope="col">Aufgabe</th>
+                  <th scope="col">Workflow</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Mac / Fortschritt</th>
+                  <th scope="col">Aktualisiert</th>
+                  <th scope="col"><span class="sr-only">Details</span></th>
+                </tr>
+              </thead>
+              <tbody id="queue-body"></tbody>
+            </table>
+          </div>
+          <div id="queue-empty" class="empty-state" hidden>
+            Keine Aufgaben für diesen Filter.
+          </div>
+          <div id="pagination" class="pagination" hidden>
+            <button id="page-previous" class="button secondary">← Zurück</button
+            ><span id="page-label"></span
+            ><button id="page-next" class="button secondary">Weiter →</button>
+          </div>
+          <div class="table-footer">
+            <span id="result-count">Noch keine Queue-Daten</span
+            ><span>ClickUp bleibt die Aufgabenquelle.</span>
+          </div>
+        </section>
+        <section id="log-section" class="content-section" hidden>
+          <div class="section-heading">
+            <div>
+              <h2>Queue-Log</h2>
+              <p id="log-description">
+                Neue Aufgaben, Statuswechsel und Meldungen der Geräte.
+              </p>
+            </div>
+          </div>
+          <div
+            id="log-filters"
+            class="status-tabs log-filters"
+            aria-label="Queue-Log filtern"
+          >
+            <button
+              class="tab selected"
+              data-log-filter="all"
+              aria-pressed="true"
+            >
+              Alle Ereignisse
+            </button>
+            <button
+              class="tab"
+              data-log-filter="attention"
+              aria-pressed="false"
+            >
+              Braucht Aufmerksamkeit <span id="log-attention-count">—</span>
+            </button>
+          </div>
+          <p id="log-summary" class="log-summary" role="status"></p>
+          <div id="event-list" class="event-list"></div>
+        </section>
+        <footer class="page-footer">
+          <span id="team-label">Gemeinsamer Team-Server</span
+          ><span>Keine Meldung seit 15 min: still · seit 30 min: offline</span>
+        </footer>
+      </main>
+    </div>
+    <dialog id="connection-dialog" aria-labelledby="connection-title">
+      <form id="connection-form">
+        <div class="dialog-heading">
+          <h2 id="connection-title">Team-Server verbinden</h2>
+          <button
+            type="button"
+            class="icon-button"
+            data-close
+            aria-label="Dialog schließen"
+          >
+            ×
+          </button>
+        </div>
+        <p>
+          Nutze auf jedem Mac dieselbe Server-Adresse und Team-ID. Jeder Mac
+          erhält ein eigenes Mitglieds-Token.
+        </p>
+        <label
+          >Team-ID<input
+            id="team-id"
+            name="teamId"
+            required
+            pattern="[A-Za-z0-9]{4,16}"
+            maxlength="16"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Deine Team-ID…" /></label
+        ><label
+          >Persönliches Token<input
+            id="team-token"
+            name="token"
+            required
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Mitglieds-Token…"
+        /></label>
+        <p class="form-hint">
+          Der Server ist diese Webseite. Dein Token bleibt für diese Sitzung im
+          Speicher.
+        </p>
+        <div id="connection-error" class="form-error" role="alert" hidden></div>
+        <div class="dialog-actions">
+          <button id="disconnect" type="button" class="button secondary" hidden>
+            Trennen</button
+          ><button type="submit" id="connect" class="button primary">
+            Verbinden
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="detail-dialog" aria-labelledby="detail-title">
+      <div class="dialog-heading">
+        <h2 id="detail-title">Details</h2>
+        <button class="icon-button" data-close aria-label="Dialog schließen">
+          ×
+        </button>
+      </div>
+      <div id="detail-body"></div>
+    </dialog>
+  </body>
+</html>

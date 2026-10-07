@@ -183,3 +183,35 @@ All of them except `/health` need `Authorization: Bearer <token>`.
 | `POST` | `/v1/teams/:id/members` | super | create a member `{name, role?}`, returns its token |
 | `DELETE` | `/v1/teams/:id/members/:memberId` | super | remove a member, their report and their history |
 | `GET` | `/v1/teams/:id/members/:mid/history?days=7` | super, admin, own member | usage history, up to 30 days |
+
+## Worker fleet and workflow queue
+
+`/fleet` serves the shared dashboard. Each authenticated team member can read the
+fleet, queue and bounded event log; the existing report/history permissions above
+remain unchanged. All app installations use the same URL and team ID, with one
+member token per Mac. The owner/admin queue producer runs independently of those
+Macs. See [fleet setup](../docs/fleet-monitoring.md).
+
+| Method | Path | Who | Does |
+| --- | --- | --- | --- |
+| `GET` | `/fleet` or `/monitor` | anyone | dashboard shell, no team data or credentials |
+| `POST` | `/v1/teams/:id/heartbeat` | any role | register/update this Mac's liveness, battery and per-account usage |
+| `GET` | `/v1/teams/:id/fleet` | any role | complete team fleet, queue and event log |
+| `POST` | `/v1/teams/:id/queue` | super, admin | complete queue/worker-source snapshot or source-only error |
+
+The fleet is saved atomically in `$DATA_DIR/<TEAMID>/fleet.json`, including known
+devices, queue snapshots and up to 300 recent events. Keep the existing persistent
+volume when updating this service. Server receipt time determines Mac liveness:
+online through 15 minutes, silent after 15, offline after 30. Usage freshness and
+provider errors are tracked independently, including each individual account.
+The device UUID belongs to its member; a duplicate Worker ID is rejected to avoid
+silently merging two Macs.
+
+Unlike legacy usage reports, this optional feature also stores device/worker names,
+battery, app/worker versions, task titles, URLs, tags and workflow states. It still
+never receives Claude credentials, ClickUp credentials, prompts or briefings.
+The read-only newsletter bridge keeps ClickUp/Slack access on the existing RS Hub.
+Browser tokens stay in memory; the native app uses an ephemeral, origin-restricted
+WebView. Queue snapshots have a separate 2 MB request budget (5,000 tasks maximum).
+Source errors retain the last complete queue and its timestamp. Run `npm test`
+for the fleet/auth/persistence integration checks.

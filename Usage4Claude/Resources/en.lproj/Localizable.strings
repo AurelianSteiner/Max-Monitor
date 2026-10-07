@@ -417,3 +417,14 @@
 "team.view.trend" = "Weekly limit: %1$d %% → %2$d %% over 24 h";
 "team.empty.server_no_reports_step" = "The app reports on its own once connected. Colleagues only need the team ID and a token.";
 "team.empty.server_unreachable_step" = "Check the network and try again.";
+
+/* Fleet monitor */
+"fleet.title" = "Queue & Mac overview";
+"fleet.open" = "Queue & Macs";
+"fleet.intro" = "All newsletter tasks and Mac workers in one place. Connect every Mac to the same team server and team ID. Give each Mac its own member token.";
+"fleet.worker_id" = "Worker ID (optional)";
+"fleet.worker_id_help" = "Enter the worker_id from the newsletter worker configuration to link tasks to this Mac. Monitoring continues without a worker ID.";
+"fleet.heartbeat_help" = "This Mac reports its battery, power source and every Claude account's limits every 10 minutes. After 15 minutes without a heartbeat it is silent, and after 30 minutes it is offline. Claude credentials stay on this Mac.";
+"fleet.retry" = "Reload";
+"fleet.settings" = "Connection & worker";
+"fleet.load_error" = "The shared overview could not be loaded";

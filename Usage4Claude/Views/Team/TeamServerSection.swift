@@ -63,6 +63,8 @@ struct TeamServerSection: View {
 
     @ObservedObject private var connection = TeamServerConnection.shared
 
+    @AppStorage(FleetSettings.workerIdKey) private var workerIdInput = ""
+
     @State private var teamIdInput = ""
     @State private var tokenInput = ""
     @State private var serverURLInput = TeamServerConnection.defaultServerURL.absoluteString
@@ -84,6 +86,7 @@ struct TeamServerSection: View {
             // an dem die Adresse zu reparieren ist.
             if connection.isConnected && !connection.isServerURLInsecure {
                 connectedRow
+                fleetSettings
 
                 if connection.role?.canManageMembers == true {
                     TeamMemberManagement()
@@ -199,6 +202,28 @@ struct TeamServerSection: View {
 
     // MARK: - Verbunden
 
+    private var fleetSettings: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                TextField(L.Fleet.workerId, text: $workerIdInput)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .onSubmit { FleetReporter.shared.report() }
+                    .help(L.Fleet.workerIdHelp)
+                Button(L.Fleet.open) { FleetWindowManager.shared.show() }
+                    .controlSize(.small)
+            }
+            Text(L.Fleet.workerIdHelp)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(L.Fleet.heartbeatHelp)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 6)
+    }
     private var connectedRow: some View {
         HStack(spacing: 8) {
             if let role = connection.role {

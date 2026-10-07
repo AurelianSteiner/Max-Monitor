@@ -200,6 +200,37 @@ final class TeamServerClient {
         _ = try await request("POST", "/v1/reports", body: body)
     }
 
+    /// POST /v1/teams/<ID>/heartbeat — liveness plus every local Claude account.
+    func postHeartbeat(_ heartbeat: FleetHeartbeat) async throws {
+        _ = try await request("POST", "/v1/teams/\(teamId)/heartbeat", body: heartbeat.jsonData())
+    }
+
+    var fleetDashboardURL: URL { baseURL.appendingPathComponent("fleet") }
+
+    /// Only the ephemeral fleet WebView receives this script. It is scoped to
+    /// this exact origin/path and kept in memory; never put credentials in URLs.
+    func fleetBootstrapScript() throws -> String {
+        guard let origin = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
+              let scheme = origin.scheme, let host = origin.host else { throw TeamServerError.invalidResponse }
+        let hostText = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        let defaultPort = scheme.lowercased() == "https" ? 443 : 80
+        let portText = origin.port.flatMap { $0 == defaultPort ? nil : ":\($0)" } ?? ""
+        let context: [String: String] = [
+            "teamId": teamId, "token": token,
+            "origin": "\(scheme)://\(hostText)\(portText)", "path": fleetDashboardURL.path
+        ]
+        let data = try JSONSerialization.data(withJSONObject: context)
+        guard let json = String(data: data, encoding: .utf8) else { throw TeamServerError.invalidResponse }
+        return """
+        (() => {
+          const context = \(json);
+          if (location.origin === context.origin && (location.pathname === context.path || location.pathname === context.path + '/')) {
+            window.__MAX_MONITOR__ = { teamId: context.teamId, token: context.token };
+          }
+        })();
+        """
+    }
+
     /// GET /v1/teams/<ID>/members — super (mit Tokens) oder admin (ohne).
     func members() async throws -> [TeamServerMember] {
         struct Envelope: Decodable { let members: [TeamServerMember] }
