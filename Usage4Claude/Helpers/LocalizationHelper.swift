@@ -461,6 +461,7 @@ enum L {
         static var privacyNotice: String { localized("weblogin.privacy_notice") }
 
         // MARK: Claude OAuth 登录（系统浏览器）
+        static var claudeOAuthWaitingHint: String { localized("weblogin.claude_oauth_waiting_hint") }
         static var claudeOAuthPortBusy: String { localized("weblogin.claude_oauth_port_busy") }
         static var claudeOAuthManualHint: String { localized("weblogin.claude_oauth_manual_hint") }
         static var claudeOAuthManualPrompt: String { localized("weblogin.claude_oauth_manual_prompt") }
@@ -604,6 +605,16 @@ enum L {
         static var title: String { localized("fleet.title") }
         static var queueAndMacs: String { localized("fleet.queue_and_macs") }
         static var accountLimits: String { localized("fleet.account_limits") }
+        static var monitoringAccount: String { localized("fleet.monitoring_account") }
+        static var monitoringIntro: String { localized("fleet.monitoring_intro") }
+        static var monitoringMissing: String { localized("fleet.monitoring_missing") }
+        static var monitoringConnect: String { localized("fleet.monitoring_connect") }
+        static var monitoringReconnect: String { localized("fleet.monitoring_reconnect") }
+        static var monitoringDisconnect: String { localized("fleet.monitoring_disconnect") }
+        static var monitoringDisconnectConfirm: String { localized("fleet.monitoring_disconnect_confirm") }
+        static var monitoringSession: String { localized("fleet.monitoring_session") }
+        static var monitoringWeekly: String { localized("fleet.monitoring_weekly") }
+        static var monitoringSaveFailed: String { localized("fleet.monitoring_save_failed") }
         static var editConnection: String { localized("fleet.edit_connection") }
         static var tokenStored: String { localized("fleet.token_stored") }
         static var manageAccounts: String { localized("fleet.manage_accounts") }

@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2.10.1
+
+- **Ein eigener Claude-Account pro Mac.** Unter Queue & Macs verbindet jeder Worker seinen Monitoring-Account separat. Login, Zugangsspeicher und Limit-Abfrage sind unabhängig von Account Limits.
+- **Limits eindeutig zuordnen.** Die Mac-Karten nennen den verbundenen Account und zeigen dessen 5-Stunden- und Wochenlimit. Werte anderer Konten und modellbezogene Wochenlimits werden nicht mehr zusammengefasst.
+- **Keine geratenen Prozentwerte.** Alte Meldungen aus Account Limits werden nicht als Mac-Kontingent angezeigt. Ohne explizite Verbindung steht der Monitoring-Account als nicht verbunden in der Übersicht; Mac-Status und Akku bleiben sichtbar.
+- **Account-Wechsel sicher abgleichen.** Wechsel und Trennen werden sofort gemeldet. Verspätete Abfragen oder Token-Erneuerungen können die vorherige Verbindung nicht wiederherstellen.
+
 ## 2.10
 
 - **Queue & Macs als Hauptübersicht.** Das Menüleisten-Tool öffnet eine größere, veränderbare Übersicht mit allen Mac-Workern. Account Limits und die Kontoverwaltung sind direkt darin erreichbar.

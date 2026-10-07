@@ -420,6 +420,17 @@
 /* Fleet monitor */
 "fleet.queue_and_macs" = "Queue & Macs";
 "fleet.account_limits" = "Account Limits";
+"weblogin.claude_oauth_waiting_hint" = "Die Claude-Anmeldung im Browser abschließen. Die Rückkehr hierher erfolgt automatisch.";
+"fleet.monitoring_account" = "Monitoring-Account";
+"fleet.monitoring_intro" = "Verbinde hier den Claude-Account, den dieser Mac als Worker verwendet. Die Verbindung ist unabhängig von den Konten unter Account Limits.";
+"fleet.monitoring_missing" = "Für diesen Mac ist noch kein Monitoring-Account verbunden.";
+"fleet.monitoring_connect" = "Claude für diesen Mac verbinden";
+"fleet.monitoring_reconnect" = "Anderen Account verbinden";
+"fleet.monitoring_disconnect" = "Verbindung trennen";
+"fleet.monitoring_disconnect_confirm" = "Monitoring-Account für diesen Mac trennen?";
+"fleet.monitoring_session" = "5-Stunden-Limit · genutzt";
+"fleet.monitoring_weekly" = "Wochenlimit · genutzt";
+"fleet.monitoring_save_failed" = "Der Monitoring-Zugang konnte nicht gespeichert werden. Bitte den Schlüsselbund freigeben und erneut versuchen.";
 "fleet.edit_connection" = "Verbindung bearbeiten";
 "fleet.token_stored" = "Sicher auf diesem Mac gespeichert";
 "fleet.manage_accounts" = "Konten verwalten";

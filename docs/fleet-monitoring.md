@@ -6,6 +6,14 @@ enthält die lokalen Konten und ihre Limits im selben Fenster. Konten werden dor
 **Konten verwalten** hinzugefügt. Team-ID, persönlicher Token und Worker-ID liegen unter
 **Einstellungen → Verbindung & Worker**. Beim Tabwechsel bleiben die Queue-Filter erhalten.
 
+**Queue & Macs → Monitoring-Account** verbindet genau einen Claude-Account für den
+lokalen Mac. Dieser Login und seine gespeicherten Zugangsdaten sind unabhängig von
+**Account Limits**. Konten in Account Limits werden niemals automatisch als
+Monitoring-Account übernommen. Jede Mac-Karte nennt den verbundenen Account;
+ohne Verbindung bleiben die Limits unbekannt, während der Gerätebericht weiterläuft.
+Die Werte **5h** und **Woche** stammen jeweils aus dem Fünf-Stunden-Limit und dem
+gesamten Wochenlimit dieses Accounts. Einzelne Modelllimits stehen in den Details.
+
 Alle Macs verbinden sich mit **demselben Team-Relay und derselben Team-ID**. Das
 Repository verteilt den Programmcode; das Relay speichert die gemeinsamen Daten.
 Damit hängt die Übersicht nicht von Tills Arbeits-Mac ab. Das Relay läuft auf einem
@@ -97,7 +105,10 @@ bash ops/macos/max-monitor.sh
 Mit `--check` lässt sich die Verbindung ohne Installation oder neue Anmeldung
 prüfen, mit `--dry-run` der Ablauf ansehen. Die App startet beim Anmelden, sofern
 macOS den Autostart freigibt. Das eigene Claude-Konto meldest du einmal auf dem
-jeweiligen Mac an. macOS-Dialoge lassen sich ohne Geräteverwaltung nicht
+jeweiligen Mac über **Queue & Macs → Monitoring-Account** an. Auch nach einem
+Upgrade von einer älteren App ist dieser separate Login erforderlich;
+bisherige Konten in **Account Limits** bleiben dort erhalten.
+macOS-Dialoge lassen sich ohne Geräteverwaltung nicht
 vorab bestätigen.
 
 Die zentrale Einrichtung erfolgt einmal nach
@@ -115,7 +126,7 @@ Bridge erforderlich.
    Relay-URL und Team-ID sind auf allen Macs gleich; der Member-Token ist pro Mac
    verschieden. Den Super-Token beim Owner belassen. Die App benötigt weder
    ClickUp-Zugangsdaten noch das Claude-Konto eines anderen Macs.
-3. Auf jedem Mac dessen eigenes Claude-Konto in der App verbinden. Nach der
+3. Auf jedem Mac dessen eigenes Claude-Konto über **Queue & Macs → Monitoring-Account** verbinden. Nach der
    Team-Verbindung sendet die App automatisch den Gerätebericht. Akku,
    Stromversorgung, Gerät und Usage-Werte stammen von diesem Mac. Der regelmäßige
    Bericht wird alle zehn Minuten gesendet, außerdem beim Start und nach dem

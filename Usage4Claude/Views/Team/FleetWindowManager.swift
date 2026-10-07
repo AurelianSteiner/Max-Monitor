@@ -60,7 +60,7 @@ private struct FleetDashboardView: View {
     @State private var activeSheet: MonitorSheet?
 
     private enum MonitorSheet: String, Identifiable {
-        case connection, accounts
+        case connection, accounts, monitoring
         var id: String { rawValue }
     }
 
@@ -87,7 +87,7 @@ private struct FleetDashboardView: View {
         .sheet(item: $activeSheet) { sheet in
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    Text(sheet == .accounts ? L.Fleet.manageAccounts : L.Fleet.settings)
+                    Text(sheet == .accounts ? L.Fleet.manageAccounts : sheet == .monitoring ? L.Fleet.monitoringAccount : L.Fleet.settings)
                         .font(.title3.weight(.semibold))
                     Spacer()
                     Button(L.Fleet.done) { activeSheet = nil }
@@ -95,13 +95,15 @@ private struct FleetDashboardView: View {
                 }
                 if sheet == .accounts {
                     AuthSettingsView()
+                } else if sheet == .monitoring {
+                    FleetMonitoringAccountView()
                 } else {
                     Text(L.Fleet.intro).font(.callout).foregroundColor(.secondary)
                     ScrollView { TeamServerSection() }
                 }
             }
             .padding(24)
-            .frame(width: 580, height: 520)
+            .frame(width: 580, height: sheet == .monitoring ? 400 : 520)
         }
         .onReceive(NotificationCenter.default.publisher(for: .teamServerChanged)) { _ in reload() }
         .onAppear { sleepGuard.adoptSystemStateIfNeeded() }
@@ -119,6 +121,8 @@ private struct FleetDashboardView: View {
             Spacer(minLength: 8)
             if showsAccountLimits {
                 Button(L.Fleet.manageAccounts) { activeSheet = .accounts }
+            } else {
+                Button(L.Fleet.monitoringAccount) { activeSheet = .monitoring }
             }
             Button(action: { sleepGuard.toggleAwake() }) {
                 Label(L.Dashboard.sleepLabel, systemImage: sleepGuard.isAwake ? "bolt.fill" : "bolt")
@@ -132,6 +136,7 @@ private struct FleetDashboardView: View {
                     .accessibilityLabel(L.Fleet.retry)
             }
             Menu {
+                Button(L.Fleet.monitoringAccount) { activeSheet = .monitoring }
                 Button(L.Fleet.settings) { activeSheet = .connection }
                 Button(L.Fleet.manageAccounts) {
                     showsAccountLimits = true

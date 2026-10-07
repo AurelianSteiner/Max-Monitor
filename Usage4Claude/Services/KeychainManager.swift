@@ -326,6 +326,21 @@ class KeychainManager {
         storage.delete(key: "teamServerToken")
     }
 
+    // Separate from accounts/accounts_codex; never populated by Account Limits.
+    @discardableResult
+    func saveFleetMonitoringAccount(_ value: String) -> Bool {
+        storage.save(key: "fleetMonitoringAccount", value: value)
+    }
+
+    func loadFleetMonitoringAccount() -> String? {
+        storage.load(key: "fleetMonitoringAccount")
+    }
+
+    @discardableResult
+    func deleteFleetMonitoringAccount() -> Bool {
+        storage.delete(key: "fleetMonitoringAccount")
+    }
+
     // MARK: - 账户列表存储（v2.1.0 多账户支持）
 
     @discardableResult

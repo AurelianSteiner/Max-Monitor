@@ -16,6 +16,7 @@ final class WebLoginWindowManager {
     static let shared = WebLoginWindowManager()
 
     private var loginWindow: NSWindow?
+    private var monitoringLoginWindow: NSWindow?
     private var codexLoginWindow: NSWindow?
 
     private init() {}
@@ -76,6 +77,23 @@ final class WebLoginWindowManager {
     func closeLoginWindow() {
         loginWindow?.close()
         loginWindow = nil
+    }
+
+    func showMonitoringLoginWindow() {
+        if let window = monitoringLoginWindow, window.isVisible {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let view = ClaudeOAuthLoginView(persistAccount: { account in
+            try FleetMonitoringManager.shared.bind(account)
+        }, onClose: { [weak self] in self?.monitoringLoginWindow?.close() })
+        let window = makeCompactWindow(title: L.Fleet.monitoringAccount, content: view, width: 440, height: 380)
+        monitoringLoginWindow = window
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification,
+            object: window, queue: .main) { [weak self] _ in self?.monitoringLoginWindow = nil }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: - Codex Login
