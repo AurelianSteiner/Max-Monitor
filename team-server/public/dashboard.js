@@ -24,7 +24,7 @@
     view = "log";
     logFilter = "attention";
   }
-  let statusFilter = params.get("status") || "open";
+  let statusFilter = params.get("status") || "running";
   let workerFilter = params.get("worker") || "";
   let workflowFilter = params.get("workflow") || "";
   let query = params.get("q") || "";
@@ -197,7 +197,7 @@
     const state = new URLSearchParams();
     if (view !== "overview") state.set("view", view);
     if (logFilter !== "all") state.set("log", logFilter);
-    if (statusFilter !== "open") state.set("status", statusFilter);
+    if (statusFilter !== "running") state.set("status", statusFilter);
     if (workerFilter) state.set("worker", workerFilter);
     if (workflowFilter) state.set("workflow", workflowFilter);
     if (query) state.set("q", query);
@@ -348,7 +348,17 @@
     $("nav-machines").textContent = snapshot ? devices.length : "—";
     $("machine-count").textContent = devices.length;
     $("queue-count").textContent = items.length;
-    $("open-count").textContent = items.filter(isOpen).length;
+    const statusCounts = {
+      open: items.filter(isOpen).length,
+      running: items.filter((task) => task.status === "running").length,
+      queued: items.filter((task) => task.status === "queued").length,
+      blocked: items.filter((task) => task.status === "blocked").length,
+      all: items.length,
+    };
+    for (const [status, count] of Object.entries(statusCounts)) {
+      const label = $(`${status}-count`);
+      if (label) label.textContent = numberFormat.format(count);
+    }
     $("page-title").textContent =
       {
         overview: "Alles im Blick.",
@@ -498,6 +508,7 @@
             ["weekly", "modelWeekly", "accountWeekly"].includes(x.kind) ||
             String(x.kind).startsWith("model:"),
         );
+        const limitGroup = node("div", "machine-limits");
         for (const [label, list] of [
           ["5-Stunden-Limit", session],
           ["Wochenlimit", weekly],
@@ -505,12 +516,13 @@
           const value = list.length
             ? Math.max(...list.map((x) => x.percent))
             : null;
+          const limit = node("div", "machine-limit");
           const line = node("div", "usage-line");
           line.append(
             node("span", "", label),
             node("strong", "", value == null ? "—" : `${value} % genutzt`),
           );
-          card.append(line);
+          limit.append(line);
           const track = node("div", "usage-track");
           const fill = node(
             "div",
@@ -518,8 +530,10 @@
           );
           fill.style.width = `${Math.min(100, Math.max(0, value || 0))}%`;
           track.append(fill);
-          card.append(track);
+          limit.append(track);
+          limitGroup.append(limit);
         }
+        card.append(limitGroup);
         if (!limits.length || usageStale(machine) || machine.usageError)
           card.append(
             node(

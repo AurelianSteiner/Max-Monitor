@@ -136,12 +136,16 @@
               class="status-tabs"
               aria-label="Aufgabenstatus"
             >
-              <button class="tab selected" data-status="open">
+              <button class="tab" data-status="open" aria-pressed="false">
                 Offen <span id="open-count">0</span></button
-              ><button class="tab" data-status="running">Läuft</button
-              ><button class="tab" data-status="queued">Wartet</button
-              ><button class="tab" data-status="blocked">Blockiert</button
-              ><button class="tab" data-status="all">Alle</button>
+              ><button class="tab selected" data-status="running" aria-pressed="true">
+                Läuft <span id="running-count">0</span></button
+              ><button class="tab" data-status="queued" aria-pressed="false">
+                Wartet <span id="queued-count">0</span></button
+              ><button class="tab" data-status="blocked" aria-pressed="false">
+                Blockiert <span id="blocked-count">0</span></button
+              ><button class="tab" data-status="all" aria-pressed="false">
+                Alle <span id="all-count">0</span></button>
             </div>
             <div class="filters">
               <label class="search"
