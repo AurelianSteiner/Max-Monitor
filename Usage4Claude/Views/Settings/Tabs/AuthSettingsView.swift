@@ -57,10 +57,7 @@ struct AuthSettingsView: View {
                     // 账户列表视图
                     accountListView
 
-                    // Team-Übersicht: eigene Karte unter der Kontoliste. Sie
-                    // gehört hierher, weil sie dieselbe Frage betrifft — wessen
-                    // Auslastung diese App anzeigt —, nur eben für die Kollegen.
-                    TeamSettingsCard()
+
                 }
             }
             .padding()

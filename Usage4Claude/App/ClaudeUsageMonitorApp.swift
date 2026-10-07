@@ -133,7 +133,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let menuBarManager {
             menuBarManager.openDashboardWindow()
         } else {
-            DashboardWindowManager.shared.show { _ in }
+            FleetWindowManager.shared.show()
         }
 
         return true

@@ -86,6 +86,15 @@ struct TeamServerSection: View {
             // an dem die Adresse zu reparieren ist.
             if connection.isConnected && !connection.isServerURLInsecure {
                 connectedRow
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L.Team.serverURLLabel).font(.caption).foregroundColor(.secondary)
+                    Text(connection.serverURL.absoluteString)
+                        .font(.system(size: 12, design: .monospaced))
+                        .textSelection(.enabled)
+                    Text(L.Team.serverTokenLabel).font(.caption).foregroundColor(.secondary)
+                    Text(L.Fleet.tokenStored).font(.caption)
+                }
+                DisclosureGroup(L.Fleet.editConnection) { connectForm.padding(.top, 8) }
                 fleetSettings
 
                 if connection.role?.canManageMembers == true {
@@ -102,7 +111,13 @@ struct TeamServerSection: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .onAppear(perform: prefillRejectedURL)
+        .onAppear {
+            if connection.isConnected && !connection.isServerURLInsecure {
+                serverURLInput = connection.serverURL.absoluteString
+                teamIdInput = connection.teamId ?? ""
+            }
+            prefillRejectedURL()
+        }
     }
 
     /// Reparaturzustand: Die gespeicherte Adresse liegt aufgeklappt im Feld,
@@ -128,7 +143,7 @@ struct TeamServerSection: View {
                     .font(.system(size: 12, design: .monospaced))
                     .frame(maxWidth: 110)
 
-                TextField(L.Team.serverTokenLabel, text: $tokenInput)
+                SecureField(L.Team.serverTokenLabel, text: $tokenInput)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12, design: .monospaced))
                     .onSubmit(connect)
@@ -210,8 +225,6 @@ struct TeamServerSection: View {
                     .font(.system(size: 12, design: .monospaced))
                     .onSubmit { FleetReporter.shared.report() }
                     .help(L.Fleet.workerIdHelp)
-                Button(L.Fleet.open) { FleetWindowManager.shared.show() }
-                    .controlSize(.small)
             }
             Text(L.Fleet.workerIdHelp)
                 .font(.caption)
