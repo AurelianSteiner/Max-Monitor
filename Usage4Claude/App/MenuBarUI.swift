@@ -278,30 +278,15 @@ class MenuBarUI {
     func createStandardMenu(hasUpdate: Bool, shouldShowBadge: Bool, target: AnyObject?) -> NSMenu {
         let menu = NSMenu()
 
-        // Mehrkonten-Übersicht: alles auf einen Blick, deshalb ganz oben
-        if settings.canShowDashboard {
-            let dashboardItem = NSMenuItem(
-                title: L.Dashboard.openWindow,
-                action: #selector(MenuBarManager.openDashboardWindow),
-                keyEquivalent: "d"
-            )
-            dashboardItem.target = target
-            setMenuItemIcon(dashboardItem, systemName: "square.grid.2x2")
-            menu.addItem(dashboardItem)
-
-            // Team-Ansicht: derselbe Container, nur im Team-Modus — der
-            // einzige Direktweg dorthin, ohne erst die Übersicht zu öffnen.
-            let teamItem = NSMenuItem(
-                title: L.Dashboard.openTeamWindow,
-                action: #selector(MenuBarManager.openTeamOverview),
-                keyEquivalent: "t"
-            )
-            teamItem.target = target
-            setMenuItemIcon(teamItem, systemName: "person.3")
-            menu.addItem(teamItem)
-
-            menu.addItem(NSMenuItem.separator())
-        }
+        let dashboardItem = NSMenuItem(
+            title: L.Fleet.open,
+            action: #selector(MenuBarManager.openDashboardWindow),
+            keyEquivalent: "d"
+        )
+        dashboardItem.target = target
+        setMenuItemIcon(dashboardItem, systemName: "desktopcomputer")
+        menu.addItem(dashboardItem)
+        menu.addItem(NSMenuItem.separator())
 
         // 账户选择子菜单（多账户时显示）
         var hasAccountMenuItems = false
@@ -387,16 +372,6 @@ class MenuBarUI {
         }
 
         menu.addItem(updateItem)
-
-        // 关于
-        let aboutItem = NSMenuItem(
-            title: L.Menu.about,
-            action: #selector(MenuBarManager.openAbout),
-            keyEquivalent: ""
-        )
-        aboutItem.target = target
-        setMenuItemIcon(aboutItem, systemName: "info.circle")
-        menu.addItem(aboutItem)
 
         // Die Wach-Schalter stehen als Symbolknöpfe im Kopf der Übersicht —
         // hier würden sie dieselbe Sache ein zweites Mal anbieten. Die

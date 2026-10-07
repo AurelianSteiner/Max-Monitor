@@ -126,7 +126,8 @@ class MenuBarManager: ObservableObject {
 
     /// Übersicht in einem eigenständigen Fenster öffnen
     @objc func openDashboardWindow() {
-        DashboardWindowManager.shared.show { [weak self] action in
+        closePopover()
+        FleetWindowManager.shared.show { [weak self] action in
             self?.handleMenuAction(action)
         }
     }
@@ -134,12 +135,7 @@ class MenuBarManager: ObservableObject {
     /// Team-Ansicht öffnen: die Übersicht (Fenster, sonst Popover) im
     /// Team-Modus. Ein eigenes Team-Fenster gibt es seit 2.7 nicht mehr.
     @objc func openTeamOverview() {
-        DashboardMode.shared.showsTeam = true
-        if DashboardWindowManager.shared.isVisible {
-            openDashboardWindow()
-        } else if let button = ui.statusItem.button, !ui.popover.isShown {
-            openPopover(relativeTo: button)
-        }
+        openDashboardWindow()
     }
 
     /// 设置设置变更观察者
@@ -246,23 +242,7 @@ class MenuBarManager: ObservableObject {
 
     /// 切换弹出窗口显示状态
     @objc func togglePopover() {
-        guard let button = ui.statusItem.button else { return }
-
-        // Steht die Übersicht schon als eigenes Fenster auf dem Schirm, wäre
-        // das Popover nur dieselbe Ansicht ein zweites Mal. Der Klick holt
-        // dann stattdessen das Fenster nach vorn — das Popover gibt es nur,
-        // solange kein Fenster offen ist.
-        if DashboardWindowManager.shared.isVisible {
-            if ui.popover.isShown { closePopover() }
-            openDashboardWindow()
-            return
-        }
-
-        if ui.popover.isShown {
-            closePopover()
-        } else {
-            openPopover(relativeTo: button)
-        }
+        openDashboardWindow()
     }
 
     /// 打开弹出窗口
@@ -478,6 +458,7 @@ class MenuBarManager: ObservableObject {
 
         // 关闭窗口
         DashboardWindowManager.shared.close()
+        FleetWindowManager.shared.close()
         settingsWindow?.close()
         settingsWindow = nil
     }

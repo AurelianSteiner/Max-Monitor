@@ -45,10 +45,15 @@ Wer die Auslastung eines ganzen Teams sehen will (eine Karte pro Person, wer hat
 
 ## Mac-Worker und AI Newsletter Creation
 
-**„Queue & Macs“** neben Always On öffnet eine große, frei skalierbare Übersicht:
+**Max Monitor öffnet direkt die gemeinsame Übersicht.** Menüleisten-Klick und App-Start führen in dasselbe, frei skalierbare Fenster. Der erste Tab **„Queue & Macs“** zeigt:
 alle Worker, Akku und Stromversorgung, Claude-Kontingente pro Konto, letzte Meldung
 und die gemeinsame Aufgaben-Queue mit Status, Worker-Zuordnung und Queue-Log.
 Pre-Gen, Uploads und weitere Workflows lassen sich filtern und durchsuchen.
+
+Im Tab **„Account Limits“** liegen die lokalen Claude-/Codex-Konten, ihre Nutzungslimits
+und die Kontenverwaltung. **Einstellungen → Verbindung & Worker** enthält die
+Serveradresse, Team-ID und den persönlichen Token. Es gibt keine separate Team-Ansicht
+und keinen Info-Knopf mehr.
 
 Jede verbundene App meldet ihren Mac alle zehn Minuten, beim Start und nach dem
 Aufwachen. Nach 15 Minuten ohne Meldung ist ein Gerät „still“, nach 30 Minuten
@@ -58,8 +63,8 @@ Hub-Worker-Berichte; bei Quellenfehlern bleibt die letzte vollständige Queue st
 
 Alle Installationen nutzen **denselben zentralen Team-Server und dieselbe Team-ID**,
 jeder Mac mit eigenem Mitglieds-Token und einer eindeutigen Worker-ID. Alle
-Team-Mitglieder sehen die gemeinsame Worker- und Queue-Übersicht; die bisherige
-persönliche Team-Auslastungsansicht behält ihre Rollen. Claude-Zugangsdaten bleiben
+Team-Mitglieder sehen die gemeinsame Worker- und Queue-Übersicht. Die Server-Rollen
+und Zugriffsrechte bleiben erhalten. Claude-Zugangsdaten bleiben
 auf dem jeweiligen Mac. Das Repository verteilt den Code, der Server hält den
 gemeinsamen Zustand unabhängig von einem Arbeits-Mac.
 

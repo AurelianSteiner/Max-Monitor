@@ -173,16 +173,6 @@ struct DashboardView: View {
 
     @ObservedObject private var settings = UserSettings.shared
     @StateObject private var localization = LocalizationManager.shared
-    /// Konten-Gitter oder Team-Ansicht — geteilt zwischen Popover und Fenster
-    @ObservedObject private var mode = DashboardMode.shared
-    /// „Bleib wach" im Kopf — beobachtet, damit Schalter und Maskottchen
-    /// sofort mitziehen, egal wo umgeschaltet wurde.
-    @ObservedObject private var sleepGuard = SleepGuard.shared
-    /// Systemweite Schlaf-Einstellungen (pmset): Steht der Mac ohnehin auf
-    /// „nie schlafen", bekommt der Wach-Schalter eine Markierung und einen
-    /// erklärenden Tooltip, statt Wirkung vorzutäuschen.
-    @ObservedObject private var systemSleep = SystemSleepInfo.shared
-
     /// Gemessene Inhaltsbreite des eigenen Fensters (0 = noch nicht gemessen).
     /// Im popover bleibt sie 0, dort gilt weiterhin die Spaltenwahl.
     @State private var measuredWidth: CGFloat = 0
@@ -190,8 +180,6 @@ struct DashboardView: View {
     /// 与详情窗口共用同一个开关，两处的"剩余 / 已用"显示保持一致
     @AppStorage("showRemainingMode") private var savedRemainingMode = false
     @State private var showRemainingMode = UserDefaults.standard.bool(forKey: "showRemainingMode")
-    /// Info-Popover zu „Claude Always On" (das ⓘ neben dem Schalter)
-    @State private var showAwakeInfo = false
 
     // MARK: - Derived data
 
@@ -239,20 +227,20 @@ struct DashboardView: View {
         }?.id
     }
 
-    /// Spaltenwahl aus den Einstellungen. Sie bestimmt das popover vollständig
-    /// und beim Fenster nur noch die Startbreite (danach entscheidet die Größe).
+    /// Gewünschte Höchstzahl der Spalten für das Konten-Gitter.
     private var settingColumnCount: Int {
         DashboardMetrics.columnCount(for: orderedSnapshots.count, setting: settings.dashboardColumns)
     }
 
-    /// Spalten des Gitters. Im eigenen Fenster fließt der Inhalt in die vorhandene
-    /// Breite (schmal ziehen → eine Spalte, breit ziehen → mehr Spalten), im
-    /// popover bleibt es bei der eingestellten Spaltenzahl.
+    /// Das Konten-Gitter nutzt höchstens die gewählte Spaltenzahl und passt sich der Breite an.
     private var columnCount: Int {
         guard isStandaloneWindow, measuredWidth > 0 else { return settingColumnCount }
-        return DashboardMetrics.columnCount(
-            fittingWidth: measuredWidth,
-            snapshotCount: orderedSnapshots.count
+        return min(
+            settingColumnCount,
+            DashboardMetrics.columnCount(
+                fittingWidth: measuredWidth,
+                snapshotCount: orderedSnapshots.count
+            )
         )
     }
 
@@ -304,20 +292,11 @@ struct DashboardView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            mascotRow
             Divider()
-            if mode.showsTeam {
-                teamContent
-            } else {
-                grid
-            }
+            grid
             Divider()
             footer
         }
-        // popover: min = ideal = max, also exakt so breit wie früher.
-        // Eigenes Fenster: Ideal bleibt die Inhaltsbreite (davon leitet sich die
-        // Startgröße ab), nach unten ist eine Spalte erlaubt, nach oben darf der
-        // Inhalt beliebig mitwachsen.
         .frame(
             minWidth: minContentWidth,
             idealWidth: contentWidth,
@@ -328,7 +307,7 @@ struct DashboardView: View {
         .onPreferenceChange(DashboardWidthKey.self) { width in
             measuredWidth = width
         }
-        .id(localization.updateTrigger)  // 语言变化时重新创建视图
+        .id(localization.updateTrigger)
         .onAppear {
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
@@ -336,12 +315,6 @@ struct DashboardView: View {
                 showRemainingMode = savedRemainingMode
             }
             manager.activate()
-            // Drosselt sich selbst auf einen Lauf pro Minute.
-            systemSleep.refresh()
-            // Wurde `disablesleep` zwischenzeitlich im Terminal umgestellt,
-            // zieht der Schalter jetzt nach — die Anzeige soll nie etwas
-            // anderes behaupten als das System tut.
-            sleepGuard.adoptSystemStateIfNeeded()
         }
         .onDisappear {
             manager.deactivate()
@@ -360,26 +333,18 @@ struct DashboardView: View {
         let gauge: CGFloat
         let showsCount: Bool
         let showsTitle: Bool
-        let showsSleepLabel: Bool
     }
 
-    /// Die Stufen in der Reihenfolge, in der `ViewThatFits` sie durchprobiert —
-    /// großzügig zuerst. Bewusst keine eigene Breitenrechnung: Titel und
-    /// Schalterbeschriftung sind übersetzt und in jeder Sprache anders breit,
-    /// eine Formel dafür wäre in genau einer Sprache richtig. SwiftUI misst
-    /// stattdessen selbst und nimmt die erste Stufe, die wirklich passt.
+    /// SwiftUI wählt die erste Kopfzeilen-Dichte, die zur verfügbaren Breite passt.
     private static let headerDensities: [HeaderDensity] = [
-        HeaderDensity(gauge: 18, showsCount: true,  showsTitle: true,  showsSleepLabel: true),
-        HeaderDensity(gauge: 16, showsCount: true,  showsTitle: true,  showsSleepLabel: true),
-        HeaderDensity(gauge: 15, showsCount: true,  showsTitle: true,  showsSleepLabel: false),
-        HeaderDensity(gauge: 13, showsCount: false, showsTitle: true,  showsSleepLabel: false),
-        HeaderDensity(gauge: 11, showsCount: false, showsTitle: true,  showsSleepLabel: false),
-        HeaderDensity(gauge: 11, showsCount: false, showsTitle: false, showsSleepLabel: false)
+        HeaderDensity(gauge: 18, showsCount: true,  showsTitle: true),
+        HeaderDensity(gauge: 16, showsCount: true,  showsTitle: true),
+        HeaderDensity(gauge: 13, showsCount: false, showsTitle: true),
+        HeaderDensity(gauge: 11, showsCount: false, showsTitle: true),
+        HeaderDensity(gauge: 11, showsCount: false, showsTitle: false)
     ]
 
-    /// Kopfzeile mit den Wasserständen je Konto. Sie sind aus der Statuszeile
-    /// hier hoch gewandert — dadurch gehört die Zeile darunter komplett der
-    /// Claudie-Parade, die vorher nur rechts am Rand Platz hatte.
+    /// Kompakte Kopfzeile mit Wasserständen je Konto.
     private var header: some View {
         ViewThatFits(in: .horizontal) {
             headerRow(Self.headerDensities[0])
@@ -387,7 +352,6 @@ struct DashboardView: View {
             headerRow(Self.headerDensities[2])
             headerRow(Self.headerDensities[3])
             headerRow(Self.headerDensities[4])
-            headerRow(Self.headerDensities[5])
         }
         .padding(.horizontal, DashboardMetrics.outerPadding)
         .frame(height: DashboardMetrics.headerHeight)
@@ -395,24 +359,16 @@ struct DashboardView: View {
 
     private func headerRow(_ density: HeaderDensity) -> some View {
         HStack(spacing: 8) {
-            if let icon = ImageHelper.createAppIcon(size: 18) {
-                Image(nsImage: icon).resizable().frame(width: 18, height: 18)
-            }
-
             if density.showsTitle {
-                Text(L.Dashboard.title)
+                Text(L.Fleet.accountLimits)
                     .font(.headline)
                     .lineLimit(1)
-                    // Ohne feste Größe würde der Titel bei Platzmangel einfach
-                    // abgeschnitten — und damit läge „passt" vor, obwohl die
-                    // Zeile längst überläuft. So scheitert die Stufe ehrlich
-                    // und `ViewThatFits` geht eine Stufe enger.
                     .fixedSize()
             }
 
             if density.showsCount {
                 Text("\(orderedSnapshots.count)")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
@@ -421,22 +377,7 @@ struct DashboardView: View {
             }
 
             accountGauges(diameter: density.gauge)
-
             Spacer(minLength: 8)
-
-            // Etwas enger als der Rest des Kopfes: Der beschriftete
-            // Wach-Schalter braucht den Platz, und die Symbolknöpfe haben in
-            // ihren 20-pt-Feldern ohnehin Luft.
-            HStack(spacing: 6) {
-                stayAwakeToggle(showsLabel: density.showsSleepLabel)
-                stayAwakeInfoButton
-                fleetOverviewButton(showsLabel: density.showsSleepLabel)
-                teamToggle
-                // Der Reihenfolge-/Spalten-Regler wohnt bei den Karten, die er
-                // ordnet (siehe `grid`) — nicht mehr hier oben rechts.
-                actionMenu
-            }
-            .fixedSize()
         }
     }
 
@@ -461,28 +402,6 @@ struct DashboardView: View {
         }
     }
 
-    /// Der Laufsteg unter dem Kopf. Früher teilte sich die Zeile die Parade mit
-    /// der Punktreihe und blieb auf 300 pt beschränkt — seit die Pegel oben in
-    /// der Kopfzeile sitzen, laufen die Maskottchen über die volle Breite.
-    ///
-    /// Die Besetzung folgt den Konten: ein Claudie je Claude-Konto, ein blaues
-    /// Codex-Pet je Codex-Konto, und nie mehr Läufer gleichzeitig als Konten.
-    /// Als Breite bekommt die Parade die Wunschbreite aus der Spaltenwahl, nicht
-    /// die live gemessene — jede Breitenänderung mischt die Reihe neu, und das
-    /// soll beim Ziehen am Fenster nicht passieren (siehe `MascotParadeTiming`).
-    private var mascotRow: some View {
-        AwakeMascotView(
-            roster: MascotRoster(
-                claudeCount: settings.accounts.count,
-                codexCount: settings.codexAccounts.count
-            ),
-            referenceWidth: contentWidth - DashboardMetrics.outerPadding * 2
-        )
-        .padding(.horizontal, DashboardMetrics.outerPadding)
-        .padding(.top, 2)
-        .padding(.bottom, 4)
-    }
-
     /// Misst die verfügbare Breite für das responsive Gitter. Nur im eigenen
     /// Fenster aktiv: das popover nimmt seine Größe aus der Idealbreite des
     /// Inhalts, dort hätte eine zweite Breitenquelle nichts zu suchen.
@@ -493,136 +412,6 @@ struct DashboardView: View {
                 Color.clear.preference(key: DashboardWidthKey.self, value: proxy.size.width)
             }
         }
-    }
-
-    // MARK: - Wach halten
-
-    /// Der EINE Wach-Schalter direkt im Kopf: „Bleib wach" hält Bildschirm UND
-    /// Mac wach — früher zwei getrennte Schalter („Bildschirm an" / „Always
-    /// On"), aber in der Praxis wollte niemand nur eines von beidem.
-    ///
-    /// Symbol *und* die kurze Beschriftung sind eine gemeinsame Schaltfläche.
-    /// Aktiv = gefüllter Blitz in Akzentfarbe auf getönter Fläche,
-    /// inaktiv = Umriss in Grau. Der Zustand ist damit ohne Häkchen und ohne
-    /// Tooltip zu erkennen.
-    ///
-    /// In engen Kopfzeilen fällt die Beschriftung weg (`showsLabel: false`) —
-    /// „Claude Always On" ist der längste Text der Zeile, und der Blitz allein
-    /// sagt dasselbe. Der Tooltip nennt den Namen weiterhin.
-    ///
-    /// Der kleine Punkt oben rechts erscheint, wenn das System per
-    /// `pmset disablesleep 1` nie schläft, OBWOHL der Schalter aus ist — dann
-    /// hat der Benutzer das selbst eingestellt und der Schalter hätte nichts
-    /// mehr beizutragen. Ist der Schalter an, ist `SleepDisabled 1` dagegen
-    /// schlicht die eigene Deckel-Stufe und kein Grund für eine Markierung.
-    private func stayAwakeToggle(showsLabel: Bool) -> some View {
-        let isOn = sleepGuard.isAwake
-        let redundant = systemSleep.sleepDisabled == true && !isOn
-        return Button(action: { sleepGuard.toggleAwake() }) {
-            HStack(spacing: 3) {
-                Image(systemName: isOn ? "bolt.fill" : "bolt")
-                    .font(.system(size: 12))
-                if showsLabel {
-                    Text(L.Dashboard.sleepLabel)
-                        .font(.system(size: 10))
-                        .lineLimit(1)
-                        .fixedSize()
-                }
-            }
-            .foregroundColor(isOn ? .accentColor : .secondary)
-            .padding(.horizontal, showsLabel ? 4 : 3)
-            .frame(height: 20)
-            // Ohne Beschriftung bleibt der Knopf trotzdem 20 pt breit, damit er
-            // dieselbe Trefferfläche hat wie die Symbolknöpfe daneben. Zwei
-            // Aufrufe, weil `minWidth` und `height` in verschiedenen
-            // frame-Überladungen liegen und sich nicht mischen lassen.
-            .frame(minWidth: showsLabel ? 0 : 20)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(isOn ? Color.accentColor.opacity(0.15) : Color.clear)
-            )
-            .overlay(alignment: .topTrailing) {
-                if redundant {
-                    Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 5, height: 5)
-                        .offset(x: 1, y: -1)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .help(stayAwakeHelp)
-        .accessibilityLabel(L.Dashboard.sleepLabel)
-    }
-
-    private func fleetOverviewButton(showsLabel: Bool) -> some View {
-        Button(action: { FleetWindowManager.shared.show() }) {
-            HStack(spacing: 4) {
-                Image(systemName: "desktopcomputer")
-                    .font(.system(size: 12))
-                if showsLabel {
-                    Text(L.Fleet.open)
-                        .font(.system(size: 10, weight: .medium))
-                        .fixedSize()
-                }
-            }
-            .padding(.horizontal, 6)
-            .frame(height: 22)
-            .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(0.12)))
-        }
-        .buttonStyle(.plain)
-        .help(L.Fleet.intro)
-        .accessibilityLabel(L.Fleet.open)
-    }
-
-    /// Kleines ⓘ neben dem Schalter: ein Klick erklärt in zwei Sätzen, was
-    /// „Claude Always On" tut — vor allem, dass der Laptop nach der einmaligen
-    /// Freischaltung auch zugeklappt anbleibt.
-    private var stayAwakeInfoButton: some View {
-        Button(action: { showAwakeInfo.toggle() }) {
-            Image(systemName: "info.circle")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .frame(width: 16, height: 20)
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .popover(isPresented: $showAwakeInfo, arrowEdge: .bottom) {
-            Text(L.Dashboard.sleepInfo)
-                .font(.system(size: 11))
-                .lineSpacing(2)
-                .padding(12)
-                .frame(width: 260)
-        }
-    }
-
-    /// Tooltip des Wach-Schalters: Beschriftung samt aktuellem Zustand,
-    /// darunter Klartext zur Deckel-Frage. Der Schalter zeigt die ABSICHT
-    /// (Assertions); ob der Deckel wirklich abgedeckt ist, sagt `pmset`
-    /// (SystemSleepInfo) — vier ehrliche Fälle:
-    ///
-    ///   • AN + `SleepDisabled 1` → die Deckel-Stufe greift: läuft auch
-    ///     zugeklappt weiter.
-    ///   • AN, aber ohne `SleepDisabled 1` → Freigabe fehlt (abgelehnt oder
-    ///     nie erteilt): Zuklappen schläfert weiter ein, das nächste
-    ///     Einschalten fragt einmal nach dem Passwort.
-    ///   • AUS + `SleepDisabled 1` → das System schläft aus eigenem Recht
-    ///     nie (Benutzer-Einstellung), der Schalter hätte nichts beizutragen.
-    ///   • AUS, normal schlafender Mac → Erklärtext plus Deckel-Zeile.
-    private var stayAwakeHelp: String {
-        let state = sleepGuard.isAwake ? L.Dashboard.sleepStateOn : L.Dashboard.sleepStateOff
-        var text = "\(L.Dashboard.sleepLabel) — \(state)\n\n\(L.Dashboard.sleepHelp)"
-        if sleepGuard.isAwake {
-            text += systemSleep.sleepDisabled == true
-                ? "\n\n\(L.Dashboard.sleepLidActive)"
-                : "\n\n\(L.Dashboard.sleepLidNote)"
-        } else if systemSleep.sleepDisabled == true {
-            text += "\n\n\(L.Dashboard.sleepSystemOverride)"
-        } else {
-            text += "\n\n\(L.Dashboard.sleepLidNote)"
-        }
-        return text
     }
 
     // MARK: - Tooltip der Wasserstände
@@ -739,122 +528,17 @@ struct DashboardView: View {
         .help(L.Dashboard.sortHelp)
     }
 
-    /// Spaltenwahl anwenden. Im popover legt die Einstellung die Breite direkt fest.
-    /// Im eigenen Fenster richtet sich das Gitter dagegen nach der Fenstergröße —
-    /// dort muss die Wahl also das Fenster ziehen, sonst bliebe der Menüeintrag
-    /// wirkungslos (angeklickt, Häkchen wandert, Ansicht unverändert).
+    /// Spaltenwahl begrenzt das responsive Gitter, ohne das gemeinsame Fenster zu ändern.
     private func applyColumns(_ count: Int) {
         settings.dashboardColumns = count
-        if isStandaloneWindow {
-            DashboardWindowManager.shared.resize(toColumns: count)
-        }
     }
 
-    /// Anbieter-Trennung umschalten. Im eigenen Fenster muss dabei die Breite
-    /// mitwachsen: Zwei Bahnen brauchen zwei Kartenbreiten, sonst klickt man
-    /// den Eintrag an und sieht nur ein enger gewordenes Gitter.
+    /// Anbieter-Trennung im selben Inhaltsbereich umschalten.
     private func toggleGrouping() {
         settings.dashboardGroupByProvider.toggle()
-        guard isStandaloneWindow else { return }
-        if settings.dashboardGroupByProvider {
-            DashboardWindowManager.shared.widen(toAtLeastColumns: providerGroups.count)
-        } else {
-            DashboardWindowManager.shared.resize(toColumns: settings.dashboardColumns)
-        }
-    }
-
-    /// Der Umschalter zwischen Konten-Gitter und Team-Ansicht. Aktiv =
-    /// gefüllte Figuren in Akzentfarbe, dieselbe Formensprache wie der
-    /// Wach-Schalter daneben. Die Team-Ansicht ist damit einen Klick entfernt
-    /// statt in einem dritten Fenster versteckt.
-    private var teamToggle: some View {
-        Button(action: {
-            withAnimation(.easeInOut(duration: 0.18)) { mode.showsTeam.toggle() }
-        }) {
-            Image(systemName: mode.showsTeam ? "person.3.fill" : "person.3")
-                .font(.system(size: 12))
-                .foregroundColor(mode.showsTeam ? .accentColor : .secondary)
-                .frame(width: 22, height: 20)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .help(L.Dashboard.openTeamWindow)
-    }
-
-    private var actionMenu: some View {
-        Menu {
-            // „Aktualisieren" saß bis 2.5 als eigener Knopf im Kopf. Dort war er
-            // der einzige Knopf, den man selten braucht — die App holt ohnehin
-            // von selbst nach —, und er nahm den Wasserständen den Platz weg.
-            // Im Menü ist er weiter einen Klick entfernt und niemandem im Weg.
-            Button(action: { manager.refresh(force: true) }) {
-                Label(L.Usage.refresh, systemImage: "arrow.clockwise")
-            }
-            .disabled(manager.isRefreshing)
-
-            Divider()
-
-            if !isStandaloneWindow {
-                Button(action: { onMenuAction?(.openDashboardWindow) }) {
-                    Label(L.Dashboard.openWindow, systemImage: "macwindow")
-                }
-            }
-            // Die Team-Ansicht ist ein Modus der Übersicht (Kopfzeilen-Knopf);
-            // der Menüeintrag spiegelt ihn nur, für alle, die hier suchen.
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.18)) { mode.showsTeam.toggle() }
-            }) {
-                Label(L.Dashboard.openTeamWindow, systemImage: "person.3")
-            }
-            Divider()
-            // Ein Einstellungen-Eintrag statt zwei: „Allgemein" und „Konten"
-            // waren nur zwei Reiter desselben Fensters — der zweite Eintrag hat
-            // mehr verwirrt als abgekürzt. Konto-Tiefenlinks (.authSettings)
-            // gibt es weiterhin aus den Leerzuständen heraus.
-            Button(action: { onMenuAction?(.generalSettings) }) {
-                Label(L.Menu.generalSettings, systemImage: "gearshape")
-            }
-            Button(action: { onMenuAction?(.checkForUpdates) }) {
-                Label(L.Menu.checkUpdates, systemImage: "arrow.triangle.2.circlepath")
-            }
-            Button(action: { onMenuAction?(.about) }) {
-                Label(L.Menu.about, systemImage: "info.circle")
-            }
-            Divider()
-            Button(action: { onMenuAction?(.quit) }) {
-                Label(L.Menu.quit, systemImage: "power")
-            }
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 13))
-                .foregroundColor(.secondary)
-                .rotationEffect(.degrees(90))
-                .frame(width: 20, height: 20)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .buttonStyle(.plain)
-        .focusable(false)
     }
 
     // MARK: - Grid
-
-    /// Die Team-Ansicht im selben Rahmen wie das Gitter: gleiche Höhenregeln,
-    /// damit das Popover beim Umschalten nicht springt und das Fenster
-    /// weiter frei skaliert. Mindestens 320 pt hoch — eine Team-Liste unter
-    /// einer einzelnen Kartenzeile wäre sonst ein Sehschlitz.
-    @ViewBuilder
-    private var teamContent: some View {
-        let boxHeight = max(gridHeight + DashboardMetrics.outerPadding * 2, 320)
-        TeamView(onMenuAction: onMenuAction)
-            .frame(
-                minHeight: isStandaloneWindow ? min(boxHeight, 200) : boxHeight,
-                idealHeight: boxHeight,
-                maxHeight: isStandaloneWindow ? .infinity : boxHeight
-            )
-    }
 
     @ViewBuilder
     private var grid: some View {

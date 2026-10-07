@@ -7,30 +7,37 @@ import WebKit
 final class FleetWindowManager: NSObject, NSWindowDelegate {
     static let shared = FleetWindowManager()
     private var window: NSWindow?
+    private var onMenuAction: ((MenuAction) -> Void)?
 
-    func show() {
+    func show(onMenuAction: ((MenuAction) -> Void)? = nil) {
+        if let onMenuAction { self.onMenuAction = onMenuAction }
         FleetReporter.shared.report()
         if let window {
             NSApp.activate(ignoringOtherApps: true)
+            window.deminiaturize(nil)
             window.makeKeyAndOrderFront(nil)
             return
         }
         NSApp.setActivationPolicy(.regular)
-        let controller = NSHostingController(rootView: FleetDashboardView())
+        let controller = NSHostingController(rootView: FleetDashboardView(onMenuAction: { [weak self] action in
+            self?.onMenuAction?(action)
+        }))
         let window = NSWindow(contentViewController: controller)
-        window.title = L.Fleet.title
+        window.title = "Max Monitor"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 720, height: 520)
         let screen = NSScreen.main?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
-        window.setContentSize(NSSize(width: min(1240, screen.width - 48), height: min(820, screen.height - 72)))
-        if !window.setFrameUsingName("MaxMonitor.FleetWindow") { window.center() }
-        window.setFrameAutosaveName("MaxMonitor.FleetWindow")
+        window.setContentSize(NSSize(width: min(1120, screen.width - 48), height: min(760, screen.height - 72)))
+        if !window.setFrameUsingName("MaxMonitor.OverviewWindow") { window.center() }
+        window.setFrameAutosaveName("MaxMonitor.OverviewWindow")
         window.delegate = self
         self.window = window
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
+
+    func close() { window?.close() }
 
     func windowWillClose(_ notification: Notification) {
         guard let closing = window else { return }
@@ -42,75 +49,137 @@ final class FleetWindowManager: NSObject, NSWindowDelegate {
 }
 
 private struct FleetDashboardView: View {
+    let onMenuAction: (MenuAction) -> Void
     @ObservedObject private var connection = TeamServerConnection.shared
+    @ObservedObject private var sleepGuard = SleepGuard.shared
+    @ObservedObject private var localization = LocalizationManager.shared
     @State private var generation = UUID()
     @State private var isLoading = true
     @State private var loadError: String?
-    @State private var showsSettings = false
+    @State private var showsAccountLimits = false
+    @State private var activeSheet: MonitorSheet?
+
+    private enum MonitorSheet: String, Identifiable {
+        case connection, accounts
+        var id: String { rawValue }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            if let client = connection.client, connection.role != nil {
-                HStack(spacing: 8) {
-                    Image(systemName: "desktopcomputer")
-                        .foregroundColor(.accentColor)
-                    Text(L.Fleet.title).font(.system(size: 13, weight: .semibold))
-                    Spacer()
-                    if isLoading { ProgressView().controlSize(.small) }
-                    Button(action: reload) { Image(systemName: "arrow.clockwise") }
-                        .help(L.Fleet.retry)
-                        .accessibilityLabel(L.Fleet.retry)
-                    Button(L.Fleet.settings) { showsSettings = true }
+            toolbar
+            Divider()
+            ZStack {
+                fleetContent
+                    .opacity(showsAccountLimits ? 0 : 1)
+                    .allowsHitTesting(!showsAccountLimits)
+                    .accessibilityHidden(showsAccountLimits)
+                if showsAccountLimits {
+                    DashboardView(
+                        manager: DashboardRefreshManager.shared,
+                        onMenuAction: handleAccountAction,
+                        isStandaloneWindow: true
+                    )
+                    .background(Color(NSColor.windowBackgroundColor))
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                Divider()
-                ZStack {
-                    FleetWebView(client: client, isLoading: $isLoading, loadError: $loadError)
-                        .id(generation)
-                    if let loadError {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(L.Fleet.loadError).font(.headline)
-                            Text(loadError).font(.callout).foregroundColor(.secondary)
-                            HStack {
-                                Button(L.Fleet.retry, action: reload)
-                                Button(L.Fleet.settings) { showsSettings = true }
-                            }
-                        }
-                        .padding(24)
-                        .frame(maxWidth: 460, alignment: .leading)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                    }
-                }
-            } else {
-                connectionForm
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sheet(isPresented: $showsSettings) {
+        .sheet(item: $activeSheet) { sheet in
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    Text(L.Fleet.settings).font(.title3.weight(.semibold))
+                    Text(sheet == .accounts ? L.Fleet.manageAccounts : L.Fleet.settings)
+                        .font(.title3.weight(.semibold))
                     Spacer()
-                    Button("OK") { showsSettings = false }
+                    Button(L.Fleet.done) { activeSheet = nil }
+                        .keyboardShortcut(.cancelAction)
                 }
-                Text(L.Fleet.intro).font(.callout).foregroundColor(.secondary)
-                ScrollView { TeamServerSection() }
+                if sheet == .accounts {
+                    AuthSettingsView()
+                } else {
+                    Text(L.Fleet.intro).font(.callout).foregroundColor(.secondary)
+                    ScrollView { TeamServerSection() }
+                }
             }
             .padding(24)
-            .frame(width: 580, height: 480)
+            .frame(width: 580, height: 520)
         }
         .onReceive(NotificationCenter.default.publisher(for: .teamServerChanged)) { _ in reload() }
+        .onAppear { sleepGuard.adoptSystemStateIfNeeded() }
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 12) {
+            Picker(L.Fleet.navigation, selection: $showsAccountLimits) {
+                Text(L.Fleet.queueAndMacs).tag(false)
+                Text(L.Fleet.accountLimits).tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 300)
+            Spacer(minLength: 8)
+            if showsAccountLimits {
+                Button(L.Fleet.manageAccounts) { activeSheet = .accounts }
+            }
+            Button(action: { sleepGuard.toggleAwake() }) {
+                Label(L.Dashboard.sleepLabel, systemImage: sleepGuard.isAwake ? "bolt.fill" : "bolt")
+                    .foregroundColor(sleepGuard.isAwake ? .accentColor : .secondary)
+            }
+            .help(L.Dashboard.sleepHelp)
+            .accessibilityValue(sleepGuard.isAwake ? L.Fleet.enabled : L.Fleet.disabled)
+            if showsAccountLimits {
+                Button(action: refresh) { Image(systemName: "arrow.clockwise") }
+                    .help(L.Fleet.retry)
+                    .accessibilityLabel(L.Fleet.retry)
+            }
+            Menu {
+                Button(L.Fleet.settings) { activeSheet = .connection }
+                Button(L.Fleet.manageAccounts) {
+                    showsAccountLimits = true
+                    activeSheet = .accounts
+                }
+                Divider()
+                Button(L.Menu.generalSettings) { onMenuAction(.generalSettings) }
+                Button(L.Menu.checkUpdates) { onMenuAction(.checkForUpdates) }
+                Divider()
+                Button(L.Menu.quit) { onMenuAction(.quit) }
+            } label: { Image(systemName: "gearshape") }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .accessibilityLabel(L.Menu.generalSettings)
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    @ViewBuilder private var fleetContent: some View {
+        if let client = connection.client, connection.role != nil {
+            ZStack {
+                FleetWebView(client: client, isLoading: $isLoading, loadError: $loadError)
+                    .id(generation)
+                if let loadError {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(L.Fleet.loadError).font(.headline)
+                        Text(loadError).font(.callout).foregroundColor(.secondary)
+                        HStack {
+                            Button(L.Fleet.retry, action: reload)
+                            Button(L.Fleet.settings) { activeSheet = .connection }
+                        }
+                    }
+                    .padding(24)
+                    .frame(maxWidth: 460, alignment: .leading)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+        } else {
+            connectionForm
+        }
     }
 
     private var connectionForm: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Image(systemName: "desktopcomputer")
-                    .font(.system(size: 32))
-                    .foregroundColor(.accentColor)
-                Text(L.Fleet.title).font(.system(size: 24, weight: .semibold))
+                Text(L.Fleet.queueAndMacs).font(.system(size: 24, weight: .semibold))
                 Text(L.Fleet.intro).font(.callout).foregroundColor(.secondary)
                 TeamServerSection()
             }
@@ -118,6 +187,17 @@ private struct FleetDashboardView: View {
             .frame(maxWidth: 640, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func handleAccountAction(_ action: MenuAction) {
+        if action == .authSettings { activeSheet = .accounts }
+        else { onMenuAction(action) }
+    }
+
+    private func refresh() {
+        if showsAccountLimits { DashboardRefreshManager.shared.refresh(force: true) }
+        else { reload() }
     }
 
     private func reload() {

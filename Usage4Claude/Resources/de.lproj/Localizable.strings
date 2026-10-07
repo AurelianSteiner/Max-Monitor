@@ -383,7 +383,7 @@
 
 /* Team — Server-Verbindung (Karte in den Einstellungen) */
 "team.server.section" = "Mit Server verbinden";
-"team.server.token_label" = "Token";
+"team.server.token_label" = "Persönlicher Token";
 "team.server.connect" = "Verbinden";
 "team.server.disconnect" = "Trennen";
 "team.server.change" = "Server ändern";
@@ -418,6 +418,15 @@
 "team.empty.server_unreachable_step" = "Netzwerk prüfen und erneut versuchen.";
 
 /* Fleet monitor */
+"fleet.queue_and_macs" = "Queue & Macs";
+"fleet.account_limits" = "Account Limits";
+"fleet.edit_connection" = "Verbindung bearbeiten";
+"fleet.token_stored" = "Sicher auf diesem Mac gespeichert";
+"fleet.manage_accounts" = "Konten verwalten";
+"fleet.navigation" = "Ansicht";
+"fleet.done" = "Fertig";
+"fleet.enabled" = "An";
+"fleet.disabled" = "Aus";
 "fleet.title" = "Queue & Mac-Übersicht";
 "fleet.open" = "Queue & Macs";
 "fleet.intro" = "Alle Newsletter-Aufgaben und Mac-Worker an einem Ort. Verbinde jeden Mac mit demselben Team-Server und derselben Team-ID. Jeder Mac bekommt einen eigenen Mitglieds-Token.";

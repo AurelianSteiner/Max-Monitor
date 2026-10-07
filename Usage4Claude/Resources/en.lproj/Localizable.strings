@@ -384,7 +384,7 @@
 
 /* Team — server connection (card in Settings) */
 "team.server.section" = "Connect to server";
-"team.server.token_label" = "Token";
+"team.server.token_label" = "Personal token";
 "team.server.connect" = "Connect";
 "team.server.disconnect" = "Disconnect";
 "team.server.change" = "Change server";
@@ -419,6 +419,15 @@
 "team.empty.server_unreachable_step" = "Check the network and try again.";
 
 /* Fleet monitor */
+"fleet.queue_and_macs" = "Queue & Macs";
+"fleet.account_limits" = "Account Limits";
+"fleet.edit_connection" = "Edit connection";
+"fleet.token_stored" = "Stored securely on this Mac";
+"fleet.manage_accounts" = "Manage accounts";
+"fleet.navigation" = "View";
+"fleet.done" = "Done";
+"fleet.enabled" = "On";
+"fleet.disabled" = "Off";
 "fleet.title" = "Queue & Mac overview";
 "fleet.open" = "Queue & Macs";
 "fleet.intro" = "All newsletter tasks and Mac workers in one place. Connect every Mac to the same team server and team ID. Give each Mac its own member token.";

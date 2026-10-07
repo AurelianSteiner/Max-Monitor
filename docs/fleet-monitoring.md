@@ -1,5 +1,11 @@
 # Gemeinsame Mac- und Newsletter-Übersicht
 
+Die gemeinsame Übersicht ist das Hauptfenster von Max Monitor. Ein Klick auf das
+Menüleisten-Symbol oder erneutes Öffnen der App zeigt **Queue & Macs**; **Account Limits**
+enthält die lokalen Konten und ihre Limits im selben Fenster. Konten werden dort über
+**Konten verwalten** hinzugefügt. Team-ID, persönlicher Token und Worker-ID liegen unter
+**Einstellungen → Verbindung & Worker**. Beim Tabwechsel bleiben die Queue-Filter erhalten.
+
 Alle Macs verbinden sich mit **demselben Team-Relay und derselben Team-ID**. Das
 Repository verteilt den Programmcode; das Relay speichert die gemeinsamen Daten.
 Damit hängt die Übersicht nicht von Tills Arbeits-Mac ab. Das Relay läuft auf einem

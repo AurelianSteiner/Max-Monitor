@@ -602,6 +602,15 @@ enum L {
     }
     enum Fleet {
         static var title: String { localized("fleet.title") }
+        static var queueAndMacs: String { localized("fleet.queue_and_macs") }
+        static var accountLimits: String { localized("fleet.account_limits") }
+        static var editConnection: String { localized("fleet.edit_connection") }
+        static var tokenStored: String { localized("fleet.token_stored") }
+        static var manageAccounts: String { localized("fleet.manage_accounts") }
+        static var navigation: String { localized("fleet.navigation") }
+        static var done: String { localized("fleet.done") }
+        static var enabled: String { localized("fleet.enabled") }
+        static var disabled: String { localized("fleet.disabled") }
         static var open: String { localized("fleet.open") }
         static var intro: String { localized("fleet.intro") }
         static var workerId: String { localized("fleet.worker_id") }
