@@ -430,6 +430,7 @@ struct DashboardView: View {
             HStack(spacing: 6) {
                 stayAwakeToggle(showsLabel: density.showsSleepLabel)
                 stayAwakeInfoButton
+                fleetOverviewButton(showsLabel: density.showsSleepLabel)
                 teamToggle
                 // Der Reihenfolge-/Spalten-Regler wohnt bei den Karten, die er
                 // ordnet (siehe `grid`) — nicht mehr hier oben rechts.
@@ -553,6 +554,26 @@ struct DashboardView: View {
         .focusable(false)
         .help(stayAwakeHelp)
         .accessibilityLabel(L.Dashboard.sleepLabel)
+    }
+
+    private func fleetOverviewButton(showsLabel: Bool) -> some View {
+        Button(action: { FleetWindowManager.shared.show() }) {
+            HStack(spacing: 4) {
+                Image(systemName: "desktopcomputer")
+                    .font(.system(size: 12))
+                if showsLabel {
+                    Text(L.Fleet.open)
+                        .font(.system(size: 10, weight: .medium))
+                        .fixedSize()
+                }
+            }
+            .padding(.horizontal, 6)
+            .frame(height: 22)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .help(L.Fleet.intro)
+        .accessibilityLabel(L.Fleet.open)
     }
 
     /// Kleines ⓘ neben dem Schalter: ein Klick erklärt in zwei Sätzen, was

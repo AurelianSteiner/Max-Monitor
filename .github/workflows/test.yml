@@ -120,3 +120,21 @@ jobs:
 
       - name: Check localization consistency
         run: python3 scripts/check_l10n.py
+
+  fleet-tests:
+    name: Fleet relay and newsletter adapter
+    runs-on: macos-26
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Test fleet authorization and persistence
+        run: npm test --prefix team-server
+
+      - name: Test source bridge, enrollment and installers
+        run: node --test scripts/*.test.mjs
+
+      - name: Check installer shell wrappers
+        run: bash -n scripts/install-newsletter-monitor.sh scripts/setup-mac-monitor.sh scripts/install-monitor-hub.sh

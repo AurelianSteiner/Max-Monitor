@@ -165,6 +165,7 @@ final class TeamServerConnection: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             _ = TeamAutoReporter.shared
+            _ = FleetReporter.shared
             guard self.isConnected else { return }
             guard !self.isServerURLInsecure else {
                 // Eine http-Adresse aus einer älteren Version: Die

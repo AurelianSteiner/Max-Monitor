@@ -4,7 +4,8 @@
   "description": "Tiny relay for Max Monitor team reports: accepts usage percentages, serves them back. No credentials ever touch this server.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=20"

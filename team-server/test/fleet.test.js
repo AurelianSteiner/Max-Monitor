@@ -1,0 +1,245 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { once } = require("node:events");
+const { createFleetStore, FleetError } = require("../fleet");
+
+const deviceA = "610be10e-8a00-4e00-b000-000000000001";
+const deviceB = "610be10e-8a00-4e00-b000-000000000002";
+function heartbeat(deviceId = deviceA, overrides = {}) {
+  const date = new Date().toISOString();
+  return { deviceId, name: "Mac Studio", workerId: "studio-1", reportedAt: date, batteryPercent: 78, powerSource: "ac", isCharging: true, isAwake: true, limits: [{ accountId: "account-a", label: "5 Stunden", kind: "session", percent: 43 }], usageUpdatedAt: date, ...overrides };
+}
+function task(id = "clickup:newsletter:abc", overrides = {}) {
+  return { id, title: "Newsletter erstellen", workflow: "newsletter", status: "queued", tags: ["pre gen.", "pre gen · wartet"], url: "https://app.clickup.com/t/abc", ...overrides };
+}
+
+test("shared authenticated relay supports fleet without changing existing report roles", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "max-monitor-relay-"));
+  const oldEnv = { DATA_DIR: process.env.DATA_DIR, TEAM_TOKEN: process.env.TEAM_TOKEN, TEAM_TOKENS: process.env.TEAM_TOKENS };
+  process.env.DATA_DIR = directory;
+  process.env.TEAM_TOKEN = "test-owner-token";
+  delete process.env.TEAM_TOKENS;
+  const { server } = require("../server");
+  async function start() {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return `http://127.0.0.1:${server.address().port}`;
+  }
+  async function stop() {
+    const closed = once(server, "close");
+    server.closeAllConnections();
+    server.close();
+    await closed;
+  }
+  let base = await start();
+  t.after(async () => {
+    if (server.listening) await stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(oldEnv)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  async function request(route, { method = "GET", token = "test-owner-token", body, raw } = {}) {
+    const response = await fetch(`${base}${route}`, {
+      method,
+      headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body !== undefined || raw !== undefined ? { "content-type": "application/json" } : {}) },
+      ...(body !== undefined || raw !== undefined ? { body: raw ?? JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(5000),
+    });
+    return { status: response.status, body: await response.json(), headers: response.headers };
+  }
+  const endpoint = "/v1/teams/DEMO1234";
+  const member = (await request(`${endpoint}/members`, { method: "POST", body: { name: "Worker Eins" } })).body.member;
+  const second = (await request(`${endpoint}/members`, { method: "POST", body: { name: "Worker Zwei" } })).body.member;
+  const admin = (await request(`${endpoint}/members`, { method: "POST", body: { name: "Queue Bridge", role: "admin" } })).body.member;
+
+  await t.test("fleet and heartbeat require a valid token for this team", async () => {
+    assert.equal((await request(`${endpoint}/fleet`, { token: null })).status, 401);
+    assert.equal((await request(`${endpoint}/fleet`, { token: "wrong" })).status, 401);
+    assert.equal((await request(`${endpoint}/fleet`, { token: "é".repeat("test-owner-token".length) })).status, 401);
+    assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", token: null, body: heartbeat() })).status, 401);
+    assert.equal((await request("/v1/teams/OTHER123/fleet", { token: member.token })).status, 401);
+  });
+
+  await t.test("every role sees all devices; stable device ID cannot be stolen", async () => {
+    const created = await request(`${endpoint}/heartbeat`, { method: "POST", token: member.token, body: heartbeat(deviceA, { apiKey: "must-not-persist" }) });
+    assert.equal(created.status, 200);
+    assert.equal(created.body.machine.memberId, member.id);
+    assert.equal(created.body.machine.usageStatus, "fresh");
+    assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", token: second.token, body: heartbeat(deviceB, { name: "Mac Mini", workerId: "mini-1" }) })).status, 200);
+    for (const token of [member.token, second.token, admin.token, "test-owner-token"]) {
+      const result = await request(`${endpoint}/fleet`, { token });
+      assert.equal(result.status, 200);
+      assert.equal(result.body.machines.length, 2);
+      assert.equal(result.body.heartbeatIntervalSeconds, 600);
+      assert.ok(!JSON.stringify(result.body).includes(member.token));
+      assert.ok(!JSON.stringify(result.body).includes("must-not-persist"));
+    }
+    assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", token: second.token, body: heartbeat() })).status, 409);
+    assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", body: heartbeat() })).status, 409);
+    assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", token: second.token, body: heartbeat(deviceB, { workerId: "studio-1" }) })).status, 409);
+    assert.ok(!fs.readFileSync(path.join(directory, "DEMO1234", "fleet.json"), "utf8").includes("must-not-persist"));
+  });
+
+  await t.test("malformed telemetry is rejected atomically", async () => {
+    for (const body of [null, [], heartbeat("../../escape"), heartbeat(deviceA, { batteryPercent: 101 }), heartbeat(deviceA, { batteryPercent: "42" }), heartbeat(deviceA, { isAwake: "true" }), heartbeat(deviceA, { reportedAt: "not-a-date" }), heartbeat(deviceA, { limits: [{ accountId: "a", kind: "session", label: "x", percent: 3.5 }] })]) {
+      assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", token: member.token, body })).status, 400);
+    }
+    assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", token: member.token, raw: "{" })).status, 400);
+    assert.equal((await request(`${endpoint}/fleet`, { token: second.token })).body.machines.length, 2);
+  });
+
+  await t.test("server receive time governs availability even with a badly skewed Mac clock", async () => {
+    const future = "2099-01-01T00:00:00.000Z";
+    const result = await request(`${endpoint}/heartbeat`, { method: "POST", token: member.token, body: heartbeat(deviceA, { reportedAt: future, usageUpdatedAt: future }) });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.machine.status, "online");
+    assert.equal(result.body.machine.usageStale, true);
+    assert.ok(result.body.machine.clockSkewSeconds > 100000);
+    assert.ok(Math.abs(Date.now() - Date.parse(result.body.machine.lastSeenAt)) < 5000);
+  });
+
+  await t.test("only admin/owner can publish full queue snapshots and failures retain cached tasks", async () => {
+    const first = { tasks: [task(), task("clickup:upload:abc", { workflow: "upload", status: "running", workerId: "mini-1", phase: "Klaviyo Draft" })], source: { name: "ClickUp", lastSuccessAt: new Date().toISOString() } };
+    assert.equal((await request(`${endpoint}/queue`, { method: "POST", token: member.token, body: first })).status, 403);
+    assert.equal((await request(`${endpoint}/queue`, { method: "POST", token: admin.token, body: first })).status, 200);
+    let shared = (await request(`${endpoint}/fleet`, { token: second.token })).body;
+    assert.equal(shared.queue.tasks.length, 2);
+    assert.equal(shared.queue.source.status, "fresh");
+    assert.ok(shared.events.some((event) => event.type === "task_running" && event.taskId === "clickup:upload:abc" && event.at));
+    assert.equal((await request(`${endpoint}/queue`, { method: "POST", token: admin.token, body: { tasks: [], source: { name: "ClickUp", error: "ClickUp ist vorübergehend nicht erreichbar" } } })).status, 200);
+    shared = (await request(`${endpoint}/fleet`, { token: member.token })).body;
+    assert.equal(shared.queue.tasks.length, 2);
+    assert.equal(shared.queue.source.status, "error");
+    const savedSuccess = shared.queue.source.lastSuccessAt;
+    assert.equal((await request(`${endpoint}/queue`, { method: "POST", token: admin.token, body: { source: { name: "ClickUp", error: "Noch nicht erreichbar" } } })).status, 200);
+    assert.equal((await request(`${endpoint}/fleet`)).body.queue.source.lastSuccessAt, savedSuccess);
+    assert.equal((await request(`${endpoint}/queue`, { method: "POST", token: admin.token, body: { source: { name: "ClickUp" } } })).status, 400);
+    assert.equal((await request(`${endpoint}/queue`, { method: "POST", token: admin.token, body: { tasks: [], source: { name: "ClickUp" } } })).status, 200);
+    shared = (await request(`${endpoint}/fleet`)).body;
+    assert.equal(shared.queue.tasks.length, 0);
+    assert.ok(shared.events.some((event) => event.type === "queue_source_recovered"));
+  });
+
+  await t.test("queue has independent 2 MB body budget while reports retain 64 KB", async () => {
+    const tasks = Array.from({ length: 350 }, (_, index) => task(`task-${index}`, { title: "Newsletter ".repeat(20) }));
+    const queue = { tasks, source: { name: "ClickUp" } };
+    assert.ok(Buffer.byteLength(JSON.stringify(queue)) > 64 * 1024);
+    assert.equal((await request(`${endpoint}/queue`, { method: "POST", token: admin.token, body: queue })).status, 200);
+    assert.equal((await request(`${endpoint}/queue`, { method: "POST", token: admin.token, raw: JSON.stringify({ tasks: [], source: { name: "x" }, excess: "x".repeat(2 * 1024 * 1024) }) })).status, 413);
+    assert.equal((await request("/v1/reports", { method: "POST", body: { teamId: "DEMO1234", person: "Legacy", limits: [{ label: "Legacy", percent: 150 }], excess: "x".repeat(65 * 1024) } })).status, 413);
+    assert.equal((await request(`${endpoint}/fleet`)).body.queue.tasks.length, 350);
+  });
+
+  await t.test("legacy reports, histories and member token privacy still work", async () => {
+    assert.equal((await request("/v1/reports", { method: "POST", token: member.token, body: { teamId: "DEMO1234", person: "Wrong Name", limits: [{ label: "7 Tage", percent: 150 }] } })).status, 200);
+    const reports = (await request(`${endpoint}/reports`, { token: second.token })).body.reports;
+    assert.equal(reports[0].person, member.name);
+    assert.equal(reports[0].limits[0].percent, 150);
+    assert.equal((await request(`${endpoint}/members/${member.id}/history`, { token: second.token })).body.samples.length, 1);
+    assert.equal((await request(`${endpoint}/members`, { token: second.token })).status, 403);
+    assert.ok((await request(`${endpoint}/members`, { token: admin.token })).body.members.every((item) => !item.token));
+  });
+
+  await t.test("only whitelisted dashboard assets are public and API responses remain private", async () => {
+    for (const route of ["/fleet", "/monitor", "/fleet-assets/dashboard.css", "/fleet-assets/dashboard.js"]) {
+      const response = await fetch(`${base}${route}`, { signal: AbortSignal.timeout(5000) });
+      assert.equal(response.status, 200);
+      assert.ok(response.headers.get("content-security-policy").includes("script-src 'self'"));
+      assert.ok(!response.headers.get("content-security-policy").includes("unsafe-inline"));
+    }
+    assert.equal((await request("/fleet-assets/server.js", { token: null })).status, 404);
+    assert.equal((await request("/fleet-assets/%2e%2e/members.json", { token: null })).status, 404);
+    assert.equal((await request(`${endpoint}/fleet`)).headers.get("cache-control"), "no-store");
+  });
+
+  await t.test("fleet cache survives an actual HTTP server restart", async () => {
+    await stop();
+    base = await start();
+    const shared = await request(`${endpoint}/fleet`, { token: second.token });
+    assert.equal(shared.status, 200);
+    assert.equal(shared.body.machines.length, 2);
+    assert.equal(shared.body.queue.tasks.length, 350);
+  });
+});
+
+test("fleet status transitions, independent account freshness, and persisted errors", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "max-monitor-state-"));
+  let time = Date.parse("2026-10-07T10:00:00Z");
+  const store = createFleetStore(directory, () => time);
+  const who = { role: "member", member: { id: "worker-1", name: "Worker Eins" } };
+  const date = () => new Date(time).toISOString();
+  try {
+    store.heartbeat("DEMO1234", who, heartbeat(deviceA, { reportedAt: date(), usageUpdatedAt: date() }));
+    time += 15 * 60 * 1000;
+    assert.equal(store.snapshot("DEMO1234").machines[0].status, "online");
+    time += 1;
+    assert.equal(store.snapshot("DEMO1234").machines[0].status, "silent");
+    assert.equal(store.snapshot("DEMO1234").events.filter((event) => event.type === "machine_silent").length, 1);
+    time += 15 * 60 * 1000;
+    assert.equal(store.snapshot("DEMO1234").machines[0].status, "offline");
+    const error = store.heartbeat("DEMO1234", who, heartbeat(deviceA, { reportedAt: date(), usageUpdatedAt: date(), limits: [], usageError: "Claude API\nnicht erreichbar" }));
+    assert.equal(error.status, "online");
+    assert.equal(error.limits[0].percent, 43);
+    assert.equal(error.usageStatus, "error");
+    assert.equal(error.usageError, "Claude API nicht erreichbar");
+    assert.equal(error.usageStale, true);
+    assert.ok(store.snapshot("DEMO1234").events.some((event) => event.type === "machine_online"));
+
+    const accounts = [{ accountId: "account-a", name: "Account A", provider: "claude", usageUpdatedAt: date() }, { accountId: "account-b", name: "Account B", provider: "claude", usageUpdatedAt: date() }];
+    store.heartbeat("DEMO1234", who, heartbeat(deviceA, { reportedAt: date(), usageUpdatedAt: date(), accounts, limits: [{ accountId: "account-a", label: "A", kind: "session", percent: 12 }, { accountId: "account-b", label: "B", kind: "session", percent: 85 }] }));
+    time += 16 * 60 * 1000;
+    const updated = store.heartbeat("DEMO1234", who, heartbeat(deviceA, { reportedAt: date(), usageUpdatedAt: date(), usageError: "Account B: Abfrage fehlgeschlagen", accounts: [{ ...accounts[0], usageUpdatedAt: date() }, { ...accounts[1], usageError: "Abfrage fehlgeschlagen" }], limits: [{ accountId: "account-a", label: "A", kind: "session", percent: 22 }] }));
+    assert.equal(updated.limits.find((item) => item.accountId === "account-a").usageStatus, "fresh");
+    assert.equal(updated.limits.find((item) => item.accountId === "account-b").percent, 85);
+    assert.equal(updated.limits.find((item) => item.accountId === "account-b").usageStatus, "error");
+    assert.equal(updated.limits.find((item) => item.accountId === "account-b").usageStale, true);
+    assert.equal(createFleetStore(directory, () => time).snapshot("DEMO1234").machines[0].usageStatus, "error");
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("observed Hub workers are shared, deduplicated by native workerId and never invent device telemetry", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "max-monitor-hub-"));
+  let time = Date.parse("2026-10-07T10:00:00Z");
+  const store = createFleetStore(directory, () => time);
+  try {
+    store.updateQueue("DEMO1234", { tasks: [], source: { name: "ClickUp" }, observedWorkers: [{ workerId: "studio-1", name: "Studio", lastSeenAt: new Date(time).toISOString(), workerVersion: "1.2", pendingClickup: 2 }] });
+    let machine = store.snapshot("DEMO1234").machines[0];
+    assert.equal(machine.telemetrySource, "worker");
+    assert.equal(machine.status, "online");
+    assert.equal(machine.usageStatus, "unavailable");
+    assert.equal(machine.batteryPercent, undefined);
+    store.heartbeat("DEMO1234", { role: "super" }, heartbeat(deviceA, { reportedAt: new Date(time).toISOString(), usageUpdatedAt: new Date(time).toISOString() }));
+    assert.equal(store.snapshot("DEMO1234").machines.length, 1);
+    time += 16 * 60 * 1000;
+    store.updateQueue("DEMO1234", { tasks: [], source: { name: "ClickUp" }, observedWorkers: [{ workerId: "studio-1", name: "Studio", lastSeenAt: new Date(time).toISOString() }] });
+    machine = store.snapshot("DEMO1234").machines[0];
+    assert.equal(machine.telemetrySource, "app");
+    assert.equal(machine.status, "silent");
+    assert.equal(machine.workerStatus, "online");
+    assert.equal(machine.usageStale, true);
+    assert.equal(machine.batteryPercent, 78);
+    store.updateQueue("DEMO1234", { source: { name: "ClickUp", error: "Hub unavailable" } });
+    assert.equal(store.snapshot("DEMO1234").machines[0].workerStatus, "online");
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("bounded event log, complete snapshots and corrupt-file protection", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "max-monitor-events-"));
+  const store = createFleetStore(directory);
+  try {
+    store.updateQueue("DEMO1234", { tasks: Array.from({ length: 400 }, (_, index) => task(`id-${index}`)), source: { name: "ClickUp" } });
+    assert.equal(store.snapshot("DEMO1234").events.length, 300);
+    assert.throws(() => store.updateQueue("DEMO1234", { tasks: [task(), task()], source: { name: "ClickUp" } }), (error) => error instanceof FleetError && error.status === 400);
+    assert.throws(() => store.updateQueue("DEMO1234", { tasks: [task("bad", { url: "javascript:alert(1)" })], source: { name: "ClickUp" } }), (error) => error.status === 400);
+    assert.equal(store.snapshot("DEMO1234").queue.tasks.length, 400);
+    assert.ok(fs.readdirSync(path.join(directory, "DEMO1234")).every((name) => !name.endsWith(".tmp")));
+    const file = path.join(directory, "DEMO1234", "fleet.json");
+    fs.writeFileSync(file, "broken-json");
+    assert.throws(() => store.heartbeat("DEMO1234", { role: "super" }, heartbeat()), (error) => error.status === 500);
+    assert.equal(fs.readFileSync(file, "utf8"), "broken-json");
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});

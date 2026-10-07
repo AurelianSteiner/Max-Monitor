@@ -36,6 +36,8 @@ let package = Package(
                 "Helpers/NotificationNames.swift",
                 "Models/TeamReport.swift",
                 "Models/TeamHistorySample.swift",
+                "Models/FleetHeartbeat.swift",
+                "Models/TeamEnrollment.swift",
                 "Helpers/PrivilegedPower.swift",
                 "Helpers/OAuthGrantFailure.swift",
                 "Views/Dashboard/MascotParadeTiming.swift",

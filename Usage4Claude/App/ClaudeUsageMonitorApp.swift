@@ -21,7 +21,10 @@ import Sparkle
 @main
 enum AppMain {
     static func main() {
-        // ALLERERSTE Anweisung des Prozesses — vor Sparkle, UserSettings & Co.
+        if let exitCode = TeamEnrollmentCommand.runIfRequested() {
+            exit(exitCode)
+        }
+        // ALLERERSTE reguläre App-Anweisung — vor Sparkle, UserSettings & Co.
         SandboxedPreferencesMigrator.run()
         ClaudeUsageMonitorApp.main()
     }

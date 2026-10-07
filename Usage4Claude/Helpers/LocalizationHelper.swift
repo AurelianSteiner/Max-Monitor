@@ -600,6 +600,17 @@ enum L {
         static var emptyServerNoReportsStep: String { localized("team.empty.server_no_reports_step") }
         static var emptyServerUnreachableStep: String { localized("team.empty.server_unreachable_step") }
     }
+    enum Fleet {
+        static var title: String { localized("fleet.title") }
+        static var open: String { localized("fleet.open") }
+        static var intro: String { localized("fleet.intro") }
+        static var workerId: String { localized("fleet.worker_id") }
+        static var workerIdHelp: String { localized("fleet.worker_id_help") }
+        static var heartbeatHelp: String { localized("fleet.heartbeat_help") }
+        static var retry: String { localized("fleet.retry") }
+        static var settings: String { localized("fleet.settings") }
+        static var loadError: String { localized("fleet.load_error") }
+    }
 
     // MARK: - Helper Methods
 
