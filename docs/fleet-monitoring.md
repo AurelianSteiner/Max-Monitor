@@ -26,6 +26,30 @@ Klick auf die Kennzahl öffnet diesen Filter direkt. Jeder Mac und jede Aufgabe
 zählt einmal, auch wenn mehrere Gründe vorliegen; gelöste Einträge verschwinden
 beim nächsten Abgleich. **Alle Ereignisse** zeigt weiterhin die Historie.
 
+## Live-Abgleich
+
+Die zentrale Newsletter-Brücke liest ClickUp-Aufgaben und die tatsächlichen
+Worker-Reservierungen aus Slack alle 60 Sekunden. Der Abstand gilt zwischen den
+Starts der Abfragen; deren Laufzeit wird nicht zusätzlich als Wartezeit addiert.
+ClickUp, Reservierungen und Hub-Gerätemeldungen werden parallel gelesen. Dauert
+eine Quelle länger oder fällt sie aus, bleibt der letzte vollständige Stand
+sichtbar; unvollständige Quellenantworten überschreiben weder Aufgaben noch
+Zuordnungen.
+
+Sobald ein vollständiger Stand im Relay gespeichert wurde, meldet eine
+authentifizierte Live-Verbindung die Änderung an alle offenen Monitor-Fenster.
+Diese laden die aktuelle Queue unmittelbar nach und behalten ihre Filter. Das
+gilt für neue Aufgaben, Übernahmen, Mac-Wechsel, Freigaben und Abschlüsse.
+**Live** zeigt eine aktive Verbindung; **Abgleich** den regelmäßigen Abruf als
+Fallback. Nach Unterbrechung oder Aufwachen verbindet sich die Ansicht erneut.
+Der Fallback prüft alle 30 Sekunden. Tokens bleiben ausschließlich im
+Authorization-Header, niemals in einer Stream-URL oder im Browser-Speicher.
+
+Änderungen in ClickUp/Slack werden beim nächsten Quellenabgleich erkannt; es
+werden keine direkten ClickUp-Webhooks vorausgesetzt. Die Quellenlaufzeit und
+Verfügbarkeit bestimmen die tatsächliche Verzögerung. Geräte- und
+Account-Heartbeats bleiben unabhängig davon im Zehn-Minuten-Takt.
+
 ## Automatische Einrichtung neuer Worker
 
 Der neue-Mac-Startbefehl von **AI Newsletter Creation** klont auch Max-Monitor,

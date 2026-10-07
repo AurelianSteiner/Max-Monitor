@@ -17,6 +17,11 @@
   let busy = false;
   let fetchController = null;
   let generation = 0;
+  let streamController = null;
+  let streamRetry = null;
+  let streamConnected = false;
+  let liveRefreshTimer = null;
+  let refreshQueued = false;
   const params = new URLSearchParams(location.search);
   let view = params.get("view") || "overview";
   let logFilter = params.get("log") === "attention" ? "attention" : "all";
@@ -29,6 +34,13 @@
   let workflowFilter = params.get("workflow") || "";
   let query = params.get("q") || "";
   let queuePage = 0;
+  let logQuery = params.get("logq") || "";
+  let logType = ["task", "machine", "source"].includes(params.get("logtype"))
+    ? params.get("logtype") : "all";
+  let logOldestFirst = params.get("logsort") === "oldest";
+  const requestedLogPage = Number(params.get("logpage"));
+  let logPage = Number.isSafeInteger(requestedLogPage) && requestedLogPage > 0
+    ? requestedLogPage - 1 : 0;
   const pageSize = 50;
   const statusNames = {
     online: "Online",
@@ -201,6 +213,10 @@
     if (workerFilter) state.set("worker", workerFilter);
     if (workflowFilter) state.set("workflow", workflowFilter);
     if (query) state.set("q", query);
+    if (logQuery) state.set("logq", logQuery);
+    if (logType !== "all") state.set("logtype", logType);
+    if (logOldestFirst) state.set("logsort", "oldest");
+    if (logPage) state.set("logpage", logPage + 1);
     history.replaceState(
       null,
       "",
@@ -212,7 +228,12 @@
       ? next
       : "overview";
     if (status) statusFilter = status;
-    if (log) logFilter = log;
+    if (log) {
+      logFilter = log;
+      logQuery = "";
+      logType = "all";
+      logPage = 0;
+    }
     queuePage = 0;
     saveFilters();
     render();
@@ -235,6 +256,81 @@
         return shell;
       }),
     );
+  }
+  function syncStatus() {
+    if (!snapshot || busy || !$('connection-error').hidden) return;
+    $('sync-status').textContent = `${streamConnected ? 'Live' : 'Abgleich'} · ${new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' }).format(new Date(snapshotReceivedAt))}`;
+  }
+  function stopLive() {
+    clearTimeout(streamRetry);
+    clearTimeout(liveRefreshTimer);
+    streamRetry = null;
+    liveRefreshTimer = null;
+    refreshQueued = false;
+    const previous = streamController;
+    streamController = null;
+    streamConnected = false;
+    previous?.abort();
+  }
+  function liveRefresh() {
+    if (liveRefreshTimer) return;
+    liveRefreshTimer = setTimeout(() => {
+      liveRefreshTimer = null;
+      if (!credentials || document.hidden) return;
+      if (busy) refreshQueued = true;
+      else refresh();
+    }, 100);
+  }
+  function startLive() {
+    if (!credentials || document.hidden || streamController) return;
+    clearTimeout(streamRetry);
+    streamRetry = null;
+    connectLive();
+  }
+  async function connectLive() {
+    const epoch = generation;
+    const controller = new AbortController();
+    streamController = controller;
+    let timer = setTimeout(() => controller.abort(), 15000);
+    let reader;
+    let retry = true;
+    try {
+      const response = await fetch(`${relayPrefix}/v1/teams/${encodeURIComponent(credentials.teamId)}/fleet/events`, {
+        headers: { Authorization: `Bearer ${credentials.token}`, Accept: 'text/event-stream' },
+        cache: 'no-store', signal: controller.signal,
+      });
+      if (response.status === 401 || response.status === 403) retry = false;
+      if (!response.ok || !response.headers.get('content-type')?.startsWith('text/event-stream') || !response.body?.getReader) return;
+      if (epoch !== generation || controller !== streamController) return;
+      streamConnected = true;
+      syncStatus();
+      reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (!controller.signal.aborted) {
+        clearTimeout(timer);
+        timer = setTimeout(() => controller.abort(), 45000);
+        const { value, done } = await reader.read();
+        if (done || epoch !== generation || controller !== streamController) break;
+        buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n');
+        if (buffer.length > 8192) throw new Error('Live signal too large');
+        let end;
+        while ((end = buffer.indexOf('\n\n')) !== -1) {
+          const event = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          if (/^event:\s*fleet$/m.test(event)) liveRefresh();
+        }
+      }
+    } catch { /* Regular GETs keep the last snapshot available during reconnects. */ }
+    finally {
+      clearTimeout(timer);
+      if (reader) { try { await reader.cancel(); } catch { /* Already disconnected. */ } }
+      if (controller !== streamController) return;
+      streamController = null;
+      streamConnected = false;
+      syncStatus();
+      if (retry && epoch === generation && credentials && !document.hidden) streamRetry = setTimeout(startLive, 5000);
+    }
   }
   async function refresh() {
     if (!credentials || busy) return false;
@@ -273,7 +369,7 @@
       snapshot = data;
       snapshotReceivedAt = Date.now();
       $("sync-status").textContent =
-        `Live · ${new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" }).format(new Date())}`;
+        `${streamConnected ? "Live" : "Abgleich"} · ${new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" }).format(new Date())}`;
       $("connection-error").hidden = true;
       showNotice(
         data.queue.source?.error
@@ -286,6 +382,7 @@
               : "",
       );
       render();
+      startLive();
       return true;
     } catch (error) {
       if (epoch !== generation) return false;
@@ -318,6 +415,10 @@
         fetchController = null;
         $("refresh").disabled = false;
         $("connect").disabled = false;
+        if (refreshQueued) {
+          refreshQueued = false;
+          queueMicrotask(refresh);
+        }
       }
     }
   }
@@ -379,6 +480,7 @@
     $("machines-section").hidden = ["queue", "log"].includes(view);
     $("queue-section").hidden = ["machines", "log"].includes(view);
     $("log-section").hidden = view !== "log";
+    document.querySelector(".metrics").hidden = view === "log";
     document.querySelectorAll("#status-tabs .tab").forEach((button) => {
       button.classList.toggle(
         "selected",
@@ -398,11 +500,6 @@
       logFilter === "attention"
         ? "Betroffene Macs und Aufgaben mit dem aktuellen Grund."
         : "Neue Aufgaben, Statuswechsel und Meldungen der Geräte.";
-    $("log-summary").textContent = !snapshot
-      ? "Noch keine Daten geladen."
-      : logFilter === "attention"
-        ? `${quiet} Macs · ${blocked} Aufgaben brauchen Aufmerksamkeit. Jeder Eintrag zählt einmal.`
-        : `${Array.isArray(snapshot.events) ? snapshot.events.length : 0} Ereignisse · neueste zuerst`;
     $("worker-filter").hidden = !workerFilter;
     $("worker-filter-label").textContent = `Aufgaben für ${workerFilter}`;
     $("team-label").textContent = credentials
@@ -816,112 +913,194 @@
     }
     openDetail(machine.name || machine.workerId || "Mac", children);
   }
-  function renderAttention(entries, list) {
-    if (!entries.length) {
-      list.append(
-        node(
-          "div",
-          "empty-state",
-          snapshot
-            ? "Aktuell braucht kein Mac und keine Aufgabe Aufmerksamkeit."
-            : "Verbinde den Team-Server, um betroffene Macs und Aufgaben zu sehen.",
-        ),
-      );
-      return;
+  function logRows(attention) {
+    if (logFilter === "attention") {
+      return attention.map((entry) => {
+        const entity = entry.entity;
+        const task = entry.type === "task";
+        return {
+          type: task ? "task" : "machine",
+          title: task ? entity.title || entity.id : entity.name || entity.workerId || "Mac",
+          id: task ? entity.id : entity.workerId || entity.deviceId,
+          kind: task ? workflow(entity.workflow) : "Mac-Worker",
+          workerId: entity.workerId,
+          at: task ? entity.updatedAt : entity.receivedAt || entity.lastSeenAt,
+          status: entity.status,
+          statusLabel: statusNames[entity.status] || "Unbekannt",
+          messages: entry.reasons,
+          phase: task ? entity.phase : null,
+          entity,
+          attention: true,
+        };
+      });
     }
-    for (const entry of entries) {
-      const entity = entry.entity;
-      const task = entry.type === "task";
-      const title = task
-        ? entity.title || entity.id
-        : entity.name || entity.workerId || "Mac";
-      const line = node("article", "event attention-entry");
-      line.dataset.attentionType = entry.type;
-      const meta = node("div", "attention-meta");
-      meta.append(
-        node(
-          "span",
-          "attention-kind",
-          task ? workflow(entity.workflow) : "Mac-Worker",
-        ),
-      );
-      if (task || entity.status !== "online") meta.append(badge(entity.status));
-      const detail = node("div", "attention-body");
-      detail.append(node("h3", "", title));
-      const reasons = node("ul", "attention-reasons");
-      entry.reasons.forEach((reason) => reasons.append(node("li", "", reason)));
-      detail.append(reasons);
-      if (task && entity.phase)
-        detail.append(node("p", "", `Letzter Schritt: ${entity.phase}`));
-      detail.append(
-        node(
-          "p",
-          "attention-context",
-          task
-            ? [entity.id, entity.workerId].filter(Boolean).join(" · ")
-            : [entity.workerId, `Letzte Meldung ${relative(entity.lastSeenAt)}`]
-                .filter(Boolean)
-                .join(" · "),
-        ),
-      );
-      const button = node("button", "icon-button", "↗");
-      button.setAttribute("aria-label", `Details zu ${title}`);
-      button.addEventListener("click", () =>
-        task ? taskDetails(entity) : machineDetails(entity),
-      );
-      line.append(meta, detail, button);
-      list.append(line);
+    const taskMap = new Map(tasks().map((task) => [task.id, task]));
+    const devices = machines();
+    return (Array.isArray(snapshot?.events) ? snapshot.events : []).map((event) => {
+      const type = event.type?.startsWith("task_") ? "task"
+        : event.type?.startsWith("machine_") || event.type?.startsWith("worker_")
+          ? "machine" : "source";
+      const entity = type === "task" ? taskMap.get(event.taskId || event.entityId)
+        : type === "machine" ? devices.find((machine) =>
+          event.deviceId ? machine.deviceId === event.deviceId
+            : machine.workerId === (event.workerId || event.entityId)) : null;
+      const status = String(event.type || "").replace(/^(task|machine|worker)_/, "");
+      const special = {
+        registered: ["online", "Verbunden"],
+        removed: ["unknown", "Entfernt"],
+        queue_source_error: ["failed", "Gestört"],
+        queue_source_recovered: ["online", "Erreichbar"],
+      }[status];
+      const capturedWorker = "workerId" in event;
+      const workerId = capturedWorker ? event.workerId : entity?.workerId;
+      const rawMessage = event.message || "Status aktualisiert";
+      const message = /^(pre-gen|pregen|newsletter|upload): (queued|running|blocked|failed|completed)$/.test(rawMessage)
+        ? "Aufgabenstatus aktualisiert" : rawMessage;
+      return {
+        type,
+        title: event.title || entity?.title || entity?.name || (type === "source" ? "Queue-Quelle" : "Status aktualisiert"),
+        id: type === "task" ? event.taskId || event.entityId : type === "machine" ? event.workerId || entity?.workerId : "",
+        kind: type === "task" ? workflow(event.workflow || entity?.workflow || "Aufgabe")
+          : type === "machine" ? "Mac-Worker" : "Queue-Quelle",
+        workerId,
+        currentWorker: !capturedWorker && Boolean(workerId),
+        at: event.at || event.receivedAt || event.timestamp,
+        status: special?.[0] || (statusNames[status] ? status : "unknown"),
+        statusLabel: special?.[1] || statusNames[status] || "Info",
+        messages: [message],
+        event,
+        entity,
+      };
+    });
+  }
+  function logDetails(row) {
+    const grid = node("div", "detail-grid");
+    grid.append(
+      detailField(row.attention ? "Aktualisiert" : "Ereigniszeitpunkt", exact(row.at)),
+      detailField("Typ", row.kind),
+      detailField("Status", row.statusLabel),
+      detailField(row.currentWorker ? "Mac · aktuelle Zuordnung" : "Mac", row.workerId || "Nicht zugeordnet"),
+    );
+    const reasons = node("ul", row.attention ? "attention-reasons" : "log-detail-messages");
+    row.messages.forEach((message) => reasons.append(node("li", "", message)));
+    const children = [grid, reasons];
+    if (row.id) children.push(node("p", "form-hint", row.id));
+    if (row.phase) children.push(node("p", "form-hint", `Letzter Schritt: ${row.phase}`));
+    if (row.entity) {
+      const button = node("button", "button secondary", row.type === "task"
+        ? "Aktuelle Aufgabe öffnen" : "Mac-Details öffnen");
+      button.addEventListener("click", () => row.type === "task"
+        ? taskDetails(row.entity) : machineDetails(row.entity));
+      children.push(button);
     }
+    openDetail(row.title, children);
   }
   function renderEvents(attention) {
-    const list = $("event-list");
-    list.replaceChildren();
-    if (logFilter === "attention") {
-      renderAttention(attention, list);
-      return;
+    const body = $("log-body");
+    if (!body) return;
+    const allRows = logRows(attention);
+    if (logFilter === "attention" && logType === "source") {
+      logType = "all";
+      logPage = 0;
+      saveFilters();
     }
-    const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
-    if (!events.length) {
-      list.append(
-        node(
-          "div",
-          "empty-state",
-          "Noch keine Ereignisse. Neue Meldungen und Queue-Änderungen erscheinen hier.",
-        ),
-      );
-      return;
-    }
-    events
-      .slice()
-      .sort((a, b) => (timestamp(b.at) || 0) - (timestamp(a.at) || 0))
-      .forEach((event) => {
-        const line = node("div", "event");
-        const time = node(
-          "time",
-          "",
-          exact(event.at || event.receivedAt || event.timestamp),
-        );
-        const detail = node("div");
-        detail.append(
-          node(
-            "strong",
-            "",
-            event.title
-              ? `${event.title} · ${event.message || event.type || "Status aktualisiert"}`
-              : event.message || event.type || "Status aktualisiert",
-          ),
-        );
-        if (event.taskId || event.workerId)
-          detail.append(
-            node(
-              "p",
-              "",
-              [event.taskId, event.workerId].filter(Boolean).join(" · "),
-            ),
-          );
-        line.append(time, detail);
-        list.append(line);
+    $("log-source-option").disabled = logFilter === "attention";
+    $("log-search").value = logQuery;
+    $("log-type").value = logType;
+    const queryText = logQuery.trim().toLocaleLowerCase("de-DE");
+    const visible = allRows.filter((row) =>
+      (logType === "all" || row.type === logType) && (!queryText ||
+        [row.title, row.id, row.kind, row.workerId, row.statusLabel, row.phase, ...row.messages]
+          .filter(Boolean).join(" ").toLocaleLowerCase("de-DE").includes(queryText)))
+      .sort((a, b) => {
+        const first = timestamp(a.at);
+        const second = timestamp(b.at);
+        if (first === null || second === null) return (first === null) - (second === null);
+        return logOldestFirst ? first - second : second - first;
       });
+    const page = Math.min(logPage, Math.max(0, Math.ceil(visible.length / pageSize) - 1));
+    if (page !== logPage) { logPage = page; saveFilters(); }
+    body.replaceChildren();
+    const direction = logOldestFirst ? "↑" : "↓";
+    $("log-time-heading").setAttribute("aria-sort", logOldestFirst ? "ascending" : "descending");
+    $("log-time-sort").textContent = `Zeitpunkt ${direction}`;
+    $("log-sort").textContent = `${logOldestFirst ? "Älteste" : "Neueste"} zuerst ${direction}`;
+    $("log-caption").textContent = `Queue-Log: ${logFilter === "attention" ? "Braucht Aufmerksamkeit" : "Alle Ereignisse"}`;
+    $("log-message-heading").textContent = logFilter === "attention" ? "Grund" : "Ereignis";
+    $("log-count").textContent = numberFormat.format(visible.length);
+    $("log-event-count").textContent = numberFormat.format(Array.isArray(snapshot?.events) ? snapshot.events.length : 0);
+    $("log-summary").textContent = !snapshot ? "Noch keine Daten geladen."
+      : logFilter === "attention" ? `${numberFormat.format(attention.filter((entry) => entry.type === "machine").length)} Macs · ${numberFormat.format(attention.filter((entry) => entry.type === "task").length)} Aufgaben brauchen Aufmerksamkeit. Jeder Eintrag zählt einmal.`
+        : "Statuswechsel, neue Aufgaben und Meldungen der Macs im zeitlichen Verlauf.";
+    for (const row of visible.slice(logPage * pageSize, (logPage + 1) * pageSize)) {
+      const line = node("tr", row.attention ? "log-row attention-entry" : "log-row");
+      line.dataset.logType = row.type;
+      if (row.attention) line.dataset.attentionType = row.type;
+      const cell = (name, label) => {
+        const result = node("td", `log-${name}`);
+        result.dataset.label = label;
+        return result;
+      };
+      const when = cell("time", "Zeitpunkt");
+      const time = node("time", "", exact(row.at));
+      if (timestamp(row.at) !== null) time.dateTime = new Date(timestamp(row.at)).toISOString();
+      time.title = exact(row.at);
+      when.append(time, node("small", "log-secondary", relative(row.at)));
+      const subject = cell("entity", "Aufgabe / Bezug");
+      const title = node("strong", "log-title", row.title);
+      title.title = row.title;
+      const meta = node("div", "log-entity-meta");
+      meta.append(node("span", "workflow", row.kind));
+      if (row.type === "task" && row.id) {
+        const id = node("small", "log-id", row.id);
+        id.title = row.id;
+        meta.append(id);
+      }
+      subject.append(title, meta);
+      const worker = cell("worker", "Mac");
+      const workerName = node("span", "log-worker-name", row.workerId || (row.type === "source" ? "—" : "Nicht zugeordnet"));
+      workerName.title = row.workerId || "";
+      worker.append(workerName);
+      if (row.currentWorker) worker.append(node("small", "log-secondary", "aktuelle Zuordnung"));
+      const state = cell("status", "Status");
+      const signal = badge(row.status);
+      signal.lastChild.textContent = row.statusLabel;
+      state.append(signal);
+      const message = cell("message", row.attention ? "Grund" : "Ereignis");
+      const messages = node("ul", row.attention ? "attention-reasons" : "log-messages");
+      row.messages.slice(0, 2).forEach((text) => {
+        const item = node("li", "", text);
+        item.title = text;
+        messages.append(item);
+      });
+      if (row.messages.length > 2) messages.append(node("li", "log-secondary", `+ ${row.messages.length - 2} weitere Gründe`));
+      message.append(messages);
+      if (row.phase) {
+        const phase = node("small", "log-secondary", `Letzter Schritt: ${row.phase}`);
+        phase.title = row.phase;
+        message.append(phase);
+      }
+      const action = cell("action", "Details");
+      const button = node("button", "icon-button", "↗");
+      button.setAttribute("aria-label", `Details zu ${row.title}`);
+      button.addEventListener("click", () => logDetails(row));
+      action.append(button);
+      line.append(when, subject, worker, state, message, action);
+      body.append(line);
+    }
+    $("event-list").hidden = visible.length === 0;
+    $("log-empty").hidden = visible.length !== 0;
+    $("log-empty").textContent = !snapshot ? "Verbinde den Team-Server, um das Queue-Log zu sehen."
+      : allRows.length && !visible.length ? "Keine passenden Einträge. Passe die Suche oder den Typ-Filter an."
+        : logFilter === "attention" ? "Aktuell braucht kein Mac und keine Aufgabe Aufmerksamkeit."
+          : "Noch keine Ereignisse. Neue Aufgaben und Mac-Meldungen erscheinen hier.";
+    const first = visible.length ? logPage * pageSize + 1 : 0;
+    const last = Math.min((logPage + 1) * pageSize, visible.length);
+    $("log-results").textContent = `${numberFormat.format(first)}–${numberFormat.format(last)} von ${numberFormat.format(visible.length)} Einträgen${visible.length !== allRows.length ? ` · ${numberFormat.format(allRows.length)} insgesamt` : ""}`;
+    $("log-pagination").hidden = visible.length <= pageSize;
+    $("log-page-label").textContent = `Seite ${logPage + 1} / ${Math.max(1, Math.ceil(visible.length / pageSize))}`;
+    $("log-previous").disabled = logPage === 0;
+    $("log-next").disabled = (logPage + 1) * pageSize >= visible.length;
   }
   document
     .querySelectorAll("[data-view]")
@@ -945,6 +1124,7 @@
   document.querySelectorAll("#log-filters .tab").forEach((button) =>
     button.addEventListener("click", () => {
       logFilter = button.dataset.logFilter;
+      logPage = 0;
       saveFilters();
       render();
     }),
@@ -975,6 +1155,33 @@
     saveFilters();
     render();
   });
+  if ($("log-search")) {
+    $("log-search").addEventListener("input", () => {
+      logQuery = $("log-search").value;
+      logPage = 0;
+      saveFilters();
+      renderEvents(attentionEntries(machines(), tasks()));
+    });
+    $("log-type").addEventListener("change", () => {
+      logType = $("log-type").value;
+      logPage = 0;
+      saveFilters();
+      renderEvents(attentionEntries(machines(), tasks()));
+    });
+    for (const id of ["log-sort", "log-time-sort"]) $(id).addEventListener("click", () => {
+      logOldestFirst = !logOldestFirst;
+      logPage = 0;
+      saveFilters();
+      renderEvents(attentionEntries(machines(), tasks()));
+    });
+    for (const [id, step] of [["log-previous", -1], ["log-next", 1]]) $(id).addEventListener("click", () => {
+      logPage += step;
+      saveFilters();
+      renderEvents(attentionEntries(machines(), tasks()));
+      $("log-heading").focus({ preventScroll: true });
+      $("log-section").scrollIntoView({ block: "start" });
+    });
+  }
   $("refresh").addEventListener("click", refresh);
   for (const id of ["connection-button", "connection-top"])
     $(id).addEventListener("click", () => {
@@ -990,6 +1197,7 @@
     );
   $("connection-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    stopLive();
     fetchController?.abort();
     generation++;
     busy = false;
@@ -1001,11 +1209,13 @@
     const success = await refresh();
     $("team-token").value = "";
     if (success) {
+      startLive();
       $("connection-dialog").close();
       $("disconnect").hidden = false;
     }
   });
   $("disconnect").addEventListener("click", () => {
+    stopLive();
     generation++;
     fetchController?.abort();
     fetchController = null;
@@ -1028,12 +1238,17 @@
     render();
   });
   render();
-  if (credentials) refresh();
+  if (credentials) { refresh(); startLive(); }
   else $("connection-dialog").showModal();
   setInterval(() => {
     if (!document.hidden) refresh();
   }, 30000);
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) refresh();
+    if (document.hidden) stopLive();
+    else { refresh(); startLive(); }
+  });
+  window.addEventListener("pagehide", stopLive);
+  window.addEventListener("pageshow", () => {
+    if (!document.hidden) { refresh(); startLive(); }
   });
 })();

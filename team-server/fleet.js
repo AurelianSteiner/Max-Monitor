@@ -238,6 +238,17 @@ function publicMachine(machine, now) {
 }
 
 function createFleetStore(dataDir, now = Date.now) {
+  const subscribers = new Map();
+  function subscribe(teamId, listener) {
+    filePath(teamId);
+    if (!subscribers.has(teamId)) subscribers.set(teamId, new Set());
+    const listeners = subscribers.get(teamId);
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (!listeners.size) subscribers.delete(teamId);
+    };
+  }
   function filePath(teamId) {
     if (!/^[A-Z0-9]{4,16}$/.test(teamId)) throw new FleetError(400, "Team-ID ist ungültig");
     return path.join(dataDir, teamId, "fleet.json");
@@ -269,10 +280,19 @@ function createFleetStore(dataDir, now = Date.now) {
       try { fs.rmSync(tmp, { force: true }); } catch { /* leave original intact */ }
       throw new FleetError(500, "Fleet-Daten konnten nicht gespeichert werden");
     }
+    // Notify only after the complete snapshot has been persisted successfully.
+    for (const listener of subscribers.get(teamId) || []) {
+      try { listener(); } catch { /* A disconnected viewer cannot fail a write. */ }
+    }
   }
 
-  function event(state, type, entityId, title, message, time) {
-    state.events.push({ id: crypto.randomUUID(), type, entityId, title, message, at: new Date(time).toISOString(), ...(type.startsWith("task_") ? { taskId: entityId } : type.startsWith("machine_") ? { deviceId: entityId } : type.startsWith("worker_") ? { workerId: entityId } : {}) });
+  function event(state, type, entityId, title, message, time, context = null) {
+    state.events.push({
+      id: crypto.randomUUID(), type, entityId, title, message, at: new Date(time).toISOString(),
+      ...(type.startsWith("task_") ? { taskId: entityId } : type.startsWith("machine_") ? { deviceId: entityId } : type.startsWith("worker_") ? { workerId: entityId } : {}),
+      ...(context ? { workerId: context.workerId || null } : {}),
+      ...(context?.workflow ? { workflow: context.workflow } : {}),
+    });
     state.events = state.events.slice(-MAX_EVENTS);
   }
 
@@ -281,7 +301,7 @@ function createFleetStore(dataDir, now = Date.now) {
     for (const machine of state.machines) {
       const status = machineStatus(machine, time);
       if (machine.derivedStatus !== status) {
-        event(state, `machine_${status}`, machine.deviceId, machine.name, status === "online" ? "Mac meldet sich wieder" : status === "silent" ? "Seit über 15 Minuten kein Heartbeat" : "Seit über 30 Minuten kein Heartbeat", time);
+        event(state, `machine_${status}`, machine.deviceId, machine.name, status === "online" ? "Mac meldet sich wieder" : status === "silent" ? "Seit über 15 Minuten kein Heartbeat" : "Seit über 30 Minuten kein Heartbeat", time, machine);
         machine.derivedStatus = status;
         changed = true;
       }
@@ -337,11 +357,11 @@ function createFleetStore(dataDir, now = Date.now) {
       }
     }
     if (previous) {
-      if (previous.derivedStatus !== "online") event(state, "machine_online", machine.deviceId, machine.name, "Mac meldet sich wieder", time);
+      if (previous.derivedStatus !== "online") event(state, "machine_online", machine.deviceId, machine.name, "Mac meldet sich wieder", time, machine);
       state.machines[state.machines.indexOf(previous)] = machine;
     } else {
       state.machines.push(machine);
-      event(state, "machine_registered", machine.deviceId, machine.name, "Mac mit dem Team verbunden", time);
+      event(state, "machine_registered", machine.deviceId, machine.name, "Mac mit dem Team verbunden", time, machine);
     }
     write(teamId, state);
     return publicMachine(machine, time);
@@ -362,11 +382,11 @@ function createFleetStore(dataDir, now = Date.now) {
       for (const task of incoming.tasks) {
         const old = oldTasks.get(task.id);
         if (!old || old.status !== task.status || old.workerId !== task.workerId || old.phase !== task.phase) {
-          event(state, `task_${task.status}`, task.id, task.title, task.phase || `${task.workflow}: ${task.status}`, time);
+          event(state, `task_${task.status}`, task.id, task.title, task.phase || `${task.workflow}: ${task.status}`, time, task);
         }
       }
       for (const task of state.queue.tasks) {
-        if (!incomingIds.has(task.id)) event(state, "task_removed", task.id, task.title, "Aufgabe ist nicht mehr im vollständigen Queue-Snapshot", time);
+        if (!incomingIds.has(task.id)) event(state, "task_removed", task.id, task.title, "Aufgabe ist nicht mehr im vollständigen Queue-Snapshot", time, task);
       }
       if (oldSource.error) event(state, "queue_source_recovered", "queue", incoming.source.name, "Queue-Quelle ist wieder erreichbar", time);
       state.queue = {
@@ -421,7 +441,7 @@ function createFleetStore(dataDir, now = Date.now) {
     };
   }
 
-  return { heartbeat, updateQueue, snapshot };
+  return { heartbeat, updateQueue, snapshot, subscribe };
 }
 
 module.exports = { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, validateHeartbeat, validateQueue };
