@@ -1,5 +1,15 @@
 # Änderungen
 
+## 2.10
+
+- **Queue & Macs als Hauptübersicht.** Das Menüleisten-Tool öffnet eine größere, veränderbare Übersicht mit allen Mac-Workern. Account Limits und die Kontoverwaltung sind direkt darin erreichbar.
+- **Aufgaben klar zuordnen.** Die Aufgaben-Queue zeigt Status, Unternehmen, Worker und Fortschritt in Spalten. Offen, Läuft, Wartet und Blockiert zeigen ihre Anzahl; Läuft ist beim Öffnen ausgewählt. Ein eigener Filter zeigt Aufgaben, die Aufmerksamkeit brauchen.
+- **Suchen und direkt öffnen.** Aufgaben lassen sich nach Name, Unternehmen, Mac oder ClickUp-Link suchen. ClickUp und das zugehörige Figma-Board sind direkt aus der Queue erreichbar.
+- **Gemeinsamer Live-Stand.** Alle verbundenen Macs sehen dieselbe zentrale Queue. Neue Serverstände und Zuweisungen werden live übertragen; ClickUp und Slack werden im Minutentakt abgeglichen. Mac-Status, Akku und Account-Limits werden alle zehn Minuten gemeldet.
+- **Einheitliche Worker-Namen.** Queue, Mac-Übersicht und Slack verwenden dieselben Worker-Bezeichnungen. Newsletter-Erstellung, Pre-Gen und Upload-Aufgaben sind gemeinsam sichtbar.
+- **Neue Macs einfacher verbinden.** Der Worker-Installer richtet Max Monitor und die Team-Verbindung automatisch ein. Jeder Mac erhält einen eigenen persönlichen Zugang; das Monitoring startet mit der Anmeldung.
+- **Einrichtung robuster.** Schlüsselbund-Freigaben erhalten mehr Zeit. Die Einrichtung unterscheidet Verbindungsprüfung, Speichern und Autostart und bewahrt eine bereits überprüfte Verbindung bei einem Autostart-Timeout.
+
 ## 2.9.1
 
 - **Neues App-Symbol.** Ein Monitor, in dessen Schirm ein Prompt steht — der
