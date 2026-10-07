@@ -520,6 +520,9 @@ main {
   font-size: 12px;
   min-height: 34px;
 }
+#status-tabs .tab {
+  white-space: nowrap;
+}
 .tab.selected {
   color: var(--accent);
   background: var(--accent-soft);
@@ -1016,6 +1019,10 @@ dialog .form-hint {
     flex-wrap: nowrap;
     overflow: auto;
     margin-bottom: 12px;
+  }
+  #status-tabs {
+    flex-wrap: wrap;
+    overflow: visible;
   }
   .tab {
     min-height: 44px;
