@@ -235,6 +235,9 @@ function publicMachine(machine, now) {
   const usageStatus = machine.usageError || statuses.some((entry) => entry.usageStatus === "error") ? "error" : !limits.length ? "unavailable" : usageStale ? "stale" : "fresh";
   return {
     ...visible,
+    // Slack calls this Mac by worker_id; keep the OS name as separate metadata.
+    name: machine.workerId || machine.name,
+    deviceName: machine.name,
     limits,
     ...(machine.accounts ? { accounts } : {}),
     telemetrySource: "app",
@@ -245,6 +248,16 @@ function publicMachine(machine, now) {
     usageStatus,
     clockSkewSeconds: Math.round((Date.parse(machine.reportedAt) - Date.parse(machine.lastSeenAt)) / 1000),
   };
+}
+
+function publicMachineEvent(entry, machines) {
+  if (!entry.type.startsWith("machine_") && !entry.type.startsWith("worker_")) return entry;
+  // Prefer the captured assignment. A legacy event may only identify the device;
+  // never infer a mapping from a hostname or overwrite an explicit unassignment.
+  const workerId = "workerId" in entry ? entry.workerId
+    : entry.type.startsWith("worker_") ? entry.entityId
+    : machines.find((machine) => machine.deviceId === (entry.deviceId || entry.entityId))?.workerId;
+  return workerId ? { ...entry, title: workerId } : entry;
 }
 
 function createFleetStore(dataDir, now = Date.now) {
@@ -298,7 +311,10 @@ function createFleetStore(dataDir, now = Date.now) {
 
   function event(state, type, entityId, title, message, time, context = null) {
     state.events.push({
-      id: crypto.randomUUID(), type, entityId, title, message, at: new Date(time).toISOString(),
+      id: crypto.randomUUID(), type, entityId,
+      title: type.startsWith("machine_") ? context?.workerId || title
+        : type.startsWith("worker_") ? entityId : title,
+      message, at: new Date(time).toISOString(),
       ...(type.startsWith("task_") ? { taskId: entityId } : type.startsWith("machine_") ? { deviceId: entityId } : type.startsWith("worker_") ? { workerId: entityId } : {}),
       ...(context ? { workerId: context.workerId || null } : {}),
       ...(context?.workflow ? { workflow: context.workflow } : {}),
@@ -439,7 +455,7 @@ function createFleetStore(dataDir, now = Date.now) {
     });
     for (const worker of workers.values()) {
       const { derivedStatus, ...visible } = worker;
-      machines.push({ ...visible, deviceId: `hub:${worker.workerId}`, telemetrySource: "worker", memberId: null, limits: [], status: machineStatus(worker, time), heartbeatAgeSeconds: Math.max(0, Math.floor((time - Date.parse(worker.lastSeenAt)) / 1000)), usageStale: true, usageStatus: "unavailable" });
+      machines.push({ ...visible, name: worker.workerId, deviceId: `hub:${worker.workerId}`, telemetrySource: "worker", memberId: null, limits: [], status: machineStatus(worker, time), heartbeatAgeSeconds: Math.max(0, Math.floor((time - Date.parse(worker.lastSeenAt)) / 1000)), usageStale: true, usageStatus: "unavailable" });
     }
     return {
       schema: 1,
@@ -447,7 +463,7 @@ function createFleetStore(dataDir, now = Date.now) {
       heartbeatIntervalSeconds: HEARTBEAT_INTERVAL_SECONDS,
       machines: machines.sort((a, b) => a.name.localeCompare(b.name)),
       queue: { tasks: state.queue.tasks, source: { ...source, stale, status: source.error ? "error" : !source.lastSuccessAt ? "unavailable" : stale ? "stale" : "fresh" } },
-      events: [...state.events].reverse(),
+      events: [...state.events].reverse().map((entry) => publicMachineEvent(entry, state.machines)),
     };
   }
 

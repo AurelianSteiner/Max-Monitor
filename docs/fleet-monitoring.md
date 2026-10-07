@@ -26,6 +26,20 @@ Klick auf die Kennzahl öffnet diesen Filter direkt. Jeder Mac und jede Aufgabe
 zählt einmal, auch wenn mehrere Gründe vorliegen; gelöste Einträge verschwinden
 beim nächsten Abgleich. **Alle Ereignisse** zeigt weiterhin die Historie.
 
+## Einheitliche Mac-Bezeichnungen
+
+Slack zeigt die `worker_id` aus der Newsletter-Konfiguration. Genau diese Kennung
+ist auch der Hauptname in der Mac-Übersicht, der Aufgaben-Queue und dem Q-Log,
+einschließlich älterer Geräte-Ereignisse. Der macOS-Gerätename bleibt als
+Zusatzinformation unter dem Hauptnamen und in den Details sichtbar; die Suche
+findet beide. Eine Umbenennung in macOS ändert die Zuordnung nicht.
+
+Bei einem Mac ohne Worker-ID wird dessen gemeldeter Gerätename angezeigt und die
+fehlende Zuordnung ausdrücklich kenntlich gemacht. Namen werden nie anhand eines
+ähnlichen Hostnamens oder einer IP-Adresse automatisch anderen Macs zugeordnet.
+Historische Aufgaben behalten den damals zuständigen Worker, auch nach einer
+Neuzuweisung oder Freigabe.
+
 ## Suche und Aufgabenlinks
 
 Die Aufgaben-Queue durchsucht Titel und Aufgaben-ID, Unternehmen, Mac-Namen und
