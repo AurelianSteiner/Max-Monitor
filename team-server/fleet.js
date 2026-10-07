@@ -159,6 +159,14 @@ function validateQueue(body) {
       try { parsed = new URL(url); } catch { throw new FleetError(400, "task.url ist ungültig"); }
       if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) throw new FleetError(400, "task.url muss HTTP(S) ohne Zugangsdaten verwenden");
     }
+    const figmaUrl = string(raw.figmaUrl, "task.figmaUrl", 2000, true);
+    if (figmaUrl) {
+      let parsed;
+      try { parsed = new URL(figmaUrl); } catch { throw new FleetError(400, "task.figmaUrl ist ungültig"); }
+      if (parsed.protocol !== "https:" || !["figma.com", "www.figma.com"].includes(parsed.hostname)
+        || parsed.username || parsed.password || !/^\/(design|file|proto|board)\/[^/]+/.test(parsed.pathname))
+        throw new FleetError(400, "task.figmaUrl muss auf ein Figma-Board verweisen");
+    }
     const tags = raw.tags === undefined ? [] : raw.tags;
     if (!Array.isArray(tags) || tags.length > 30) throw new FleetError(400, "task.tags ist ungültig");
     return optionalFields({
@@ -168,6 +176,8 @@ function validateQueue(body) {
       status,
       tags: [...new Set(tags.map((tag) => string(tag, "task.tag", 80)))],
       url,
+      figmaUrl,
+      company: string(raw.company, "task.company", 200, true),
       sourceStatus: string(raw.sourceStatus, "task.sourceStatus", 120, true),
       workerId: string(raw.workerId, "task.workerId", 120, true),
       phase: string(raw.phase, "task.phase", 160, true),

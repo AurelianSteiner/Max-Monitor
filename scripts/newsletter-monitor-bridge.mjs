@@ -132,7 +132,31 @@ function taskDate(value, fallback) {
   return Number.isFinite(date.getTime()) ? date.toISOString() : fallback;
 }
 
-export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30 } = {}) {
+function figmaLink(value) {
+  if (typeof value !== 'string' || value.length > 2000) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'https:' && ['figma.com', 'www.figma.com'].includes(url.hostname)
+      && !url.username && !url.password && /^\/(design|file|proto|board)\/[^/]+/.test(url.pathname)) return url.href;
+  } catch { /* An optional task link must not interrupt queue synchronization. */ }
+  return undefined;
+}
+
+function taskFigmaLink(task) {
+  const fields = Array.isArray(task.custom_fields) ? task.custom_fields.filter(field => field && typeof field === 'object') : [];
+  const candidates = [
+    fields.find(field => field.id === 'ef2ba681-7e9d-40a3-b79a-dda5cd402015'),
+    fields.find(field => field.id === '3530f8a4-44e1-4ea5-894d-4d87fb5c418d'),
+    ...fields.filter(field => field.type === 'url' && /^figma(?:[ _-]+(?:link|board))?$/i.test(field.name || '')),
+  ];
+  for (const field of candidates) {
+    const url = figmaLink(field?.value);
+    if (url) return url;
+  }
+  return undefined;
+}
+
+export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, figmaBoardUrl } = {}) {
   const updatedAt = new Date(now).toISOString();
   const rows = [];
   for (const task of tasks) {
@@ -164,6 +188,8 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       } catch { /* Use the canonical ClickUp task link. */ }
       rows.push({ id: `clickup:${workflow.id}:${task.id}`, title: displayText(task.name, 300, task.id), url, workflow: workflow.id, status,
         sourceStatus: displayText(typeof task.status === 'string' ? task.status : task.status?.status, 120),
+        company: task.folder?.hidden ? undefined : displayText(task.folder?.name, 200),
+        figmaUrl: taskFigmaLink(task) || ((workflow.claimWorkflow ?? workflow.id) === 'newsletter' ? figmaLink(figmaBoardUrl) : undefined),
         workerId: claim?.workerId, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
         updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30) });
     }
@@ -247,7 +273,7 @@ export function createLocalHubFetch(hub, { localHub, transport, spawnImpl = spaw
   };
 }
 
-export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, now = Date.now() }) {
+export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, now = Date.now() }) {
   validateWorkflows(workflows);
   const [taskResult, claimResult, workerResult] = await Promise.allSettled([
     (async () => {
@@ -264,7 +290,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const observedWorkers = workerResult.status === 'fulfilled' ? workerResult.value : undefined;
   const fleetDetail = workerResult.status === 'rejected'
     ? 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.' : undefined;
-  const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30 });
+  const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl });
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
   return { tasks: queue, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
     name: SOURCE_NAME, lastSuccessAt: new Date(now).toISOString(),
@@ -360,6 +386,11 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const { loadConfig } = require(path.join(root, 'src', 'config.js'));
   const transport = require(path.join(root, 'src', 'hub-transport.js'));
   const config = loadConfig(path.join(root, 'config', 'worker.local.json'), { root });
+  let figmaBoardUrl;
+  try {
+    const { PRE_GEN_FILE } = require(path.join(root, 'src', 'pre-gen.js'));
+    if (typeof PRE_GEN_FILE === 'string' && /^[A-Za-z0-9]+$/.test(PRE_GEN_FILE)) figmaBoardUrl = `https://www.figma.com/design/${PRE_GEN_FILE}`;
+  } catch { /* Older source installations still publish the task's own Figma link. */ }
   const workflows = validateWorkflows(options.workflowsFile ? JSON.parse(await fs.readFile(options.workflowsFile, 'utf8')) : DEFAULT_WORKFLOWS);
   if (options.localHub) config.hub.hub_dir = options.localHub;
   const hubFetch = options.localHub ? createLocalHubFetch(config.hub, { localHub: options.localHub, transport }) : transport.createHubFetch(config.hub);
@@ -371,7 +402,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   try {
     await runSyncLoop(async () => {
       try {
-        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, fleetDirectory: options.fleetDirectory,
+        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
           ...(options.localHub ? { fleetReader: readLocalHubFleet } : {}) }), cachedSource: cached?.source,
           publish: snapshot => options.dryRun ? console.log(JSON.stringify(snapshot, null, 2)) : publishSnapshot(snapshot, options),
           save: options.dryRun ? undefined : async snapshot => {

@@ -96,6 +96,37 @@ test('legitimate multiline ClickUp display text is flattened and bounded without
   source.name = 'x'.repeat(500); assert.equal(buildQueue([source], [], DEFAULT_WORKFLOWS, { now })[0].title.length, 300);
 });
 
+test('queue carries the ClickUp customer and prefers the generated Figma link', () => {
+  const original = 'https://www.figma.com/design/original/Newsletter';
+  const generated = 'https://www.figma.com/design/generated/Test?node-id=1-2';
+  const raw = { ...task('customer'), folder: { name: '  Beispiel\n  Unternehmen  ', hidden: false }, custom_fields: [
+    { id: '3530f8a4-44e1-4ea5-894d-4d87fb5c418d', name: 'Figma Link', type: 'url', value: original },
+    { id: 'ef2ba681-7e9d-40a3-b79a-dda5cd402015', name: 'Figma Pre-Gen', type: 'url', value: generated },
+  ] };
+  const row = buildQueue([raw], [], DEFAULT_WORKFLOWS, { now })[0];
+  assert.equal(row.company, 'Beispiel Unternehmen');
+  assert.equal(row.figmaUrl, generated);
+  assert.equal(buildQueue([{ ...raw, folder: { name: 'hidden', hidden: true } }], [], DEFAULT_WORKFLOWS, { now })[0].company, undefined);
+  assert.equal(buildQueue([task('old')], [], DEFAULT_WORKFLOWS, { now })[0].figmaUrl, undefined);
+});
+
+test('Figma fallback uses the configured creation board and optional bad links cannot break the queue', () => {
+  const board = 'https://www.figma.com/design/creation';
+  const raw = { ...task('both', ['pre gen.', 'upload']), custom_fields: [
+    { id: 'ef2ba681-7e9d-40a3-b79a-dda5cd402015', value: 'https://figma.com.evil.example/design/wrong' },
+  ] };
+  const rows = buildQueue([raw], [], DEFAULT_WORKFLOWS, { now, figmaBoardUrl: board });
+  assert.equal(rows.find(row => row.workflow === 'newsletter').figmaUrl, board);
+  assert.equal(rows.find(row => row.workflow === 'upload').figmaUrl, undefined);
+  const valid = 'https://figma.com/file/source/Board';
+  raw.custom_fields.push({ name: 'Figma Board', type: 'url', value: valid });
+  assert.ok(buildQueue([raw], [], DEFAULT_WORKFLOWS, { now, figmaBoardUrl: board }).every(row => row.figmaUrl === valid));
+  for (const value of ['javascript:alert(1)', 'https://user:pass@figma.com/design/key', 'http://figma.com/file/key', 'https://figma.com/login']) {
+    const row = buildQueue([{ ...task('unsafe'), custom_fields: [{ name: 'Figma Link', type: 'url', value }] }], [], DEFAULT_WORKFLOWS, { now })[0];
+    assert.equal(row.figmaUrl, undefined);
+  }
+});
+
 test('custom workflows require valid unique IDs and recognized statuses', () => {
   assert.deepEqual(validateWorkflows([{ id: 'correction', triggerTags: ['correction'], stateTags: { running: ['correction · läuft'] } }])[0].id, 'correction');
   assert.throws(() => validateWorkflows([{ id: 'bad', triggerTags: [''], stateTags: {} }]), /Tag ungültig/);
