@@ -320,6 +320,62 @@ test("task company and Figma links persist and malformed optional metadata is re
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
+test("Slack worker IDs name native Macs, Hub workers and historical events consistently", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "max-monitor-worker-names-"));
+  let time = Date.parse("2026-10-07T10:00:00Z");
+  const store = createFleetStore(directory, () => time);
+  const date = () => new Date(time).toISOString();
+  try {
+    const first = store.heartbeat("DEMO1234", { role: "super" }, heartbeat(deviceA, {
+      name: "MacBook Air von Till", workerId: "macbook-till-main", reportedAt: date(), usageUpdatedAt: date(),
+    }));
+    assert.equal(first.name, "macbook-till-main");
+    assert.equal(first.deviceName, "MacBook Air von Till");
+    store.heartbeat("DEMO1234", { role: "super" }, heartbeat(deviceB, {
+      name: "Mac ohne Worker", workerId: null, reportedAt: date(), usageUpdatedAt: date(),
+    }));
+    for (const workerId of ["macbook-till-main", "macbook-2", null]) {
+      store.updateQueue("DEMO1234", {
+        tasks: [task("history", { workerId, title: "Gleicher Aufgabentitel wie in Slack", status: "running" })],
+        source: { name: "ClickUp" },
+        observedWorkers: [{ workerId: "macbook-2", name: "MacBook Zwei", lastSeenAt: date() }],
+      });
+    }
+    store.heartbeat("DEMO1234", { role: "super" }, heartbeat(deviceA, {
+      name: "Später umbenannter Mac", workerId: "macbook-till-main", reportedAt: date(), usageUpdatedAt: date(),
+    }));
+    let snapshot = store.snapshot("DEMO1234");
+    assert.equal(snapshot.machines.find(mac => mac.deviceId === deviceA).name, "macbook-till-main");
+    assert.equal(snapshot.machines.find(mac => mac.deviceId === deviceA).deviceName, "Später umbenannter Mac");
+    assert.equal(snapshot.machines.find(mac => mac.deviceId === deviceB).name, "Mac ohne Worker");
+    assert.equal(snapshot.machines.find(mac => mac.workerId === "macbook-2").name, "macbook-2");
+    assert.equal(snapshot.queue.tasks[0].workerId, undefined);
+    assert.deepEqual(snapshot.events.filter(event => event.taskId === "history").map(event => event.workerId), [null, "macbook-2", "macbook-till-main"]);
+    assert.ok(snapshot.events.filter(event => event.taskId === "history").every(event => event.title === "Gleicher Aufgabentitel wie in Slack"));
+
+    // Existing fleet files contain OS names and some pre-context machine events.
+    const file = path.join(directory, "DEMO1234", "fleet.json");
+    const persisted = JSON.parse(fs.readFileSync(file, "utf8"));
+    const original = persisted.events.find(event => event.deviceId === deviceA);
+    original.title = "Alter macOS-Name";
+    persisted.events.push({ ...original, id: "legacy", workerId: undefined });
+    persisted.events.push({ ...original, id: "captured", workerId: "former-worker", title: "Alter Name" });
+    persisted.events.push({ ...original, id: "unassigned", workerId: null, title: "Nicht zugeordnet" });
+    fs.writeFileSync(file, JSON.stringify(persisted));
+    snapshot = createFleetStore(directory, () => time).snapshot("DEMO1234");
+    assert.equal(snapshot.events.find(event => event.id === original.id).title, "macbook-till-main");
+    assert.equal(snapshot.events.find(event => event.id === "legacy").title, "macbook-till-main");
+    assert.equal(snapshot.events.find(event => event.id === "captured").title, "former-worker");
+    assert.equal(snapshot.events.find(event => event.id === "unassigned").title, "Nicht zugeordnet");
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).machines.find(mac => mac.deviceId === deviceA).name, "Später umbenannter Mac");
+
+    time += 31 * 60 * 1000;
+    snapshot = store.snapshot("DEMO1234");
+    assert.equal(snapshot.events.find(event => event.type === "machine_offline" && event.deviceId === deviceA).title, "macbook-till-main");
+    assert.equal(snapshot.events.find(event => event.type === "worker_offline").title, "macbook-2");
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("bounded event log, complete snapshots and corrupt-file protection", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "max-monitor-events-"));
   const store = createFleetStore(directory);

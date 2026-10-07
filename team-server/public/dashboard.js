@@ -554,13 +554,14 @@
         const machineName = node(
           "h3",
           "",
-          machine.name || machine.workerId || "Mac",
+          machine.workerId || machine.name || "Mac",
         );
-        machineName.title = machine.name || machine.workerId || "Mac";
-        identity.append(
-          machineName,
-          node("small", "", machine.workerId || "Worker-ID nicht zugeordnet"),
-        );
+        machineName.title = machine.workerId || machine.name || "Mac";
+        const deviceName = machine.deviceName || (machine.name !== machine.workerId ? machine.name : null);
+        const subtitle = node("small", "", !machine.workerId ? "Worker-ID nicht zugeordnet"
+          : deviceName ? `macOS: ${deviceName}` : "Wie in Slack");
+        subtitle.title = subtitle.textContent;
+        identity.append(machineName, subtitle);
         const signal = badge(machine.status);
         if (machine.telemetrySource === "worker")
           signal.lastChild.textContent = `Worker ${statusNames[machine.status]?.toLowerCase() || machine.status}`;
@@ -671,7 +672,7 @@
       });
   }
   function filtered(items) {
-    const workerNames = new Map(machines().filter(machine => machine.workerId).map(machine => [machine.workerId, machine.name]));
+    const workerNames = new Map(machines().filter(machine => machine.workerId).map(machine => [machine.workerId, [machine.name, machine.deviceName].filter(Boolean).join(" ")]));
     const needle = query.trim().toLocaleLowerCase();
     return items
       .filter((task) => {
@@ -852,14 +853,15 @@
   function machineDetails(machine) {
     const grid = node("div", "detail-grid");
     grid.append(
+      detailField("macOS-Gerätename", machine.deviceName || (machine.name !== machine.workerId ? machine.name : null) || "Nicht gemeldet"),
       detailField("Erreichbarkeit", statusNames[machine.status] || "Unbekannt"),
       detailField(
         "Letzte Geräte-Meldung",
         exact(machine.receivedAt || machine.seenAt || machine.lastSeenAt),
       ),
       detailField(
-        "Worker-ID",
-        machine.workerId || "In Max Monitor → Konten → Team hinterlegen",
+        "Mac in Slack",
+        machine.workerId || "Noch nicht mit einer Worker-ID verbunden",
         true,
       ),
       detailField(
@@ -987,7 +989,8 @@
         ? "Aufgabenstatus aktualisiert" : rawMessage;
       return {
         type,
-        title: event.title || entity?.title || entity?.name || (type === "source" ? "Queue-Quelle" : "Status aktualisiert"),
+        title: type === "machine" ? workerId || event.title || entity?.name || "Mac"
+          : event.title || entity?.title || (type === "source" ? "Queue-Quelle" : "Status aktualisiert"),
         id: type === "task" ? event.taskId || event.entityId : type === "machine" ? event.workerId || entity?.workerId : "",
         kind: type === "task" ? workflow(event.workflow || entity?.workflow || "Aufgabe")
           : type === "machine" ? "Mac-Worker" : "Queue-Quelle",
@@ -1039,7 +1042,7 @@
     const queryText = logQuery.trim().toLocaleLowerCase("de-DE");
     const visible = allRows.filter((row) =>
       (logType === "all" || row.type === logType) && (!queryText ||
-        [row.title, row.id, row.kind, row.workerId, row.statusLabel, row.phase, ...row.messages]
+        [row.title, row.id, row.kind, row.workerId, row.entity?.deviceName, row.statusLabel, row.phase, ...row.messages]
           .filter(Boolean).join(" ").toLocaleLowerCase("de-DE").includes(queryText)))
       .sort((a, b) => {
         const first = timestamp(a.at);
