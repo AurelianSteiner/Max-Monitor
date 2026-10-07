@@ -41,24 +41,52 @@ export function optionsFrom(args) {
   return result;
 }
 
+const ENROLLMENT_STAGES = Object.freeze({
+  relay: 'Server-Verbindung prüfen',
+  credentials: 'Zugang sicher im Schlüsselbund speichern; eine macOS-Passwortabfrage bitte bestätigen',
+  settings: 'Verbindungseinstellungen speichern',
+  login: 'Autostart einrichten',
+  complete: 'Gespeicherte Verbindung lesen',
+});
+
 export function run(command, args, { input, env = process.env, cwd, timeout = 45000,
-  label = path.basename(command), outputLimit = 128 * 1024, inherit = false } = {}) {
+  label = path.basename(command), outputLimit = 128 * 1024, inherit = false,
+  onProgress, progressTimeouts = {} } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env, shell: false,
       stdio: [input === undefined ? 'ignore' : 'pipe', inherit ? 'inherit' : 'pipe', inherit ? 'inherit' : 'pipe'] });
-    let stdout = '', tooLarge = false, timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeout);
+    let stdout = '', tooLarge = false, timedOut = false, stderrBuffer = '', stage = null;
+    const stages = Object.keys(ENROLLMENT_STAGES);
+    const expire = () => { timedOut = true; child.kill('SIGKILL'); };
+    let timer = setTimeout(expire, timeout);
     child.stdout?.on('data', chunk => {
       if (Buffer.byteLength(stdout) + chunk.length > outputLimit) { tooLarge = true; child.kill('SIGKILL'); }
       else stdout += chunk;
     });
-    // Do not echo enrollment subprocess stderr: a broken remote must not leak a token.
-    child.stderr?.resume();
+    // Raw stderr stays private. Accept only fixed, forward-moving native phase markers.
+    child.stderr?.on('data', chunk => {
+      if (!onProgress) return;
+      stderrBuffer = (stderrBuffer + chunk).slice(-4096);
+      let end;
+      while ((end = stderrBuffer.indexOf('\n')) !== -1) {
+        const line = stderrBuffer.slice(0, end); stderrBuffer = stderrBuffer.slice(end + 1);
+        const next = line.startsWith('MAX_MONITOR_ENROLLMENT_STAGE:')
+          ? line.slice('MAX_MONITOR_ENROLLMENT_STAGE:'.length) : null;
+        if (!Object.hasOwn(ENROLLMENT_STAGES, next) || stages.indexOf(next) <= stages.indexOf(stage)) continue;
+        stage = next;
+        clearTimeout(timer);
+        timer = setTimeout(expire, progressTimeouts[stage] ?? timeout);
+        onProgress(stage);
+      }
+    });
     child.once('error', () => { clearTimeout(timer); reject(new Error(`${label} konnte nicht gestartet werden.`)); });
     child.once('close', code => {
       clearTimeout(timer);
-      if (timedOut || tooLarge || code !== 0) reject(new Error(`${label} fehlgeschlagen (${timedOut ? 'Zeitüberschreitung' : tooLarge ? 'Antwort zu groß' : `Exit ${code}`}).`));
-      else resolve(stdout);
+      if (timedOut || tooLarge || code !== 0) {
+        const reason = timedOut ? `Zeitüberschreitung${stage ? `: ${ENROLLMENT_STAGES[stage]}` : ''}`
+          : tooLarge ? 'Antwort zu groß' : `Exit ${code}`;
+        reject(Object.assign(new Error(`${label} fehlgeschlagen (${reason}).`), { timedOut, stage, exitCode:code }));
+      } else resolve(stdout);
     });
     if (input !== undefined) { child.stdin.on('error', () => {}); child.stdin.end(input); }
   });
@@ -306,11 +334,24 @@ export async function setup(options, { runner = run, workerReader = readWorker,
     const enrollment = validateEnrollment(parseJson(await runner('ssh', hubArguments(worker,options), {
       input:JSON.stringify(request),label:'Eigenen Monitor-Zugang einrichten'}), 'Hub-Registrierung'),
       worker.workerId,identity.deviceId,options.allowLoopback);
-    parseJson(await runner(app.executable,['--enroll'],{
-      input:JSON.stringify({...enrollment,launchAtLogin:options.launchAtLogin}),timeout:60000,
-      label:'Monitor-Verbindung speichern'}),'Monitor-Einrichtung');
+    let loginTimedOut = false;
+    try {
+      parseJson(await runner(app.executable,['--enroll'],{
+        input:JSON.stringify({...enrollment,launchAtLogin:options.launchAtLogin}),timeout:60000,
+        onProgress:stage => log(`Max Monitor: ${ENROLLMENT_STAGES[stage]}.`),
+        progressTimeouts:{relay:35000,credentials:180000,settings:15000,login:15000,complete:15000},
+        label:'Monitor-Verbindung speichern'}),'Monitor-Einrichtung');
+    } catch (error) {
+      // Autostart runs after durable credential/settings writes. Recheck those writes
+      // instead of rolling back a valid connection merely because macOS stalled here.
+      if (!error.timedOut || error.stage !== 'login') throw error;
+      loginTimedOut = true;
+    }
     const verified = await appStatus(app,true,runner);
-    if (!healthy(verified,worker)) throw new Error('Monitor wurde gespeichert, aber der gemeinsame Server ist noch nicht erreichbar.');
+    if (!healthy(verified,worker) || (loginTimedOut &&
+        ['deviceId','serverURL','teamId','memberId'].some(key => verified[key] !== enrollment[key])))
+      throw new Error('Monitor wurde gespeichert, aber der gemeinsame Server ist noch nicht erreichbar.');
+    if (loginTimedOut) log('Max Monitor: Autostart hat zu lange gedauert; die gespeicherte Geräteverbindung wurde separat bestätigt.');
     if (options.open) await openMonitorApp(options.appPath, options.bundleId, runner, pause);
     await fs.mkdir(path.dirname(receiptPath),{recursive:true,mode:0o700});
     const safeReceipt = {schema:1,sourceRevision:revision,appPath:options.appPath,

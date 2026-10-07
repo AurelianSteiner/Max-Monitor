@@ -49,6 +49,7 @@ enum TeamEnrollmentCommand {
             return failure("Enrollment JSON has missing or invalid fields.", code: 64)
         }
 
+        progress("relay")
         let identity: EnrollmentIdentity
         do {
             identity = try identify(enrollment)
@@ -60,6 +61,7 @@ enum TeamEnrollmentCommand {
             return failure("Enrollment requires the expected ordinary member identity.", code: 65)
         }
 
+        progress("credentials")
         let keychain = KeychainManager.shared
         let previousToken = keychain.loadTeamServerToken()
         if previousToken != enrollment.token {
@@ -70,6 +72,7 @@ enum TeamEnrollmentCommand {
                 return failure("Credential storage refused enrollment; settings were preserved.", code: 66)
             }
         }
+        progress("settings")
         let defaults = UserDefaults.standard
         defaults.set(enrollment.serverURL.absoluteString, forKey: TeamServerDefaultsKeys.serverURL)
         defaults.set(enrollment.teamId, forKey: TeamServerDefaultsKeys.teamId)
@@ -81,13 +84,20 @@ enum TeamEnrollmentCommand {
         TeamServerConnection.removeLegacyFolderConfiguration()
         _ = defaults.synchronize()
 
+        progress("login")
         if enrollment.launchAtLogin && SMAppService.mainApp.status != .enabled {
             // macOS may require user approval. Persist the verified connection regardless,
             // and expose the actual registration state to the installer.
             try? SMAppService.mainApp.register()
         }
+        progress("complete")
         emit(status())
         return 0
+    }
+
+    /// Fixed phase names only: never put enrollment data or upstream errors on stderr.
+    private static func progress(_ stage: String) {
+        FileHandle.standardError.write(Data("MAX_MONITOR_ENROLLMENT_STAGE:\(stage)\n".utf8))
     }
 
     private static func status() -> [String: Any] {

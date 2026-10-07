@@ -89,6 +89,9 @@ async function fixture(t, { previous = false, configured = false } = {}) {
         state.status = { ...state.status, configured: true, serverURL: input.serverURL, teamId: input.teamId,
           workerId: input.workerId, memberId: input.memberId, verified: true, fleetAvailable: true,
           role: 'member', launchAtLoginStatus: state.loginStatus || (input.launchAtLogin ? 'enabled' : 'notRegistered') };
+        if (state.loginTimeout) {
+          throw Object.assign(new Error('Autostart Zeitüberschreitung'), { timedOut:true, stage:'login' });
+        }
         return JSON.stringify({ schema: 1, launchAtLoginStatus: state.status.launchAtLoginStatus });
       }
     }
@@ -443,6 +446,67 @@ test('explicitly disabled autostart does not produce an approval request or misl
   assert.equal(result.loginActionRequired, false);
   assert.equal(result.loginApprovalRequired, false);
   assert.ok(!f.logs.some(line => line.includes('Autostart') || line.includes('Anmeldeobjekte')));
+});
+
+test('autostart timeout retains only a separately verified exact enrolled connection', async t => {
+  const f = await fixture(t, { previous:true });
+  f.state.loginTimeout = true;
+  f.state.loginStatus = 'notRegistered';
+  const result = await setup(f.options, f.dependencies);
+  assert.equal(result.verified, true);
+  assert.equal(result.loginActionRequired, true);
+  assert.equal(await f.marker(), 'new app');
+  assert.ok(f.logs.some(line => line.includes('separat bestätigt')));
+  assert.ok(f.logs.some(line => line.includes('Autostart ist noch nicht aktiv')));
+  assert.equal(f.state.runningApps.filter(app => app.bundleId === BUNDLE_ID).length, 1);
+  assert.equal(JSON.parse(await fs.readFile(f.receiptPath, 'utf8')).sourceRevision, REVISION);
+});
+
+test('autostart timeout never treats unavailable or different member identity as success', async t => {
+  for (const variant of ['unavailable', 'other-member']) {
+    const f = await fixture(t, { previous:true });
+    f.state.loginTimeout = true;
+    f.state.fleetFailure = variant === 'unavailable';
+    const runner = f.dependencies.runner;
+    f.dependencies.runner = async (command, args, options) => {
+      const result = await runner(command, args, options);
+      if (args[0] === '--enrollment-status' && args.includes('--verify') && variant === 'other-member')
+        return JSON.stringify({...JSON.parse(result), memberId:'different-member'});
+      return result;
+    };
+    await assert.rejects(setup(f.options, f.dependencies), /Server ist noch nicht erreichbar/);
+    assert.equal(await f.marker(), 'previous app');
+    await assert.rejects(fs.access(f.receiptPath), {code:'ENOENT'});
+  }
+});
+
+test('phase tracking ignores arbitrary stderr, split markers and repeated or backwards phases cannot extend a timeout', {timeout:3000}, async () => {
+  const phases = [];
+  await assert.rejects(run(process.execPath, ['-e', `
+    process.stderr.write(${JSON.stringify(MEMBER_TOKEN)} + '\\n');
+    process.stderr.write('MAX_MONITOR_ENROLLMENT_');
+    setTimeout(() => {
+      process.stderr.write('STAGE:credentials\\nMAX_MONITOR_ENROLLMENT_STAGE:unknown\\n');
+      setInterval(() => process.stderr.write('MAX_MONITOR_ENROLLMENT_STAGE:credentials\\nMAX_MONITOR_ENROLLMENT_STAGE:relay\\n'), 5);
+    }, 10);
+  `], {timeout:3000, onProgress:stage => phases.push(stage), progressTimeouts:{credentials:60}}), error => {
+    assert.equal(error.timedOut, true);
+    assert.equal(error.stage, 'credentials');
+    assert.match(error.message, /Schlüsselbund/);
+    assert.ok(!error.message.includes(MEMBER_TOKEN));
+    assert.deepEqual(phases, ['credentials']);
+    return true;
+  });
+});
+
+test('the credential phase receives its own budget after the initial timeout window', {timeout:5000}, async () => {
+  const phases = [];
+  const result = await run(process.execPath, ['-e', `
+    process.stderr.write('MAX_MONITOR_ENROLLMENT_STAGE:credentials\\n');
+    setTimeout(() => { process.stderr.write('MAX_MONITOR_ENROLLMENT_STAGE:complete\\n'); process.stdout.write('done'); }, 1200);
+  `], {timeout:1000, onProgress:stage => phases.push(stage), progressTimeouts:{credentials:3000}});
+  assert.equal(result, 'done');
+  assert.deepEqual(phases, ['credentials','complete']);
 });
 
 test('failed child stdout and stderr never leak their token into the runner error', async () => {
