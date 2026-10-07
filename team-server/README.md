@@ -209,7 +209,7 @@ The device UUID belongs to its member; a duplicate Worker ID is rejected to avoi
 silently merging two Macs.
 
 Unlike legacy usage reports, this optional feature also stores device/worker names,
-battery, app/worker versions, task titles, URLs, tags and workflow states. It still
+battery, app/worker versions, task titles, customer folder names, ClickUp/Figma URLs, tags and workflow states. It still
 never receives Claude credentials, ClickUp credentials, prompts or briefings.
 The read-only newsletter bridge keeps ClickUp/Slack access on the existing RS Hub.
 Browser tokens stay in memory; the native app uses an ephemeral, origin-restricted

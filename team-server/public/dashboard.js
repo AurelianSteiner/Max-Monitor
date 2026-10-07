@@ -101,7 +101,7 @@
   function safeLink(value) {
     try {
       const url = new URL(value);
-      return url.protocol === "https:" ? url.href : null;
+      return url.protocol === "https:" && !url.username && !url.password ? url.href : null;
     } catch {
       return null;
     }
@@ -671,6 +671,8 @@
       });
   }
   function filtered(items) {
+    const workerNames = new Map(machines().filter(machine => machine.workerId).map(machine => [machine.workerId, machine.name]));
+    const needle = query.trim().toLocaleLowerCase();
     return items
       .filter((task) => {
         if (
@@ -682,10 +684,9 @@
         if (workerFilter && task.workerId !== workerFilter) return false;
         if (workflowFilter && task.workflow !== workflowFilter) return false;
         return (
-          !query ||
-          `${task.title} ${task.id} ${task.workerId || ""} ${task.phase || ""} ${(task.tags || []).join(" ")}`
-            .toLocaleLowerCase()
-            .includes(query.toLocaleLowerCase())
+          !needle ||
+          [task.title, task.id, task.company, task.workerId, workerNames.get(task.workerId), task.url, task.phase, ...(task.tags || [])]
+            .filter(Boolean).join(" ").toLocaleLowerCase().includes(needle)
         );
       })
       .sort(
@@ -739,7 +740,13 @@
         title.target = "_blank";
         title.rel = "noopener noreferrer";
       }
-      titleCell.append(title, node("span", "task-id", task.id));
+      titleCell.append(title);
+      if (task.company) {
+        const company = node("span", "task-company", task.company);
+        company.title = task.company;
+        titleCell.append(company);
+      }
+      titleCell.append(node("span", "task-id", task.id));
       const category = node("td");
       category.append(node("span", "workflow-name", workflow(task.workflow)));
       const state = node("td");
@@ -764,10 +771,23 @@
       if (timestamp(task.updatedAt)) time.dateTime = task.updatedAt;
       updated.append(time);
       const actions = node("td");
-      const detail = node("button", "icon-button", "↗");
+      const actionGroup = node("div", "queue-actions");
+      const links = node("div", "task-links");
+      for (const [label, value] of [["ClickUp", task.url], ["Figma", task.figmaUrl]]) {
+        const href = safeLink(value);
+        if (!href) continue;
+        const link = node("a", "text-button", `${label} ↗`);
+        link.href = href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.setAttribute("aria-label", `${label === "Figma" ? "Figma-Board" : "ClickUp"} öffnen: ${task.title || task.id}`);
+        links.append(link);
+      }
+      const detail = node("button", "icon-button", "⋯");
       detail.setAttribute("aria-label", `Details zu ${task.title || task.id}`);
       detail.addEventListener("click", () => taskDetails(task));
-      actions.append(detail);
+      actionGroup.append(detail, links);
+      actions.append(actionGroup);
       row.append(titleCell, category, state, assigned, updated, actions);
       body.append(row);
     });
@@ -788,6 +808,7 @@
   function taskDetails(task) {
     const grid = node("div", "detail-grid");
     grid.append(
+      detailField("Unternehmen", task.company || "Nicht hinterlegt"),
       detailField("Workflow", workflow(task.workflow)),
       detailField("Status", statusNames[task.status] || task.status),
       detailField("Worker", task.workerId || "Noch nicht zugewiesen"),
@@ -814,6 +835,14 @@
     if (url) {
       const link = node("a", "button primary", "In ClickUp öffnen ↗");
       link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      children.push(link);
+    }
+    const figmaUrl = safeLink(task.figmaUrl);
+    if (figmaUrl) {
+      const link = node("a", "button secondary", "Figma-Board öffnen ↗");
+      link.href = figmaUrl;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       children.push(link);

@@ -26,6 +26,19 @@ Klick auf die Kennzahl öffnet diesen Filter direkt. Jeder Mac und jede Aufgabe
 zählt einmal, auch wenn mehrere Gründe vorliegen; gelöste Einträge verschwinden
 beim nächsten Abgleich. **Alle Ereignisse** zeigt weiterhin die Historie.
 
+## Suche und Aufgabenlinks
+
+Die Aufgaben-Queue durchsucht Titel und Aufgaben-ID, Unternehmen, Mac-Namen und
+Worker-ID sowie den vollständigen ClickUp-Link. Status- und Workflow-Filter gelten
+weiterhin für die Treffer. Das Unternehmen erscheint unter dem Aufgabentitel und
+stammt aus dem sichtbaren ClickUp-Kundenordner.
+
+Rechts öffnen die kleinen Links ClickUp und das Figma-Board in einem neuen Fenster.
+Die Brücke bevorzugt den direkten `Figma Pre-Gen`-Link, danach `Figma Link` bzw.
+ein Figma-Board-URL-Feld der Aufgabe. Ohne Aufgabenlink öffnet Pre-Gen das Testboard
+aus `PRE_GEN_FILE` der eingerichteten Newsletter-Quelle. Für Uploads ohne Figma-Link
+wird kein Board geraten. Alte Aufgaben ohne diese optionalen Angaben bleiben nutzbar.
+
 ## Live-Abgleich
 
 Die zentrale Newsletter-Brücke liest ClickUp-Aufgaben und die tatsächlichen

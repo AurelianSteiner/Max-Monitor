@@ -300,6 +300,26 @@ test("observed Hub workers are shared, deduplicated by native workerId and never
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
+test("task company and Figma links persist and malformed optional metadata is rejected atomically", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "max-monitor-task-links-"));
+  try {
+    const store = createFleetStore(directory);
+    const linked = task("linked", { company: "Beispiel Unternehmen", figmaUrl: "https://www.figma.com/design/board/Test?node-id=1-2" });
+    store.updateQueue("DEMO1234", { tasks: [linked, task("legacy")], source: { name: "ClickUp" } });
+    const restored = createFleetStore(directory).snapshot("DEMO1234").queue.tasks;
+    assert.equal(restored.find(row => row.id === "linked").company, linked.company);
+    assert.equal(restored.find(row => row.id === "linked").figmaUrl, linked.figmaUrl);
+    assert.equal(restored.find(row => row.id === "legacy").figmaUrl, undefined);
+    for (const metadata of [{ company: "x".repeat(201) }, ...[
+      "javascript:alert(1)", "http://figma.com/design/key", "https://figma.com.evil.example/design/key",
+      "https://user:password@figma.com/file/key", "https://figma.com/login",
+    ].map(figmaUrl => ({ figmaUrl }))]) {
+      assert.throws(() => store.updateQueue("DEMO1234", { tasks: [task("bad", metadata)], source: { name: "ClickUp" } }), error => error.status === 400);
+      assert.deepEqual(store.snapshot("DEMO1234").queue.tasks, restored);
+    }
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("bounded event log, complete snapshots and corrupt-file protection", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "max-monitor-events-"));
   const store = createFleetStore(directory);
