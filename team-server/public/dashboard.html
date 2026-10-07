@@ -202,7 +202,7 @@
         <section id="log-section" class="content-section" hidden>
           <div class="section-heading">
             <div>
-              <h2>Queue-Log</h2>
+              <h2 id="log-heading" tabindex="-1">Queue-Log <span id="log-count" class="count">0</span></h2>
               <p id="log-description">
                 Neue Aufgaben, Statuswechsel und Meldungen der Geräte.
               </p>
@@ -218,7 +218,7 @@
               data-log-filter="all"
               aria-pressed="true"
             >
-              Alle Ereignisse
+              Alle Ereignisse <span id="log-event-count">0</span>
             </button>
             <button
               class="tab"
@@ -228,8 +228,53 @@
               Braucht Aufmerksamkeit <span id="log-attention-count">—</span>
             </button>
           </div>
+          <div class="log-toolbar">
+            <label class="search">
+              <span class="sr-only">Log durchsuchen</span>
+              <span aria-hidden="true">⌕</span>
+              <input id="log-search" type="search" name="log-search" autocomplete="off"
+                placeholder="Aufgabe, Mac oder Meldung suchen…" />
+            </label>
+            <label>
+              <span class="sr-only">Log-Typ filtern</span>
+              <select id="log-type" name="log-type">
+                <option value="all">Alle Typen</option>
+                <option value="task">Aufgaben</option>
+                <option value="machine">Mac-Worker</option>
+                <option value="source" id="log-source-option">Queue-Quelle</option>
+              </select>
+            </label>
+            <button id="log-sort" class="button secondary" type="button">Neueste zuerst ↓</button>
+          </div>
           <p id="log-summary" class="log-summary" role="status"></p>
-          <div id="event-list" class="event-list"></div>
+          <div id="event-list" class="log-table-wrap">
+            <table class="log-table" role="table">
+              <caption id="log-caption" class="sr-only">Queue-Log: Alle Ereignisse</caption>
+              <colgroup>
+                <col class="log-time-column" /><col class="log-entity-column" />
+                <col class="log-worker-column" /><col class="log-status-column" />
+                <col /><col class="log-action-column" />
+              </colgroup>
+              <thead><tr>
+                <th id="log-time-heading" scope="col" aria-sort="descending">
+                  <button id="log-time-sort" class="log-heading-sort" type="button">Zeitpunkt ↓</button>
+                </th>
+                <th scope="col">Aufgabe / Bezug</th><th scope="col">Mac</th>
+                <th scope="col">Status</th><th id="log-message-heading" scope="col">Ereignis</th>
+                <th scope="col"><span class="sr-only">Details</span></th>
+              </tr></thead>
+              <tbody id="log-body"></tbody>
+            </table>
+          </div>
+          <p id="log-empty" class="empty-state" hidden></p>
+          <div class="log-footer">
+            <span id="log-results"></span>
+            <div id="log-pagination" class="log-pagination" hidden>
+              <button id="log-previous" class="button secondary" type="button" aria-label="Vorherige Log-Seite">←</button>
+              <span id="log-page-label"></span>
+              <button id="log-next" class="button secondary" type="button" aria-label="Nächste Log-Seite">→</button>
+            </div>
+          </div>
         </section>
         <footer class="page-footer">
           <span id="team-label">Gemeinsamer Team-Server</span

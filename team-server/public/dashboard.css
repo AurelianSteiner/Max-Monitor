@@ -809,61 +809,77 @@ dialog .form-hint {
   flex-wrap: wrap;
   gap: 6px;
 }
-.event {
-  display: grid;
-  grid-template-columns: 140px 1fr;
-  gap: 16px;
-  padding: 14px 8px;
-  border-bottom: 1px solid var(--line);
-  font-size: 12px;
-}
-.event time {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  color: var(--muted);
-}
-.event p {
-  font-size: 11px;
-  margin-top: 4px;
-}
+#log-section { margin-top: 24px; }
 .log-filters {
+  flex-wrap: wrap;
   margin-bottom: 12px;
 }
-.log-summary {
-  font-size: 12px;
-  color: var(--muted);
-  margin-bottom: 8px;
+.log-filters .tab { white-space: nowrap; }
+.log-toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.log-toolbar .search { flex: 1; min-width: 220px; }
+.log-toolbar .search input { flex: 1; width: 100%; min-width: 0; }
+.log-toolbar select { min-width: 140px; }
+.log-summary { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+.log-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.log-time-column { width: 124px; }
+.log-entity-column { width: 27%; }
+.log-worker-column { width: 17%; }
+.log-status-column { width: 92px; }
+.log-action-column { width: 44px; }
+.log-table th, .log-table td { padding: 12px 8px; text-align: left; font-size: 12px; vertical-align: top; }
+.log-table th {
+  position: sticky; top: 0; z-index: 1;
+  background: #e9edf1; color: var(--muted); font-weight: 500; font-size: 11px;
+  padding-top: 10px; padding-bottom: 10px;
 }
-.attention-entry {
-  grid-template-columns: 140px minmax(0, 1fr) 36px;
-  align-items: start;
-}
-.attention-meta {
-  display: flex;
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 8px;
-}
-.attention-kind {
-  font-size: 11px;
-  color: var(--muted);
-}
-.attention-body h3 {
-  font-size: 13px;
-  font-weight: 600;
-  margin: 0 0 4px;
-  overflow-wrap: anywhere;
-}
-.attention-reasons {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  color: var(--warn);
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-.attention-context {
-  overflow-wrap: anywhere;
+.log-table th:first-child { border-radius: 6px 0 0 6px; }
+.log-table th:last-child { border-radius: 0 6px 6px 0; }
+.log-table tbody td { border-bottom: 1px solid var(--line); }
+.log-row:hover td, .log-row:focus-within td { background: var(--accent-soft); }
+.log-heading-sort { border: 0; background: transparent; color: inherit; padding: 0; text-align: left; font-weight: 500; }
+.log-heading-sort:hover { color: var(--ink); }
+.log-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+.log-entity-meta { display: flex; align-items: center; gap: 6px; margin-top: 6px; min-width: 0; }
+.log-entity-meta .workflow { flex-shrink: 0; padding: 2px 4px; border-radius: 3px; background: #e9edf1; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.log-id, .log-worker-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-id { font-size: 10px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.log-time { font-variant-numeric: tabular-nums; }
+.log-time time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; white-space: nowrap; }
+.log-secondary { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; line-height: 1.4; }
+.log-messages, .attention-reasons, .log-detail-messages { padding: 0; margin: 0; list-style: none; line-height: 1.5; overflow-wrap: anywhere; }
+.log-messages li { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.attention-reasons { color: var(--warn); }
+.log-detail-messages { font-size: 13px; }
+.log-action .icon-button { width: 28px; height: 28px; }
+.log-footer, .log-pagination { display: flex; align-items: center; gap: 12px; }
+.log-footer { justify-content: space-between; margin-top: 12px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.log-pagination .button { min-height: 36px; }
+@media (max-width: 760px) {
+  .log-filters { overflow: visible; }
+  .log-toolbar .search { flex-basis: 100%; min-width: 0; }
+  .log-toolbar > label:not(.search) { flex: 1; }
+  .log-toolbar select { width: 100%; min-height: 44px; }
+  .log-toolbar .button { min-height: 44px; }
+  .log-table colgroup { display: none; }
+  .log-table thead { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); }
+  .log-table, .log-table tbody { display: block; }
+  .log-table .log-row { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 8px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+  .log-table tbody td { display: block; padding: 0; border: 0; min-width: 0; }
+  .log-entity { grid-column: 1; grid-row: 1; }
+  .log-action { grid-column: 2; grid-row: 1 / 3; }
+  .log-table .log-action .icon-button { width: 44px; height: 44px; }
+  .log-status { grid-column: 1; grid-row: 2; }
+  .log-worker, .log-time, .log-message { grid-column: 1 / -1; }
+  .log-time { grid-row: 4; }
+  .log-worker { grid-row: 3; display: flex !important; gap: 8px; align-items: baseline; }
+  .log-worker::before { content: "Mac:"; color: var(--muted); font-size: 11px; }
+  .log-time .log-secondary { display: inline; margin-left: 8px; }
+  .log-message::before { content: attr(data-label); display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .log-title, .log-messages li { -webkit-line-clamp: 3; }
+  .log-row:hover td, .log-row:focus-within td { background: transparent; }
+  .log-row:focus-within { background: var(--accent-soft); }
+  .log-footer { flex-wrap: wrap; }
+  .log-pagination .button { min-height: 44px; }
 }
 .loading-line {
   height: 14px;
@@ -1122,24 +1138,6 @@ dialog .form-hint {
     min-height: 36px;
     display: inline-flex;
     align-items: center;
-  }
-  .event {
-    grid-template-columns: 1fr;
-    gap: 6px;
-  }
-  .attention-entry {
-    grid-template-columns: minmax(0, 1fr) 44px;
-    gap: 8px;
-    padding: 16px 0;
-  }
-  .attention-meta {
-    grid-column: 1/-1;
-    flex-direction: row;
-    align-items: center;
-  }
-  .attention-entry > .icon-button {
-    width: 44px;
-    height: 44px;
   }
   dialog {
     padding: 20px;

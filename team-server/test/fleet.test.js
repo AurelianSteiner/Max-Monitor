@@ -124,6 +124,23 @@ test("shared authenticated relay supports fleet without changing existing report
     assert.ok(shared.events.some((event) => event.type === "queue_source_recovered"));
   });
 
+  await t.test("task event history preserves the worker at each change and explicit unassignment", async () => {
+    const id = "clickup:upload:history";
+    for (const [workerId, phase] of [["mini-1", "First worker"], ["mini-2", "Second worker"], [null, "Unassigned"]]) {
+      const body = { tasks: [task(id, { workflow: "upload", status: "running", workerId, phase })], source: { name: "ClickUp" } };
+      assert.equal((await request(`${endpoint}/queue`, { method: "POST", token: admin.token, body })).status, 200);
+    }
+    assert.equal((await request(`${endpoint}/queue`, { method: "POST", token: admin.token, body: { tasks: [], source: { name: "ClickUp" } } })).status, 200);
+    const events = (await request(`${endpoint}/fleet`, { token: member.token })).body.events.filter((event) => event.taskId === id);
+    assert.equal(events.find((event) => event.message === "First worker").workerId, "mini-1");
+    assert.equal(events.find((event) => event.message === "Second worker").workerId, "mini-2");
+    const unassigned = events.find((event) => event.message === "Unassigned");
+    assert.equal(Object.hasOwn(unassigned, "workerId"), true);
+    assert.equal(unassigned.workerId, null);
+    assert.ok(events.every((event) => event.workflow === "upload"));
+    assert.equal(events.find((event) => event.type === "task_removed").workerId, null);
+  });
+
   await t.test("queue has independent 2 MB body budget while reports retain 64 KB", async () => {
     const tasks = Array.from({ length: 350 }, (_, index) => task(`task-${index}`, { title: "Newsletter ".repeat(20) }));
     const queue = { tasks, source: { name: "ClickUp" } };
