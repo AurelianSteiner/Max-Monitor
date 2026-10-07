@@ -181,6 +181,62 @@ test("shared authenticated relay supports fleet without changing existing report
     assert.equal(shared.body.machines.length, 2);
     assert.equal(shared.body.queue.tasks.length, 350);
   });
+
+  await t.test("live updates reach every viewer and revoked members stop receiving signals", async () => {
+    assert.equal((await request(`${endpoint}/fleet/events`, { token: null })).status, 401);
+    assert.equal((await request('/v1/teams/OTHER123/fleet/events', { token: member.token })).status, 401);
+    const viewer = (await request(`${endpoint}/members`, { method: "POST", body: { name: "Live Viewer" } })).body.member;
+    const streams = [];
+    async function open(token) {
+      const abort = new AbortController();
+      const response = await fetch(`${base}${endpoint}/fleet/events`, { headers: { authorization: `Bearer ${token}` }, signal: abort.signal });
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('content-type'), /^text\/event-stream/);
+      assert.equal(response.headers.get('x-accel-buffering'), 'no');
+      const reader = response.body.getReader();
+      let buffer = '';
+      const stream = { abort, async next() {
+        const timer = setTimeout(() => abort.abort(), 3000);
+        try {
+          while (true) {
+            const end = buffer.indexOf('\n\n');
+            if (end !== -1) {
+              const event = buffer.slice(0, end); buffer = buffer.slice(end + 2);
+              if (/^event: fleet$/m.test(event)) return true;
+              continue;
+            }
+            const part = await reader.read();
+            if (part.done) return false;
+            buffer += new TextDecoder().decode(part.value);
+          }
+        } finally { clearTimeout(timer); }
+      } };
+      streams.push(stream); return stream;
+    }
+    try {
+      const first = await open(member.token);
+      const other = await open(viewer.token);
+      assert.deepEqual(await Promise.all([first.next(), other.next()]), [true, true]);
+      for (const [status, workerId] of [['queued', null], ['running', 'mini-1'], ['running', 'mini-2'], ['queued', null]]) {
+        const body = { tasks: [task('live-task', { status, workerId })], source: { name: 'ClickUp', lastSuccessAt: new Date().toISOString() } };
+        assert.equal((await request(`${endpoint}/queue`, { method: 'POST', token: admin.token, body })).status, 200);
+        assert.deepEqual(await Promise.all([first.next(), other.next()]), [true, true]);
+        const snapshots = await Promise.all([member, viewer].map(who => request(`${endpoint}/fleet`, { token: who.token })));
+        for (const result of snapshots) {
+          assert.equal(result.body.queue.tasks.length, 1);
+          assert.equal(result.body.queue.tasks[0].status, status);
+          assert.equal(result.body.queue.tasks[0].workerId ?? null, workerId);
+        }
+      }
+      assert.equal((await request(`${endpoint}/queue`, { method: 'POST', token: admin.token, body: { source: { name: 'ClickUp', error: 'Source unavailable' } } })).status, 200);
+      assert.deepEqual(await Promise.all([first.next(), other.next()]), [true, true]);
+      assert.equal((await request(`${endpoint}/fleet`, { token: member.token })).body.queue.tasks[0].id, 'live-task');
+      assert.equal((await request(`${endpoint}/members/${viewer.id}`, { method: 'DELETE' })).status, 200);
+      await request(`${endpoint}/queue`, { method: 'POST', token: admin.token, body: { tasks: [], source: { name: 'ClickUp' } } });
+      assert.equal(await first.next(), true);
+      assert.equal(await other.next(), false);
+    } finally { for (const stream of streams) stream.abort.abort(); }
+  });
 });
 
 test("fleet status transitions, independent account freshness, and persisted errors", () => {

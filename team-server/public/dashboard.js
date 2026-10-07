@@ -17,6 +17,11 @@
   let busy = false;
   let fetchController = null;
   let generation = 0;
+  let streamController = null;
+  let streamRetry = null;
+  let streamConnected = false;
+  let liveRefreshTimer = null;
+  let refreshQueued = false;
   const params = new URLSearchParams(location.search);
   let view = params.get("view") || "overview";
   let logFilter = params.get("log") === "attention" ? "attention" : "all";
@@ -252,6 +257,81 @@
       }),
     );
   }
+  function syncStatus() {
+    if (!snapshot || busy || !$('connection-error').hidden) return;
+    $('sync-status').textContent = `${streamConnected ? 'Live' : 'Abgleich'} · ${new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' }).format(new Date(snapshotReceivedAt))}`;
+  }
+  function stopLive() {
+    clearTimeout(streamRetry);
+    clearTimeout(liveRefreshTimer);
+    streamRetry = null;
+    liveRefreshTimer = null;
+    refreshQueued = false;
+    const previous = streamController;
+    streamController = null;
+    streamConnected = false;
+    previous?.abort();
+  }
+  function liveRefresh() {
+    if (liveRefreshTimer) return;
+    liveRefreshTimer = setTimeout(() => {
+      liveRefreshTimer = null;
+      if (!credentials || document.hidden) return;
+      if (busy) refreshQueued = true;
+      else refresh();
+    }, 100);
+  }
+  function startLive() {
+    if (!credentials || document.hidden || streamController) return;
+    clearTimeout(streamRetry);
+    streamRetry = null;
+    connectLive();
+  }
+  async function connectLive() {
+    const epoch = generation;
+    const controller = new AbortController();
+    streamController = controller;
+    let timer = setTimeout(() => controller.abort(), 15000);
+    let reader;
+    let retry = true;
+    try {
+      const response = await fetch(`${relayPrefix}/v1/teams/${encodeURIComponent(credentials.teamId)}/fleet/events`, {
+        headers: { Authorization: `Bearer ${credentials.token}`, Accept: 'text/event-stream' },
+        cache: 'no-store', signal: controller.signal,
+      });
+      if (response.status === 401 || response.status === 403) retry = false;
+      if (!response.ok || !response.headers.get('content-type')?.startsWith('text/event-stream') || !response.body?.getReader) return;
+      if (epoch !== generation || controller !== streamController) return;
+      streamConnected = true;
+      syncStatus();
+      reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (!controller.signal.aborted) {
+        clearTimeout(timer);
+        timer = setTimeout(() => controller.abort(), 45000);
+        const { value, done } = await reader.read();
+        if (done || epoch !== generation || controller !== streamController) break;
+        buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n');
+        if (buffer.length > 8192) throw new Error('Live signal too large');
+        let end;
+        while ((end = buffer.indexOf('\n\n')) !== -1) {
+          const event = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          if (/^event:\s*fleet$/m.test(event)) liveRefresh();
+        }
+      }
+    } catch { /* Regular GETs keep the last snapshot available during reconnects. */ }
+    finally {
+      clearTimeout(timer);
+      if (reader) { try { await reader.cancel(); } catch { /* Already disconnected. */ } }
+      if (controller !== streamController) return;
+      streamController = null;
+      streamConnected = false;
+      syncStatus();
+      if (retry && epoch === generation && credentials && !document.hidden) streamRetry = setTimeout(startLive, 5000);
+    }
+  }
   async function refresh() {
     if (!credentials || busy) return false;
     const epoch = generation;
@@ -289,7 +369,7 @@
       snapshot = data;
       snapshotReceivedAt = Date.now();
       $("sync-status").textContent =
-        `Live · ${new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" }).format(new Date())}`;
+        `${streamConnected ? "Live" : "Abgleich"} · ${new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" }).format(new Date())}`;
       $("connection-error").hidden = true;
       showNotice(
         data.queue.source?.error
@@ -302,6 +382,7 @@
               : "",
       );
       render();
+      startLive();
       return true;
     } catch (error) {
       if (epoch !== generation) return false;
@@ -334,6 +415,10 @@
         fetchController = null;
         $("refresh").disabled = false;
         $("connect").disabled = false;
+        if (refreshQueued) {
+          refreshQueued = false;
+          queueMicrotask(refresh);
+        }
       }
     }
   }
@@ -1112,6 +1197,7 @@
     );
   $("connection-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    stopLive();
     fetchController?.abort();
     generation++;
     busy = false;
@@ -1123,11 +1209,13 @@
     const success = await refresh();
     $("team-token").value = "";
     if (success) {
+      startLive();
       $("connection-dialog").close();
       $("disconnect").hidden = false;
     }
   });
   $("disconnect").addEventListener("click", () => {
+    stopLive();
     generation++;
     fetchController?.abort();
     fetchController = null;
@@ -1150,12 +1238,17 @@
     render();
   });
   render();
-  if (credentials) refresh();
+  if (credentials) { refresh(); startLive(); }
   else $("connection-dialog").showModal();
   setInterval(() => {
     if (!document.hidden) refresh();
   }, 30000);
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) refresh();
+    if (document.hidden) stopLive();
+    else { refresh(); startLive(); }
+  });
+  window.addEventListener("pagehide", stopLive);
+  window.addEventListener("pageshow", () => {
+    if (!document.hidden) { refresh(); startLive(); }
   });
 })();

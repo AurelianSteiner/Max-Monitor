@@ -203,6 +203,50 @@ function fleetResult(res, operation) {
   }
 }
 
+const fleetStreams = new Map();
+function streamFleet(req, res, teamId) {
+  try { fleet.snapshot(teamId); }
+  catch (error) {
+    return send(res, error instanceof FleetError ? error.status : 500,
+      { error: error instanceof FleetError ? error.message : "Fleet konnte nicht gelesen werden" });
+  }
+  const clients = fleetStreams.get(teamId) || new Set();
+  if (clients.size >= 200) return send(res, 429, { error: "Zu viele Live-Verbindungen" });
+  fleetStreams.set(teamId, clients);
+  clients.add(res);
+  let closed = false;
+  let timer;
+  let unsubscribe = () => {};
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    unsubscribe();
+    clearInterval(timer);
+    clients.delete(res);
+    if (!clients.size) fleetStreams.delete(teamId);
+    if (!res.destroyed && !res.writableEnded) res.end();
+  };
+  const write = (message) => {
+    if (closed) return;
+    // Recheck membership on every update and heartbeat, including revocations.
+    if (!identify(req, teamId) || res.destroyed || !res.write(message)) close();
+  };
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",
+    "X-Content-Type-Options": "nosniff",
+    "Connection": "keep-alive",
+  });
+  res.on("close", close);
+  res.on("error", close);
+  unsubscribe = fleet.subscribe(teamId, () => write("event: fleet\ndata: {}\n\n"));
+  timer = setInterval(() => write(": heartbeat\n\n"), 15000);
+  timer.unref();
+  // The initial invalidation closes the gap between a GET and subscribing.
+  write("retry: 5000\nevent: fleet\ndata: {}\n\n");
+}
+
 function serveFleetAsset(req, res, pathname) {
   const routes = new Map([
     ["/fleet", ["dashboard.html", "text/html; charset=utf-8"]],
@@ -408,6 +452,9 @@ const server = http.createServer((req, res) => {
 
   // Fleet and queue are shared by all authenticated team members. Only the
   // queue bridge/admin can replace a complete task snapshot.
+  if (req.method === "GET" && rest === "/fleet/events") {
+    return streamFleet(req, res, teamId);
+  }
   if (req.method === "GET" && rest === "/fleet") {
     return fleetResult(res, () => fleet.snapshot(teamId));
   }

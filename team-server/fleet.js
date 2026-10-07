@@ -238,6 +238,17 @@ function publicMachine(machine, now) {
 }
 
 function createFleetStore(dataDir, now = Date.now) {
+  const subscribers = new Map();
+  function subscribe(teamId, listener) {
+    filePath(teamId);
+    if (!subscribers.has(teamId)) subscribers.set(teamId, new Set());
+    const listeners = subscribers.get(teamId);
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (!listeners.size) subscribers.delete(teamId);
+    };
+  }
   function filePath(teamId) {
     if (!/^[A-Z0-9]{4,16}$/.test(teamId)) throw new FleetError(400, "Team-ID ist ungültig");
     return path.join(dataDir, teamId, "fleet.json");
@@ -268,6 +279,10 @@ function createFleetStore(dataDir, now = Date.now) {
     } catch {
       try { fs.rmSync(tmp, { force: true }); } catch { /* leave original intact */ }
       throw new FleetError(500, "Fleet-Daten konnten nicht gespeichert werden");
+    }
+    // Notify only after the complete snapshot has been persisted successfully.
+    for (const listener of subscribers.get(teamId) || []) {
+      try { listener(); } catch { /* A disconnected viewer cannot fail a write. */ }
     }
   }
 
@@ -426,7 +441,7 @@ function createFleetStore(dataDir, now = Date.now) {
     };
   }
 
-  return { heartbeat, updateQueue, snapshot };
+  return { heartbeat, updateQueue, snapshot, subscribe };
 }
 
 module.exports = { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, validateHeartbeat, validateQueue };

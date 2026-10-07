@@ -197,6 +197,7 @@ Macs. See [fleet setup](../docs/fleet-monitoring.md).
 | `GET` | `/fleet` or `/monitor` | anyone | dashboard shell, no team data or credentials |
 | `POST` | `/v1/teams/:id/heartbeat` | any role | register/update this Mac's liveness, battery and per-account usage |
 | `GET` | `/v1/teams/:id/fleet` | any role | complete team fleet, queue and event log |
+| `GET` | `/v1/teams/:id/fleet/events` | any role | authenticated SSE change signals; clients reload the complete fleet |
 | `POST` | `/v1/teams/:id/queue` | super, admin | complete queue/worker-source snapshot or source-only error |
 
 The fleet is saved atomically in `$DATA_DIR/<TEAMID>/fleet.json`, including known

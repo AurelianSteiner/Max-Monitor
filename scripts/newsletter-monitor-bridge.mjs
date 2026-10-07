@@ -249,12 +249,21 @@ export function createLocalHubFetch(hub, { localHub, transport, spawnImpl = spaw
 
 export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, now = Date.now() }) {
   validateWorkflows(workflows);
-  const variants = await discoverTags(hubFetch, config.clickup.workspace_id, workflows);
-  const tasks = await listTasks(hubFetch, config.clickup.workspace_id, variants);
-  const claims = await listClaims(hubFetch, config.slack.channel_id, { now });
-  let observedWorkers; let fleetDetail;
-  try { observedWorkers = await fleetReader(config.hub, fleetDirectory ? { fleetDirectory } : {}); }
-  catch { fleetDetail = 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.'; }
+  const [taskResult, claimResult, workerResult] = await Promise.allSettled([
+    (async () => {
+      const variants = await discoverTags(hubFetch, config.clickup.workspace_id, workflows);
+      return { variants, tasks: await listTasks(hubFetch, config.clickup.workspace_id, variants) };
+    })(),
+    listClaims(hubFetch, config.slack.channel_id, { now }),
+    Promise.resolve().then(() => fleetReader(config.hub, fleetDirectory ? { fleetDirectory } : {})),
+  ]);
+  if (taskResult.status === 'rejected') throw taskResult.reason;
+  if (claimResult.status === 'rejected') throw claimResult.reason;
+  const { variants, tasks } = taskResult.value;
+  const claims = claimResult.value;
+  const observedWorkers = workerResult.status === 'fulfilled' ? workerResult.value : undefined;
+  const fleetDetail = workerResult.status === 'rejected'
+    ? 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.' : undefined;
   const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30 });
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
   return { tasks: queue, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
@@ -326,6 +335,19 @@ export async function applyEnrollmentConfiguration(options) {
   return { ...options, relayUrl: settings.serverURL, teamId: settings.teamId, token: settings.ownerToken };
 }
 
+export async function runSyncLoop(sync, { intervalMs, signal, once = false, now = Date.now, pause = delay }) {
+  do {
+    if (signal.aborted) break;
+    const started = now();
+    await sync();
+    if (once || signal.aborted) break;
+    // Poll start-to-start, without adding source-request time to the interval.
+    const remaining = Math.max(0, intervalMs - (now() - started));
+    try { await pause(remaining, undefined, { signal }); }
+    catch (error) { if (!signal.aborted) throw error; }
+  } while (!signal.aborted);
+}
+
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const options = await applyEnrollmentConfiguration(argumentsFrom(argv, env));
   if (options.help) {
@@ -343,12 +365,11 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const hubFetch = options.localHub ? createLocalHubFetch(config.hub, { localHub: options.localHub, transport }) : transport.createHubFetch(config.hub);
   let cached;
   try { cached = JSON.parse(await fs.readFile(options.cacheFile, 'utf8')); } catch { /* Fresh installation. */ }
-  let stopped = false;
   const controller = new AbortController();
-  const stop = () => { stopped = true; controller.abort(); };
+  const stop = () => controller.abort();
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
   try {
-    do {
+    await runSyncLoop(async () => {
       try {
         const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, fleetDirectory: options.fleetDirectory,
           ...(options.localHub ? { fleetReader: readLocalHubFleet } : {}) }), cachedSource: cached?.source,
@@ -367,8 +388,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
         console.error(`${new Date().toISOString()} ${String(error.message).replaceAll(options.token || '\0', '[REDACTED]').slice(0, 300)}`);
         if (options.once) process.exitCode = 1;
       }
-      if (!options.once && !stopped) { try { await delay(options.interval * 1000, undefined, { signal: controller.signal }); } catch { /* Stop requested. */ } }
-    } while (!options.once && !stopped);
+    }, { intervalMs: options.interval * 1000, signal: controller.signal, once: options.once });
   } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
 }
 

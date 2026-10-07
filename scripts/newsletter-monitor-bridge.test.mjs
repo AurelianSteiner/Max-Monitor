@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import {
   DEFAULT_WORKFLOWS, normalizeTag, validateWorkflows, discoverTags, listTasks,
   parseClaim, listClaims, buildQueue, parseObservedWorkers, readHubFleet,
-  collectSnapshot, relayEndpoint, publishSnapshot, syncOnce,
+  collectSnapshot, relayEndpoint, publishSnapshot, syncOnce, runSyncLoop,
 } from './newsletter-monitor-bridge.mjs';
 
 const now = Date.parse('2026-10-07T12:00:00Z');
@@ -156,6 +156,48 @@ test('missing Hub observations do not discard a verified ClickUp/Slack snapshot'
     fleetReader: async () => { throw new Error('unavailable'); } });
   assert.deepEqual(snapshot.tasks, []); assert.equal(snapshot.observedWorkers, undefined);
   assert.match(snapshot.source.detail, /Worker-Dateien nicht verfügbar/); assert.equal(snapshot.source.error, undefined);
+});
+
+test('minute cadence includes request time, never overlaps, and recovers after an overrun', async () => {
+  const controller = new AbortController();
+  let clock = 0;
+  let active = false;
+  const starts = []; const waits = [];
+  const duration = [22000, 76000, 5000];
+  await runSyncLoop(async () => {
+    assert.equal(active, false); active = true;
+    starts.push(clock); clock += duration[starts.length - 1];
+    active = false;
+    if (starts.length === 3) controller.abort();
+  }, { intervalMs: 60000, signal: controller.signal, now: () => clock,
+    pause: async ms => { waits.push(ms); clock += ms; } });
+  assert.deepEqual(starts, [0, 60000, 136000]);
+  assert.deepEqual(waits, [38000, 0]);
+  let calls = 0;
+  await runSyncLoop(async () => { calls++; }, { intervalMs: 60000, signal: new AbortController().signal, once: true,
+    pause: async () => { throw new Error('one-off sync must not sleep'); } });
+  assert.equal(calls, 1);
+});
+
+test('sources are read concurrently and a real claim assigns the exact worker ID', { timeout: 5000 }, async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let claimStarted = false;
+  const snapshot = await collectSnapshot({ now, config: { clickup: { workspace_id: 'test' }, slack: { channel_id: 'test' }, hub: {} },
+    hubFetch: async target => {
+      const url = new URL(target);
+      if (url.hostname === 'slack.com') {
+        claimStarted = true; release();
+        return response({ ok: true, messages: [claimMessage('running', { worker: 'exact-worker-id' })], has_more: false });
+      }
+      if (url.pathname.endsWith('/space')) { await gate; assert.equal(claimStarted, true); return response({ spaces: [{ id: 'space' }] }); }
+      if (url.pathname.endsWith('/tag')) return response({ tags: [{ name: 'pre gen.' }] });
+      return response({ tasks: [task('a')], last_page: true });
+    }, fleetReader: async () => [] });
+  assert.equal(snapshot.tasks.length, 1);
+  assert.equal(snapshot.tasks[0].id, 'clickup:newsletter:a');
+  assert.equal(snapshot.tasks[0].workerId, 'exact-worker-id');
+  assert.equal(snapshot.tasks[0].status, 'running');
 });
 
 test('relay publishing requires TLS, keeps token in header and rejects redirects', async () => {
