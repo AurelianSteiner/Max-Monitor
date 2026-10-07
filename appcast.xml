@@ -3,6 +3,27 @@
     <channel>
         <title>Max Monitor</title>
         <item>
+            <title>2.10.2</title>
+            <pubDate>Wed, 07 Oct 2026 23:04:45 +0000</pubDate>
+            <sparkle:version>2.10.2</sparkle:version>
+            <sparkle:shortVersionString>2.10.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <link>https://github.com/AurelianSteiner/Max-Monitor/releases/tag/v2.10.2</link>
+            <description><![CDATA[Die neue Übersicht für Queue & Macs und Account Limits kommt jetzt über die automatische Update-Prüfung. App und Update-Paket sind mit den bisherigen Signierschlüsseln signiert.
+
+• Gemeinsame Aufgaben-Queue mit Suche, Statusfiltern und ClickUp-/Figma-Links.
+• Eigener Bereich für Claude- und Codex-Konten.
+• Eigener Monitoring-Account je Mac für dessen 5-Stunden- und gesamten Wochenlimits.
+• Live-Abgleich der Queue, einheitliche Worker-Namen und automatische Team-Einrichtung.
+
+Nach dem Update auf jedem Mac einmal unter Queue & Macs → Monitoring-Account → Claude für diesen Mac verbinden den verwendeten Claude-Account anmelden. Konten aus Account Limits werden nicht übernommen.]]></description>
+            <enclosure
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.10.2/Max-Monitor-2.10.2.dmg"
+                sparkle:edSignature="VtIsBDnshaPgXXHUSpUtIqftTuLhXkAOjtUStNYEg3AHjV9An3lPAj/+SGd5+Dt+liav3VYoIus8WQvRGCA2Bg=="
+                length="5672760"
+                type="application/octet-stream"/>
+        </item>
+        <item>
             <title>2.9.1</title>
             <pubDate>Sat, 19 Sep 2026 23:46:03 +0000</pubDate>
             <sparkle:version>2.9.1</sparkle:version>
