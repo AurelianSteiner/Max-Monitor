@@ -45,7 +45,7 @@
   const pageSize = 50;
   const statusNames = {
     online: "Online",
-    silent: "Still",
+    silent: "Meldung fehlt",
     offline: "Offline",
     unknown: "Unbekannt",
     queued: "Wartet",
@@ -140,12 +140,17 @@
       const age = Number.isFinite(machine.heartbeatAgeSeconds)
         ? machine.heartbeatAgeSeconds + elapsed
         : (Date.now() - (timestamp(machine.lastSeenAt) || 0)) / 1000;
+      const agedStatus = (initial, seconds) => seconds > 1800 ? "offline" : seconds > 900 ? "silent" : initial;
+      const sourceAge = (seconds, date) => Number.isFinite(seconds)
+        ? seconds + elapsed : (Date.now() - (timestamp(date) || 0)) / 1000;
       return {
         ...machine,
-        status: age > 1800 ? "offline" : age > 900 ? "silent" : machine.status,
+        status: agedStatus(machine.status, age),
+        nativeStatus: machine.nativeLastSeenAt
+          ? agedStatus(machine.nativeStatus, sourceAge(machine.nativeHeartbeatAgeSeconds, machine.nativeLastSeenAt))
+          : machine.nativeStatus,
         workerStatus: machine.workerLastSeenAt
-          ? Date.now() - timestamp(machine.workerLastSeenAt) > 1800000 ? "offline"
-            : Date.now() - timestamp(machine.workerLastSeenAt) > 900000 ? "silent" : machine.workerStatus
+          ? agedStatus(machine.workerStatus, sourceAge(machine.workerHeartbeatAgeSeconds, machine.workerLastSeenAt))
           : machine.workerStatus,
       };
     });
@@ -227,6 +232,7 @@
       );
     }
     if (
+      (!machine.nativeStatus || machine.nativeStatus === "online") &&
       machine.batteryPercent != null &&
       machine.batteryPercent <= 15 &&
       machine.powerSource !== "ac"
@@ -699,6 +705,7 @@
   }
   function batteryText(machine) {
     if (machine.batteryPercent == null) return ["—", ""];
+    if (machine.nativeStatus && machine.nativeStatus !== "online") return ["—", "veraltet"];
     const source = machine.isCharging ? "lädt"
       : ["ac", "AC", "AC Power", "mains"].includes(machine.powerSource) ? "Netzteil"
         : machine.powerSource === "battery" ? "Akku" : "";
@@ -765,6 +772,7 @@
       if (active.length > 1) taskCell.append(node("span", "fleet-sub", `+ ${active.length - 1} weitere`));
       const [battery, source] = batteryText(machine);
       const batteryCell = node("td", "fleet-battery", battery);
+      if (source === "veraltet") batteryCell.title = "Keine aktuelle Akku-Messung der Mac-App";
       if (source && source !== "Akku") batteryCell.append(node("small", "", ` · ${source}`));
       const account = machineAccount(machine);
       const stale = usageStale(machine);
@@ -780,7 +788,7 @@
         sessionCell.append(unbound);
         weeklyCell.append(node("span", "fleet-unbound", "—"));
       }
-      const seenAt = machine.receivedAt || machine.seenAt || machine.lastSeenAt;
+      const seenAt = machine.lastSeenAt || machine.receivedAt || machine.seenAt;
       const seen = node("td", "fleet-seen", relative(seenAt).replace(/^vor /, ""));
       seen.title = exact(seenAt);
       row.append(nameCell, taskCell, batteryCell, sessionCell, weeklyCell, seen);
@@ -825,7 +833,7 @@
       const data = node("div", "machine-data");
       const [battery, source] = batteryText(machine);
       const active = runningTasks(machine);
-      const seenAt = machine.receivedAt || machine.seenAt || machine.lastSeenAt;
+      const seenAt = machine.lastSeenAt || machine.receivedAt || machine.seenAt;
       for (const [name, value, hint, tooltip] of [
         ["Akku", battery, source === "Akku" ? "" : source],
         ["Aufgaben", `${active.length} aktiv`, ""],
@@ -1145,7 +1153,7 @@
       detailField("Betriebsstatus", statusNames[machineDisplayStatus(machine)] || "Unbekannt"),
       detailField(
         "Letzte Geräte-Meldung",
-        exact(machine.receivedAt || machine.seenAt || machine.lastSeenAt),
+        exact(machine.lastSeenAt || machine.receivedAt || machine.seenAt),
       ),
       detailField(
         "Mac in Slack",
@@ -1160,13 +1168,20 @@
       detailField("Kontingente geprüft", exact(machine.usageUpdatedAt)),
       detailField(
         "Always On",
-        machine.stayAwakeEnabled == null
+        machine.nativeStatus && machine.nativeStatus !== "online"
+          ? "App-Daten veraltet"
+          : machine.stayAwakeEnabled == null
           ? "Nicht gemeldet"
           : machine.stayAwakeEnabled
             ? "Aktiv"
             : "Aus",
       ),
     );
+    if (machine.nativeLastSeenAt)
+      grid.append(
+        detailField("App-Meldungen", machine.nativeStatus === "online" ? "Aktuell" : "Keine aktuelle Meldung"),
+        detailField("Letzte App-Meldung", exact(machine.nativeLastSeenAt)),
+      );
     if (Number.isInteger(machine.pendingClickup))
       grid.append(
         detailField("ClickUp-Updates ausstehend", machine.pendingClickup),
@@ -1180,6 +1195,8 @@
         ),
       );
     const list = node("div");
+    if (machine.nativeStatus && machine.nativeStatus !== "online" && machine.status === "online")
+      list.append(node("p", "form-hint", "Der Newsletter-Worker bestätigt, dass dieser Mac erreichbar ist. Die Mac-App meldet sich separat; ihre Akku- und Kontingentdaten werden dadurch nicht aktualisiert. Inhaber-, Admin- und Gastzugänge senden keine App-Meldungen."));
     for (const issue of machine.workerIssues || []) {
       list.append(node("p", "usage-note fleet-issue", `${issue.stage}: ${issue.message}`));
       list.append(node("p", "form-hint", `Fehler gemeldet: ${exact(issue.reportedAt)}`));

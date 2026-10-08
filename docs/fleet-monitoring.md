@@ -454,3 +454,9 @@ die Bridge den Kanal erneut vollständig gelesen hat. Ältere Worker können
 behobene Warnungen länger behalten; der gemeldete Zeitpunkt steht in den Details.
 Die Diagnose wird begrenzt und Zugangsdaten werden vor der Übertragung entfernt.
 Eine Warnung erzeugt niemals einen künstlichen Geräte-Heartbeat.
+
+### Erreichbarkeit und App-Daten
+
+Bei einem Mac mit exakt zugeordneter Worker-ID zählt das neueste plausible Lebenszeichen der Mac-App oder des Newsletter-Workers für `status`, `lastSeenAt` und `heartbeatAgeSeconds`. Auch die Mac-Erreichbarkeitsereignisse folgen diesem gemeinsamen Zustand. `nativeLastSeenAt`, `nativeStatus`, `nativeHeartbeatAgeSeconds` sowie `workerLastSeenAt`, `workerStatus`, `workerHeartbeatAgeSeconds` erhalten die getrennten Quellen. Worker-Zeitstempel mehr als fünf Minuten in der Zukunft werden nicht als Lebenszeichen verwendet. Queue-Synchronisation und Worker-Fehler erneuern keine Lebenszeichen.
+
+Die native Telemetrie und ihre Messzeitpunkte bleiben unverändert. Alte Akkuwerte und Always-On-Daten gelten nicht als aktuell; Kontingente behalten ihre separate Frischebewertung. Inhaber-, Admin- und Gastzugänge senden absichtlich keine eigenen Mac-Meldungen. Ihre laufenden, zugeordneten Newsletter-Worker bestätigen weiterhin die Erreichbarkeit.
