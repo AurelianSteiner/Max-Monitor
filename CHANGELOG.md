@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2.12
+
+- **Gäste ohne Worker-Mac.** Gäste sehen alle Macs, Aufgaben und Kontingente und können Aufgaben abhaken. Ihr eigener Mac meldet sich nicht in der Worker-Übersicht; auch ältere App-Versionen können mit einem Gastzugang keinen Mac registrieren.
+- **Eigener Mitglieder-Reiter.** Die Hauptübersicht enthält einen Mitglieder-Reiter mit den Filtern Alle, Mitglied, Admin und Gast. Der Inhaber kann Rollen ändern, Einladungen kopieren und Zugänge verwalten. Neue manuelle Einladungen sind standardmäßig Gastzugänge.
+- **Rollen ändern ohne neuen Token.** Beim Wechsel zu Gast bleiben Name, Zugang und bisheriger Token erhalten. Frühere Geräteberichte werden aus der Übersicht ausgeblendet; die Rollenänderung ist reversibel.
+- **Vollständige Einladungen.** Einladungen enthalten jetzt die aktuelle Server-Adresse, die Team-ID und den persönlichen Token. Der Standardserver zeigt auf das produktive R&S-Relay.
+
 ## 2.11
 
 - **Blockierte Aufgaben abhaken.** Blockierte und fehlgeschlagene Aufgaben lassen sich in Queue, Queue-Log und Aufgabendetails manuell als erledigt markieren. Die Erledigung wird für das ganze Team gespeichert und entfernt den Eintrag aus Offen, Blockiert und Braucht Aufmerksamkeit.
