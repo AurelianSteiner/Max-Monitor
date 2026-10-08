@@ -1,5 +1,11 @@
 # Änderungen
 
+## 2.13.1
+
+- **Laufende Macs bleiben erreichbar.** Eine aktuelle Meldung des zugeordneten Newsletter-Workers bestätigt jetzt die Erreichbarkeit des Macs, auch wenn die Monitor-App keine eigenen Meldungen sendet, etwa nach dem Wechsel zum Inhaberzugang. Übersicht, Zeitangabe und Erreichbarkeitsereignisse verwenden das neueste gültige Lebenszeichen.
+- **App-Daten bleiben ehrlich.** App-Meldungen und Worker-Erreichbarkeit sind in den Details getrennt sichtbar. Veraltete Akkuwerte werden ausgeblendet und lösen keinen falschen Niedrigakku-Hinweis aus; Kontingente bleiben mit ihrem ursprünglichen Messzeitpunkt als veraltet erkennbar. „Meldung fehlt“ ersetzt den missverständlichen Status „Still“.
+- **Echte Ausfälle bleiben sichtbar.** Ohne neue App- oder Worker-Meldung wechselt der Mac weiterhin nach 15 Minuten zu „Meldung fehlt“ und nach 30 Minuten zu „Offline“. Queue-Abgleiche, Fehlerberichte und unplausible Worker-Zeitstempel verlängern die Erreichbarkeit nicht.
+
 ## 2.13
 
 - **Worker-Fehler sichtbar.** Abgelaufene OAuth-Anmeldungen, fehlende Logins und andere gemeldete Betriebsfehler erscheinen bei den Macs, unter „Braucht Aufmerksamkeit“ und im Log – auch wenn die Monitor-App noch erreichbar ist. Details zeigen den konkreten Grund und den Meldezeitpunkt. Behobene Meldungen verschwinden beim nächsten vollständigen Abgleich.

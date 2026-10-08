@@ -238,6 +238,19 @@ function machineStatus(machine, now) {
   return age > OFFLINE_AFTER_MS ? "offline" : age > SILENT_AFTER_MS ? "silent" : "online";
 }
 
+// Either authenticated source proves that this Mac is running. A queue sync,
+// diagnostic, or implausible future worker clock must never renew its liveness.
+function machineLiveness(machine, worker, now) {
+  const lastSeenAt = [machine.lastSeenAt, worker?.lastSeenAt]
+    .filter((value) => Number.isFinite(Date.parse(value)) && Date.parse(value) <= now + 5 * 60 * 1000)
+    .sort((a, b) => Date.parse(b) - Date.parse(a))[0];
+  return {
+    lastSeenAt,
+    status: machineStatus({ lastSeenAt }, now),
+    heartbeatAgeSeconds: lastSeenAt ? Math.max(0, Math.floor((now - Date.parse(lastSeenAt)) / 1000)) : null,
+  };
+}
+
 function publicMachine(machine, now) {
   const { ownerId, derivedStatus, ...visible } = machine;
   const boundAccount = machine.accounts?.length === 1 && machine.monitoringAccountId && machine.accounts.find((account) =>
@@ -374,8 +387,9 @@ function createFleetStore(dataDir, now = Date.now) {
 
   function refreshStatuses(state, time) {
     let changed = false;
+    const workers = new Map((state.observedWorkers || []).map((worker) => [worker.workerId, worker]));
     for (const machine of state.machines) {
-      const status = machineStatus(machine, time);
+      const { status } = machineLiveness(machine, workers.get(machine.workerId), time);
       if (machine.derivedStatus !== status) {
         event(state, `machine_${status}`, machine.deviceId, machine.name, status === "online" ? "Mac meldet sich wieder" : status === "silent" ? "Seit über 15 Minuten kein Heartbeat" : "Seit über 30 Minuten kein Heartbeat", time, machine);
         machine.derivedStatus = status;
@@ -542,9 +556,15 @@ function createFleetStore(dataDir, now = Date.now) {
     const machines = state.machines.map((machine) => {
       const worker = workers.get(machine.workerId);
       if (worker) workers.delete(machine.workerId);
-      return { ...publicMachine(machine, time), ...(worker ? {
+      return { ...publicMachine(machine, time),
+        nativeLastSeenAt: machine.lastSeenAt,
+        nativeStatus: machineStatus(machine, time),
+        nativeHeartbeatAgeSeconds: machineLiveness(machine, null, time).heartbeatAgeSeconds,
+        ...machineLiveness(machine, worker, time),
+        ...(worker ? {
         workerLastSeenAt: worker.lastSeenAt,
         workerStatus: machineStatus(worker, time),
+        workerHeartbeatAgeSeconds: machineLiveness(worker, null, time).heartbeatAgeSeconds,
         workerVersion: worker.workerVersion,
         workerRevision: worker.workerRevision,
         pendingClickup: worker.pendingClickup,

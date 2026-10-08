@@ -336,7 +336,8 @@ test("observed Hub workers are shared, deduplicated by native workerId and never
     store.updateQueue("DEMO1234", { tasks: [], source: { name: "ClickUp" }, observedWorkers: [{ workerId: "studio-1", name: "Studio", lastSeenAt: new Date(time).toISOString() }] });
     machine = store.snapshot("DEMO1234").machines[0];
     assert.equal(machine.telemetrySource, "app");
-    assert.equal(machine.status, "silent");
+    assert.equal(machine.status, "online");
+    assert.equal(machine.nativeStatus, "silent");
     assert.equal(machine.workerStatus, "online");
     assert.equal(machine.usageStale, true);
     assert.equal(machine.batteryPercent, 78);
