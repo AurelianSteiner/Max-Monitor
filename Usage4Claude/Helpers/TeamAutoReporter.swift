@@ -116,7 +116,7 @@ final class TeamAutoReporter {
     /// Verbunden → Datenquelle und Zeitgeber an; getrennt → beides aus.
     func connectionDidChange() {
         dispatchPrecondition(condition: .onQueue(.main))
-        let connected = TeamServerConnection.shared.isConnected
+        let connected = TeamServerConnection.shared.isConnected && TeamServerConnection.shared.role?.reportsDevice == true
         syncDashboardRefresh(connected)
         updateTimer(connected)
         if connected {
@@ -145,7 +145,7 @@ final class TeamAutoReporter {
         // `verifyIdentity` die Rolle auf `nil` — erst eine erfolgreiche
         // Prüfung (oder ein neues Verbinden) setzt sie wieder und öffnet
         // damit auch diese Schleife wieder.
-        guard connection.role != nil else { return }
+        guard connection.role?.reportsDevice == true else { return }
         guard !isPosting else { return }
 
         let snapshots = DashboardRefreshManager.shared.snapshots

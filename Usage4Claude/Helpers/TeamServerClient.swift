@@ -242,11 +242,20 @@ final class TeamServerClient {
     /// Die Antwort enthält das frische Token zum Weitergeben.
     func addMember(name: String, role: TeamServerRole) async throws -> TeamServerMember {
         struct Envelope: Decodable { let member: TeamServerMember }
-        let payload: [String: String] = ["name": name, "role": role == .admin ? "admin" : "member"]
+        let payload: [String: String] = ["name": name, "role": role.rawValue]
         guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
             throw TeamServerError.invalidResponse
         }
         let data = try await request("POST", "/v1/teams/\(teamId)/members", body: body)
+        return try Self.decode(Envelope.self, from: data).member
+    }
+
+    func updateMember(id: String, role: TeamServerRole) async throws -> TeamServerMember {
+        struct Envelope: Decodable { let member: TeamServerMember }
+        guard let body = try? JSONSerialization.data(withJSONObject: ["role": role.rawValue]) else {
+            throw TeamServerError.invalidResponse
+        }
+        let data = try await request("PATCH", "/v1/teams/\(teamId)/members/\(id)", body: body)
         return try Self.decode(Envelope.self, from: data).member
     }
 

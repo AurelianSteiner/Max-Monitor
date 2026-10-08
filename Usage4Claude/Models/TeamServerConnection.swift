@@ -32,29 +32,29 @@ import OSLog
 // MARK: - Rolle
 
 /// Was ein Token auf dem Team-Server darf.
-enum TeamServerRole: String, Codable, Equatable {
-    /// Team-Inhaber: verwaltet Mitglieder, sieht alles inklusive Tokens
+enum TeamServerRole: String, Codable, Equatable, CaseIterable {
+    /// Team owner: manages identities and invitation tokens.
     case superAdmin = "super"
-    /// Sieht alle Meldungen, verwaltet aber nichts
+    /// Reads the team and synchronizes the queue.
     case admin
-    /// Meldet die eigene Auslastung; sehen dürfen alle Rollen alles
+    /// Participates with a reporting Mac.
     case member
+    /// Reads all team data and resolves tasks, without reporting a Mac.
+    case guest
 
-    /// Unbekannte Rollen aus der Antwort fallen auf die kleinste Rechte-
-    /// stufe zurück — lieber zu wenig zeigen als zu viel.
     init(lenient raw: String?) {
         switch raw?.lowercased() {
         case "super": self = .superAdmin
         case "admin": self = .admin
-        default:      self = .member
+        case "guest": self = .guest
+        default: self = .member
         }
     }
 
-    /// Sieht diese Rolle die Meldungen des ganzen Teams?
-    var seesAllReports: Bool { self != .member }
-
-    /// Darf diese Rolle Mitglieder anlegen und entfernen?
+    var seesAllReports: Bool { true }
     var canManageMembers: Bool { self == .superAdmin }
+    var canViewMembers: Bool { self != .member }
+    var reportsDevice: Bool { self != .guest }
 }
 
 // MARK: - Persistenz-Schlüssel
@@ -86,7 +86,7 @@ final class TeamServerConnection: ObservableObject {
     static let shared = TeamServerConnection()
 
     /// Das produktive Team-Relay — vorbelegt, damit niemand URLs abtippt.
-    static let defaultServerURL = URL(string: "https://team-relay-production.up.railway.app")!
+    static let defaultServerURL = URL(string: "https://api.ruegamer-steiner.de/max-monitor")!
 
     // MARK: - Veröffentlichter Zustand
 
@@ -342,6 +342,12 @@ final class TeamServerConnection: ObservableObject {
     func addMember(name: String, role: TeamServerRole,
                    completion: @escaping (Result<TeamServerMember, TeamServerError>) -> Void) {
         perform({ try await $0.addMember(name: name, role: role) }, completion: completion)
+    }
+
+    /// Changes a role without rotating the member's existing invitation token.
+    func updateMember(id: String, role: TeamServerRole,
+                      completion: @escaping (Result<TeamServerMember, TeamServerError>) -> Void) {
+        perform({ try await $0.updateMember(id: id, role: role) }, completion: completion)
     }
 
     /// DELETE /members/<id> — Mitglied samt Meldung entfernen (nur super).

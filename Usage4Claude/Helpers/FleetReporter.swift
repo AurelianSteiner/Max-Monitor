@@ -37,7 +37,7 @@ final class FleetReporter {
     func connectionDidChange() {
         dispatchPrecondition(condition: .onQueue(.main))
         let connection = TeamServerConnection.shared
-        let connected = connection.client != nil && connection.role != nil
+        let connected = connection.client != nil && connection.role?.reportsDevice == true
 
         timer?.invalidate()
         timer = nil
@@ -57,7 +57,7 @@ final class FleetReporter {
         dispatchPrecondition(condition: .onQueue(.main))
         let connection = TeamServerConnection.shared
         guard let teamId = connection.teamId, let client = connection.client,
-              connection.role != nil else { return }
+              connection.role?.reportsDevice == true else { return }
         if isPosting {
             if force { pendingReport = true }
             return
@@ -85,7 +85,7 @@ final class FleetReporter {
             let battery = await Task.detached(priority: .utility) { Self.readBattery() }.value
             guard TeamServerConnection.shared.teamId == teamId,
                   TeamServerConnection.shared.isConnected,
-                  TeamServerConnection.shared.role != nil else { return }
+                  TeamServerConnection.shared.role?.reportsDevice == true else { return }
             let heartbeat = Self.buildHeartbeat(teamId: teamId, monitoring: FleetMonitoringManager.shared,
                                                 battery: battery, now: Date())
             do {

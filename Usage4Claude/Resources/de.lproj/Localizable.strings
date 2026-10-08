@@ -391,6 +391,13 @@
 "team.server.role_super" = "Inhaber";
 "team.server.role_admin" = "Admin";
 "team.server.role_member" = "Mitglied";
+"team.server.role_guest" = "Gast";
+"team.members.all" = "Alle";
+"team.members.role" = "Rolle";
+"team.members.role_filter" = "Nach Rolle filtern";
+"team.members.empty" = "Keine Zugänge in dieser Rolle.";
+"team.members.roles_hint" = "Mitglieder melden ihren Mac. Admins können zusätzlich die Queue synchronisieren. Gäste sehen alles und können Aufgaben abhaken, ohne einen Mac zu melden.";
+"team.members.guest_hint" = "Gastzugang: alle Macs, Aufgaben und Kontingente ansehen und Aufgaben abhaken. Dieser Mac wird nicht als Worker gemeldet.";
 
 /* Team — Mitgliederverwaltung (nur Inhaber) */
 "team.members.title" = "Mitglieder";
@@ -404,7 +411,7 @@
 "team.members.delete_confirm_message" = "%@ kann danach nicht mehr melden; das Token wird ungültig.";
 
 /* Fertige Einladung — kommt in die Zwischenablage */
-"team.invite.template" = "Claude-Auslastung im Team teilen\n\n1. App laden: https://github.com/AurelianSteiner/Max-Monitor/releases/latest\n2. In der App: Einstellungen → Konten → Team → Mit Server verbinden\n3. Team-ID: %@\n4. Token: %@\n\nGeteilt werden nur Prozentwerte und Reset-Zeiten — keine Schlüssel, keine Inhalte.";
+"team.invite.template" = "Max Monitor – Team-Zugang\n\n1. App laden: https://github.com/AurelianSteiner/Max-Monitor/releases/latest\n2. In der App: Zahnrad → Verbindung & Worker → Server ändern\n3. Server-Adresse: %1$@\n4. Team-ID: %2$@\n5. Persönlicher Token: %3$@\n6. Verbinden\n\nClaude-Zugangsdaten bleiben auf deinem Mac.";
 
 /* Team-Übersicht — Verbindungszeile und Server-Zustände */
 "team.view.connected_as" = "Verbunden als %@";

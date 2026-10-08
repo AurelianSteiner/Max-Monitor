@@ -548,6 +548,13 @@ enum L {
         static var roleSuper: String { localized("team.server.role_super") }
         static var roleAdmin: String { localized("team.server.role_admin") }
         static var roleMember: String { localized("team.server.role_member") }
+        static var roleGuest: String { localized("team.server.role_guest") }
+        static var membersAll: String { localized("team.members.all") }
+        static var membersRole: String { localized("team.members.role") }
+        static var membersRoleFilter: String { localized("team.members.role_filter") }
+        static var membersEmpty: String { localized("team.members.empty") }
+        static var membersRolesHint: String { localized("team.members.roles_hint") }
+        static var guestHint: String { localized("team.members.guest_hint") }
 
         // MARK: Mitgliederverwaltung (nur Inhaber)
 
@@ -570,9 +577,9 @@ enum L {
         }
 
         /// Fertige Einladung für ein Mitglied — Download-Link, Fundort des
-        /// Feldes, Team-ID und das Token dieser Person
-        static func invitation(teamId: String, token: String) -> String {
-            String(format: localized("team.invite.template"), teamId, token)
+        /// Feldes, Server-Adresse, Team-ID und das Token dieser Person
+        static func invitation(serverURL: URL, teamId: String, token: String) -> String {
+            String(format: localized("team.invite.template"), serverURL.absoluteString, teamId, token)
         }
 
         // MARK: Übersicht — Verbindungszeile und Server-Zustände

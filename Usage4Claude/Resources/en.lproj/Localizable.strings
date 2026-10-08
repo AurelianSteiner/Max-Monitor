@@ -392,6 +392,13 @@
 "team.server.role_super" = "Owner";
 "team.server.role_admin" = "Admin";
 "team.server.role_member" = "Member";
+"team.server.role_guest" = "Guest";
+"team.members.all" = "All";
+"team.members.role" = "Role";
+"team.members.role_filter" = "Filter by role";
+"team.members.empty" = "No accounts with this role.";
+"team.members.roles_hint" = "Members report their Mac. Admins can also synchronize the queue. Guests can view everything and complete tasks without reporting a Mac.";
+"team.members.guest_hint" = "Guest access: view all Macs, tasks and quotas, and complete tasks. This Mac is not reported as a worker.";
 
 /* Team — member management (owner only) */
 "team.members.title" = "Members";
@@ -405,7 +412,7 @@
 "team.members.delete_confirm_message" = "%@ can no longer report afterwards; the token becomes invalid.";
 
 /* Ready-made invitation — goes to the clipboard */
-"team.invite.template" = "Share your Claude usage with the team\n\n1. Get the app: https://github.com/AurelianSteiner/Max-Monitor/releases/latest\n2. In the app: Settings → Accounts → Team → Connect to server\n3. Team ID: %@\n4. Token: %@\n\nOnly percentages and reset times are shared — no keys, no content.";
+"team.invite.template" = "Max Monitor – Team access\n\n1. Get the app: https://github.com/AurelianSteiner/Max-Monitor/releases/latest\n2. In the app: Settings menu → Connection & worker → Change server\n3. Server address: %1$@\n4. Team ID: %2$@\n5. Personal token: %3$@\n6. Connect\n\nClaude credentials stay on your Mac.";
 
 /* Team overview — connection line and server states */
 "team.view.connected_as" = "Connected as %@";

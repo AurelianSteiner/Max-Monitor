@@ -1,10 +1,11 @@
 //
 // Max Monitor — Team-Relay
 //
-// Winziger Dienst ohne Abhängigkeiten. Drei Rollen:
+// Winziger Dienst ohne Abhängigkeiten. Vier Rollen:
 //   super   Team-Inhaber (Token aus TEAM_TOKENS): verwaltet Mitglieder,
 //           sieht alles inklusive der Mitglieds-Tokens.
 //   admin   sieht alle Meldungen des Teams, verwaltet aber nichts.
+//   guest   sieht das ganze Team und kann Aufgaben abhaken; meldet keinen Mac.
 //   member  meldet die eigene Auslastung; sehen dürfen alle alles —
 //           geteilt werden ohnehin nur freiwillige Prozentwerte.
 //
@@ -38,6 +39,7 @@
 //   POST   /v1/teams/:id/members                Mitglied anlegen  {name, role?}   super
 //   GET    /v1/teams/:id/members                Mitglieder auflisten              super (mit Token), admin (ohne)
 //   DELETE /v1/teams/:id/members/:memberId      Mitglied entfernen                super
+//   PATCH  /v1/teams/:id/members/:memberId      Rolle ändern {role}              super
 //   POST   /v1/reports                          Meldung speichern                 jede Rolle (member: nur als sich selbst)
 //   GET    /v1/teams/:id/reports                Meldungen lesen                   jede Rolle: alle
 //   GET    /v1/teams/:id/members/:mid/history   Verlauf (?days=7, max 30)         jede Rolle: jeder
@@ -143,7 +145,7 @@ function writeMembers(teamId, members) {
   }
 }
 
-/// Wer ruft an? -> { role: "super"|"admin"|"member", member? } oder null
+/// Wer ruft an? -> { role: "super"|"admin"|"member"|"guest", member? } oder null
 function identify(req, teamId) {
   const token = bearerToken(req);
   if (!token) return null;
@@ -153,7 +155,7 @@ function identify(req, teamId) {
   }
   for (const member of readMembers(id)) {
     if (tokenMatches(token, member.token)) {
-      return { role: member.role === "admin" ? "admin" : "member", member };
+      return { role: ["admin", "guest"].includes(member.role) ? member.role : "member", member };
     }
   }
   return null;
@@ -367,6 +369,20 @@ function readReports(teamId) {
   return reports;
 }
 
+// Access to the team is separate from participation as a reporting Mac. Keep
+// stored telemetry intact so changing a role is reversible, but omit guests'
+// devices (including their old liveness events) from every shared snapshot.
+function visibleFleet(teamId) {
+  const guests = new Set(readMembers(teamId).filter((member) => member.role === "guest").map((member) => member.id));
+  const snapshot = fleet.snapshot(teamId);
+  const hiddenDevices = new Set(snapshot.machines.filter((machine) => guests.has(machine.memberId)).map((machine) => machine.deviceId));
+  return {
+    ...snapshot,
+    machines: snapshot.machines.filter((machine) => !hiddenDevices.has(machine.deviceId)),
+    events: snapshot.events.filter((entry) => !hiddenDevices.has(entry.deviceId || entry.entityId)),
+  };
+}
+
 // ------------------------------------------------------------------ Server
 
 const server = http.createServer((req, res) => {
@@ -393,6 +409,7 @@ const server = http.createServer((req, res) => {
 
       const who = identify(req, report.teamId);
       if (!who) return send(res, 401, { error: "Token fehlt oder passt nicht zum Team" });
+      if (who.role === "guest") return send(res, 403, { error: "Gäste melden keinen eigenen Mac und keine Kontingente" });
 
       // Mitglieder melden immer unter ihrem eingetragenen Namen —
       // niemand kann unter fremdem Namen melden.
@@ -456,7 +473,7 @@ const server = http.createServer((req, res) => {
     return streamFleet(req, res, teamId);
   }
   if (req.method === "GET" && rest === "/fleet") {
-    return fleetResult(res, () => fleet.snapshot(teamId));
+    return fleetResult(res, () => visibleFleet(teamId));
   }
   // Every team member can resolve an attention item; source synchronization
   // remains restricted to the queue bridge/admin.
@@ -469,7 +486,8 @@ const server = http.createServer((req, res) => {
     });
   }
   if (req.method === "POST" && (rest === "/heartbeat" || rest === "/queue")) {
-    if (rest === "/queue" && who.role === "member") return send(res, 403, { error: "nur Admin oder Team-Inhaber darf die Queue aktualisieren" });
+    if (rest === "/heartbeat" && who.role === "guest") return send(res, 403, { error: "Gäste registrieren keinen Worker-Mac" });
+    if (rest === "/queue" && !["admin", "super"].includes(who.role)) return send(res, 403, { error: "nur Admin oder Team-Inhaber darf die Queue aktualisieren" });
     return readBody(req, (error, raw) => {
       if (error) return send(res, 413, { error: "Fleet-Meldung zu groß" });
       let body;
@@ -497,7 +515,8 @@ const server = http.createServer((req, res) => {
   // Auslastung teilt, bekommt die Übersicht auch zurück; der frühere Filter
   // auf die eigene Meldung nahm Mitgliedern genau den Anreiz dafür.
   if (req.method === "GET" && rest === "/reports") {
-    return send(res, 200, { reports: readReports(teamId) });
+    const guests = new Set(readMembers(teamId).filter((member) => member.role === "guest").map((member) => member.id));
+    return send(res, 200, { reports: readReports(teamId).filter((report) => !guests.has(report.memberId)) });
   }
 
   // POST /v1/teams/:id/members — Mitglied anlegen (nur Super-Admin)
@@ -513,7 +532,8 @@ const server = http.createServer((req, res) => {
       }
       const name = String(body.name || "").trim();
       if (!name) return send(res, 400, { error: "name fehlt" });
-      const role = body.role === "admin" ? "admin" : "member";
+      const role = body.role === undefined ? "member" : body.role;
+      if (!["member", "admin", "guest"].includes(role)) return send(res, 400, { error: "Rolle muss Mitglied, Admin oder Gast sein" });
 
       const members = readMembers(teamId);
       if (members.length >= 200) return send(res, 400, { error: "zu viele Mitglieder" });
@@ -561,6 +581,28 @@ const server = http.createServer((req, res) => {
 
   // DELETE /v1/teams/:id/members/:memberId — Mitglied entfernen (nur Super-Admin)
   const memberMatch = rest.match(/^\/members\/([a-z0-9-]{1,64})$/);
+  if (req.method === "PATCH" && memberMatch) {
+    if (who.role !== "super") return send(res, 403, { error: "nur der Team-Inhaber darf Rollen ändern" });
+    return readBody(req, (error, raw) => {
+      if (error) return send(res, 413, { error: "zu groß" });
+      let body;
+      try { body = JSON.parse(raw); } catch { return send(res, 400, { error: "kein gültiges JSON" }); }
+      if (!["member", "admin", "guest"].includes(body?.role)) return send(res, 400, { error: "Rolle muss Mitglied, Admin oder Gast sein" });
+      let members;
+      try { members = readMembers(teamId, true); } catch { return send(res, 500, { error: "Mitglieder konnten nicht gelesen werden" }); }
+      const member = members.find((entry) => entry.id === memberMatch[1]);
+      if (!member) return send(res, 404, { error: "Mitglied nicht gefunden" });
+      if (member.enrollment && body.role !== "member") return send(res, 409, { error: "Registrierte Worker behalten die Mitgliedsrolle; für Gäste einen separaten Zugang anlegen" });
+      member.role = body.role;
+      try { writeMembers(teamId, members); } catch { return send(res, 500, { error: "Rolle konnte nicht gespeichert werden" }); }
+      // Invalidate open dashboards immediately after a role change. Their next
+      // GET re-evaluates which devices belong in the fleet, using the same token.
+      for (const stream of fleetStreams.get(teamId) || []) {
+        if (!stream.destroyed && !stream.writableEnded) stream.write("event: fleet\ndata: {}\n\n");
+      }
+      return send(res, 200, { member });
+    });
+  }
   if (req.method === "DELETE" && memberMatch) {
     if (who.role !== "super") return send(res, 403, { error: "nur der Team-Inhaber darf Mitglieder entfernen" });
     const members = readMembers(teamId);

@@ -29,6 +29,7 @@ extension TeamServerRole {
         case .superAdmin: return L.Team.roleSuper
         case .admin:      return L.Team.roleAdmin
         case .member:     return L.Team.roleMember
+        case .guest:      return L.Team.roleGuest
         }
     }
 
@@ -38,6 +39,7 @@ extension TeamServerRole {
         case .superAdmin: return .orange
         case .admin:      return .blue
         case .member:     return .teal
+        case .guest:      return .secondary
         }
     }
 }
@@ -95,7 +97,12 @@ struct TeamServerSection: View {
                     Text(L.Fleet.tokenStored).font(.caption)
                 }
                 DisclosureGroup(L.Fleet.editConnection) { connectForm.padding(.top, 8) }
-                fleetSettings
+                if connection.role?.reportsDevice == true {
+                    fleetSettings
+                } else if connection.role == .guest {
+                    Text(L.Team.guestHint).font(.callout).foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 if connection.role?.canManageMembers == true {
                     TeamMemberManagement()
@@ -270,196 +277,186 @@ struct TeamServerSection: View {
 // MARK: - Mitgliederverwaltung (nur Inhaber)
 
 struct TeamMemberManagement: View {
-
     @ObservedObject private var connection = TeamServerConnection.shared
-
     @State private var members: [TeamServerMember] = []
     @State private var isLoading = false
     @State private var errorText: String?
-
+    @State private var selectedRole: TeamServerRole?
+    @State private var updatingMemberId: String?
     @State private var newName = ""
-    @State private var newRole: TeamServerRole = .member
+    @State private var newRole: TeamServerRole = .guest
     @State private var isAdding = false
-
-    /// Das gerade angelegte Mitglied — sein Token wird genau einmal gezeigt
     @State private var freshMember: TeamServerMember?
-
     @State private var memberToDelete: TeamServerMember?
     @State private var showDeleteConfirmation = false
-
-    /// „Kopiert"-Hinweis, verschwindet nach zwei Sekunden von selbst
     @State private var showCopied = false
     @State private var copyToken = 0
 
+    private var canManage: Bool { connection.role?.canManageMembers == true }
+    private var filteredMembers: [TeamServerMember] {
+        members.filter { selectedRole == nil || $0.role == selectedRole }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text(L.Team.membersTitle)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.secondary)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 8) {
+                Text(L.Team.membersTitle).font(.headline)
+                Text("\(members.count)").font(.callout).foregroundColor(.secondary)
+                if isLoading { ProgressView().controlSize(.small) }
+                if showCopied { Text(L.Team.copied).font(.caption).foregroundColor(.secondary) }
+                Spacer()
+                Button(action: reload) { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(L.Fleet.retry)
+                    .help(L.Fleet.retry)
+                    .disabled(isLoading)
+            }
 
-                if isLoading {
-                    ProgressView()
-                        .controlSize(.mini)
+            Text(L.Team.membersRolesHint)
+                .font(.callout).foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Picker(L.Team.membersRoleFilter, selection: $selectedRole) {
+                Text(L.Team.membersAll).tag(TeamServerRole?.none)
+                Text(TeamServerRole.member.displayName).tag(TeamServerRole?.some(.member))
+                Text(TeamServerRole.admin.displayName).tag(TeamServerRole?.some(.admin))
+                Text(TeamServerRole.guest.displayName).tag(TeamServerRole?.some(.guest))
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            VStack(spacing: 4) {
+                ForEach(filteredMembers) { member in memberRow(member) }
+                if !isLoading && filteredMembers.isEmpty {
+                    Text(L.Team.membersEmpty)
+                        .font(.callout).foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 12)
                 }
+            }
 
-                if showCopied {
-                    Text(L.Team.copied)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .transition(.opacity)
+            if canManage {
+                Divider()
+                if let fresh = freshMember, let token = fresh.token {
+                    freshTokenPill(fresh, token: token)
                 }
-
-                Spacer(minLength: 0)
+                addRow
+                if newRole == .guest {
+                    Text(L.Team.guestHint).font(.caption).foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .animation(.easeInOut(duration: 0.2), value: showCopied)
-
-            ForEach(members) { member in
-                memberRow(member)
-            }
-
-            if let fresh = freshMember, let token = fresh.token {
-                freshTokenPill(fresh, token: token)
-            }
-
-            addRow
 
             if let errorText {
-                Text(errorText)
-                    .font(.caption)
-                    .foregroundColor(DashboardPalette.ink(100))
+                Text(errorText).font(.callout).foregroundColor(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.top, 2)
         .onAppear(perform: reload)
         .alert(L.Team.membersDeleteConfirmTitle,
-               isPresented: $showDeleteConfirmation,
-               presenting: memberToDelete) { member in
+               isPresented: $showDeleteConfirmation, presenting: memberToDelete) { member in
             Button(L.Account.cancel, role: .cancel) {}
-            Button(L.Team.membersRemove, role: .destructive) {
-                delete(member)
-            }
-        } message: { member in
-            Text(L.Team.membersDeleteConfirmMessage(member.name))
-        }
+            Button(L.Team.membersRemove, role: .destructive) { delete(member) }
+        } message: { member in Text(L.Team.membersDeleteConfirmMessage(member.name)) }
     }
-
-    // MARK: - Zeilen
 
     private func memberRow(_ member: TeamServerMember) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 12) {
             Text(member.name)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .truncationMode(.middle)
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(1).truncationMode(.middle)
+                .help(member.name)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-            TeamRoleBadge(role: member.role)
+            if canManage {
+                Picker(L.Team.membersRole, selection: Binding(
+                    get: { member.role },
+                    set: { updateRole(member, to: $0) }
+                )) {
+                    Text(TeamServerRole.member.displayName).tag(TeamServerRole.member)
+                    Text(TeamServerRole.admin.displayName).tag(TeamServerRole.admin)
+                    Text(TeamServerRole.guest.displayName).tag(TeamServerRole.guest)
+                }
+                .labelsHidden()
+                .frame(width: 100)
+                .disabled(updatingMemberId != nil)
+                .accessibilityLabel("\(L.Team.membersRole): \(member.name)")
+            } else {
+                TeamRoleBadge(role: member.role)
+            }
 
+            if updatingMemberId == member.id {
+                ProgressView().controlSize(.mini)
+            }
             if let created = member.createdAt {
                 Text(DateFormatter.localizedString(from: created, dateStyle: .short, timeStyle: .none))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(.caption).foregroundColor(.secondary)
+                    .frame(width: 68, alignment: .trailing)
             }
-
-            Spacer(minLength: 8)
-
-            // Einladung: Download-Link, Fundort des Feldes, Team-ID und das
-            // Token dieser Person — fertig zum Verschicken.
-            Button(action: { copyInvitation(token: member.token) }) {
-                Image(systemName: "doc.on.clipboard")
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-            .disabled(member.token == nil)
-            .help(L.Team.membersCopyInvite)
-
-            Button(action: {
-                memberToDelete = member
-                showDeleteConfirmation = true
-            }) {
-                Image(systemName: "trash")
-                    .foregroundColor(.red)
-            }
-            .buttonStyle(.plain)
-            .help(L.Team.membersRemove)
-        }
-    }
-
-    /// Das frische Token — Schreibmaschinenschrift zum Abgleichen, ein Knopf
-    /// zum Kopieren, einer für die fertige Einladung, ein X zum Wegräumen.
-    private func freshTokenPill(_ member: TeamServerMember, token: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(L.Team.membersTokenHint(member.name))
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 6) {
-                Text(token)
-                    .font(.system(size: 11, design: .monospaced))
-                    .textSelection(.enabled)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.secondary.opacity(0.15)))
-
+            if canManage {
+                Button(action: { copyInvitation(token: member.token) }) {
+                    Image(systemName: "doc.on.clipboard")
+                }
+                .buttonStyle(.plain).disabled(member.token == nil)
+                .help(L.Team.membersCopyInvite)
+                .accessibilityLabel("\(L.Team.membersCopyInvite): \(member.name)")
                 Button(action: {
-                    TeamClipboard.copyConcealed(token)
-                    flashCopied()
-                }) {
-                    Image(systemName: "doc.on.doc")
-                        .foregroundColor(.secondary)
-                }
+                    memberToDelete = member
+                    showDeleteConfirmation = true
+                }) { Image(systemName: "trash").foregroundColor(.red) }
                 .buttonStyle(.plain)
-                .help(L.Team.membersCopyToken)
-
-                Button(L.Team.membersCopyInvite) {
-                    copyInvitation(token: token)
-                }
-                .controlSize(.small)
-
-                Spacer(minLength: 4)
-
-                Button(action: { freshMember = nil }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
+                .help(L.Team.membersRemove)
+                .accessibilityLabel("\(L.Team.membersRemove): \(member.name)")
             }
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+        .frame(minHeight: 36)
     }
 
     private var addRow: some View {
-        HStack(spacing: 8) {
-            TextField(L.Team.membersNamePlaceholder, text: $newName)
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 140)
-                .onSubmit(add)
-
-            Picker("", selection: $newRole) {
-                Text(TeamServerRole.member.displayName).tag(TeamServerRole.member)
-                Text(TeamServerRole.admin.displayName).tag(TeamServerRole.admin)
+        HStack(alignment: .bottom, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L.Team.membersNamePlaceholder).font(.caption).foregroundColor(.secondary)
+                TextField(L.Team.membersNamePlaceholder, text: $newName)
+                    .textFieldStyle(.roundedBorder).onSubmit(add)
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .fixedSize()
-
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L.Team.membersRole).font(.caption).foregroundColor(.secondary)
+                Picker(L.Team.membersRole, selection: $newRole) {
+                    Text(TeamServerRole.member.displayName).tag(TeamServerRole.member)
+                    Text(TeamServerRole.admin.displayName).tag(TeamServerRole.admin)
+                    Text(TeamServerRole.guest.displayName).tag(TeamServerRole.guest)
+                }.labelsHidden().frame(width: 100)
+            }
             Button(L.Team.membersAdd, action: add)
                 .disabled(trimmedNewName.isEmpty || isAdding)
-
-            if isAdding {
-                ProgressView()
-                    .controlSize(.small)
-            }
+            if isAdding { ProgressView().controlSize(.small) }
         }
     }
 
-    // MARK: - Aktionen
+    private func freshTokenPill(_ member: TeamServerMember, token: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L.Team.membersTokenHint(member.name))
+                .font(.caption).foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Text(token).font(.system(size: 11, design: .monospaced))
+                    .textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                Button(action: {
+                    TeamClipboard.copyConcealed(token)
+                    flashCopied()
+                }) { Image(systemName: "doc.on.doc") }
+                    .buttonStyle(.plain).help(L.Team.membersCopyToken)
+                    .accessibilityLabel(L.Team.membersCopyToken)
+                Button(L.Team.membersCopyInvite) { copyInvitation(token: token) }
+                    .controlSize(.small)
+                Spacer(minLength: 4)
+                Button(action: { freshMember = nil }) { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain).accessibilityLabel(L.Fleet.done)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+    }
 
     private var trimmedNewName: String {
         newName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -471,30 +468,40 @@ struct TeamMemberManagement: View {
         connection.fetchMembers { result in
             isLoading = false
             switch result {
-            case .success(let list):
-                members = list
+            case .success(let list): members = list; errorText = nil
+            case .failure(let error): errorText = error.errorDescription
+            }
+        }
+    }
+
+    private func updateRole(_ member: TeamServerMember, to role: TeamServerRole) {
+        guard canManage, updatingMemberId == nil, member.role != role else { return }
+        updatingMemberId = member.id
+        connection.updateMember(id: member.id, role: role) { result in
+            updatingMemberId = nil
+            switch result {
+            case .success:
                 errorText = nil
-            case .failure(let error):
-                errorText = error.errorDescription
+                reload()
+            case .failure(let error): errorText = error.errorDescription
             }
         }
     }
 
     private func add() {
         let name = trimmedNewName
-        guard !name.isEmpty, !isAdding else { return }
+        guard canManage, !name.isEmpty, !isAdding else { return }
         isAdding = true
         connection.addMember(name: name, role: newRole) { result in
             isAdding = false
             switch result {
             case .success(let member):
                 newName = ""
-                newRole = .member
                 freshMember = member
                 errorText = nil
+                selectedRole = nil
                 reload()
-            case .failure(let error):
-                errorText = error.errorDescription
+            case .failure(let error): errorText = error.errorDescription
             }
         }
     }
@@ -506,22 +513,17 @@ struct TeamMemberManagement: View {
                 if freshMember?.id == member.id { freshMember = nil }
                 errorText = nil
                 reload()
-            case .failure(let error):
-                errorText = error.errorDescription
+            case .failure(let error): errorText = error.errorDescription
             }
         }
     }
 
-    /// Die Einladung trägt das Token mitten im Text — sie ist genauso geheim
-    /// wie das Token allein und geht deshalb denselben Weg.
     private func copyInvitation(token: String?) {
         guard let token, let teamId = connection.teamId else { return }
-        TeamClipboard.copyConcealed(L.Team.invitation(teamId: teamId, token: token))
+        TeamClipboard.copyConcealed(L.Team.invitation(serverURL: connection.serverURL, teamId: teamId, token: token))
         flashCopied()
     }
 
-    /// Zeigt „Kopiert" und blendet es nach zwei Sekunden wieder aus. Der Token
-    /// sorgt dafür, dass ein zweiter Klick den Hinweis verlängert.
     private func flashCopied() {
         copyToken += 1
         let token = copyToken

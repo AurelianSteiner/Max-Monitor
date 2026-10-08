@@ -56,7 +56,9 @@ private struct FleetDashboardView: View {
     @State private var generation = UUID()
     @State private var isLoading = true
     @State private var loadError: String?
-    @State private var showsAccountLimits = false
+    @State private var selectedTab: MonitorTab = .queue
+    private enum MonitorTab { case queue, accounts, members }
+    private var showsAccountLimits: Bool { selectedTab == .accounts }
     @State private var activeSheet: MonitorSheet?
 
     private enum MonitorSheet: String, Identifiable {
@@ -70,10 +72,19 @@ private struct FleetDashboardView: View {
             Divider()
             ZStack {
                 fleetContent
-                    .opacity(showsAccountLimits ? 0 : 1)
-                    .allowsHitTesting(!showsAccountLimits)
-                    .accessibilityHidden(showsAccountLimits)
-                if showsAccountLimits {
+                    .opacity(selectedTab == .queue ? 1 : 0)
+                    .allowsHitTesting(selectedTab == .queue)
+                    .accessibilityHidden(selectedTab != .queue)
+                if selectedTab == .members {
+                    ScrollView {
+                        TeamMemberManagement()
+                            .id(generation)
+                            .padding(32)
+                            .frame(maxWidth: 760, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .background(Color(NSColor.windowBackgroundColor))
+                } else if showsAccountLimits {
                     DashboardView(
                         manager: DashboardRefreshManager.shared,
                         onMenuAction: handleAccountAction,
@@ -111,17 +122,20 @@ private struct FleetDashboardView: View {
 
     private var toolbar: some View {
         HStack(spacing: 12) {
-            Picker(L.Fleet.navigation, selection: $showsAccountLimits) {
-                Text(L.Fleet.queueAndMacs).tag(false)
-                Text(L.Fleet.accountLimits).tag(true)
+            Picker(L.Fleet.navigation, selection: $selectedTab) {
+                Text(L.Fleet.queueAndMacs).tag(MonitorTab.queue)
+                Text(L.Fleet.accountLimits).tag(MonitorTab.accounts)
+                if connection.role?.canViewMembers == true {
+                    Text(L.Team.membersTitle).tag(MonitorTab.members)
+                }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 300)
+            .frame(width: connection.role?.canViewMembers == true ? 400 : 300)
             Spacer(minLength: 8)
             if showsAccountLimits {
                 Button(L.Fleet.manageAccounts) { activeSheet = .accounts }
-            } else {
+            } else if selectedTab == .queue && connection.role?.reportsDevice == true {
                 Button(L.Fleet.monitoringAccount) { activeSheet = .monitoring }
             }
             Button(action: { sleepGuard.toggleAwake() }) {
@@ -136,10 +150,12 @@ private struct FleetDashboardView: View {
                     .accessibilityLabel(L.Fleet.retry)
             }
             Menu {
-                Button(L.Fleet.monitoringAccount) { activeSheet = .monitoring }
+                if connection.role?.reportsDevice == true {
+                    Button(L.Fleet.monitoringAccount) { activeSheet = .monitoring }
+                }
                 Button(L.Fleet.settings) { activeSheet = .connection }
                 Button(L.Fleet.manageAccounts) {
-                    showsAccountLimits = true
+                    selectedTab = .accounts
                     activeSheet = .accounts
                 }
                 Divider()
@@ -206,6 +222,9 @@ private struct FleetDashboardView: View {
     }
 
     private func reload() {
+        if selectedTab == .members && connection.role?.canViewMembers != true {
+            selectedTab = .queue
+        }
         loadError = nil
         isLoading = true
         generation = UUID()
