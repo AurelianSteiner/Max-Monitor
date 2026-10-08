@@ -21,8 +21,8 @@ $DATA_DIR/<TEAMID>/reports/<who>.json         the latest report of one person
 $DATA_DIR/<TEAMID>/history/<who>.ndjson       one line per accepted report
 ```
 
-`<who>` is the member ID for a member or admin token, and a slug of the reported name for the
-super token. One file per person: a new report replaces the previous one.
+`<who>` is the member ID. Only ordinary member tokens can report Macs or usage.
+One file per member: a new report replaces the previous one.
 
 A report is percentages and timestamps:
 
@@ -42,7 +42,10 @@ A report is percentages and timestamps:
 ```
 
 History lines are the same numbers without the reset times, trimmed on every write to 30 days
-and 3000 lines per person. Deleting a member deletes their report and their history with them.
+and 3000 lines per person. Deleting a member permanently removes all their native and Hub Macs, usage reports,
+usage history and machine events. Their token is revoked. Minimal device/worker ID deny
+lists in `fleet.json` prevent stale queue syncs and automatic enrollment from restoring
+the deleted Mac, including after a restart. Shared queue tasks and their task history remain.
 
 **What never arrives here:** session keys, OAuth tokens, cookies, prompts, chat content,
 project or file names. The app does not send them, and there is no endpoint that would take
@@ -50,9 +53,8 @@ them.
 
 **What is personal, even so** — worth knowing before you host this for other people:
 
-- `person` is a display name. For a member (or admin) token the server replaces whatever was
-  sent with the name the team owner typed in. A **super** token has no member entry, so what
-  the app sends stands: the full macOS user name (`NSFullUserName()`).
+- `person` is a display name. The server replaces it with the stored member name.
+  Admin, guest and owner access does not participate as a reporting Mac.
 - `limit.label` can carry an account name. Someone reporting several Claude accounts gets one
   line per account, prefixed with that account's name — and for an OAuth account without a
   self-chosen alias, that name **is the login email address**. Setting an alias per account in
@@ -110,15 +112,15 @@ token you present:
 | Role | Where the token comes from | May do |
 | --- | --- | --- |
 | `super` | `TEAM_TOKENS` / `TEAM_TOKEN` | everything: create and remove members, read all reports, read all member tokens |
-| `admin` | a `members.json` entry with `"role": "admin"` | report its Mac, read the team and member list (**without** tokens), synchronize the queue, complete tasks |
+| `admin` | a `members.json` entry with `"role": "admin"` | read the team and member list (**without** tokens), synchronize the queue, complete tasks, permanently delete ordinary members and their Macs; never report a Mac |
 | `member` | a `members.json` entry | report its Mac and usage, read all team reports, fleet, queue and history, complete tasks |
 | `guest` | a `members.json` entry with `"role": "guest"` | read the complete fleet, queue, reports, history and member list (**without** tokens), complete tasks; never report a Mac or usage |
 
 The owner changes an existing role with `PATCH /v1/teams/:id/members/:memberId`
 and `{ "role": "member" | "admin" | "guest" }`. The member ID, name, creation date
-and token stay unchanged. Switching to guest immediately hides that identity's old
+and token stay unchanged. Switching to admin or guest immediately hides that identity's old
 Mac reports and liveness events from the shared overview. Stored telemetry is retained
-so the role change is reversible. The server rejects guest heartbeats and usage reports
+so the role change is reversible. The server accepts heartbeats and usage reports only from members
 even from older apps. Bound worker enrollments retain the member role; use a separate
 guest access for a person who only oversees the team.
 
@@ -179,8 +181,10 @@ invitation — download link, server address, team ID, token — on the clipboar
 concealed, so clipboard managers do not keep them in their history.
 
 The main window also has a **Members** tab for owners, admins and guests, with
-All / Member / Admin / Guest filters. Only the owner can create, change or remove
-identities or copy invitation tokens. New manual invitations default to Guest;
+All / Member / Admin / Guest filters. Only the owner can create or change
+identities or copy invitation tokens. Admins can permanently delete ordinary members
+and their Macs from the Members tab or the Mac details in the overview, after confirmation.
+Admins cannot delete guest or admin access. New manual invitations default to Guest;
 automatic worker enrollment still creates Members.
 
 ## Endpoints
@@ -191,12 +195,12 @@ All of them except `/health` need `Authorization: Bearer <token>`.
 | --- | --- | --- | --- |
 | `GET` | `/health` | anyone | `{"ok":true}` |
 | `GET` | `/v1/teams/:id/me` | any role | role, name and member ID of this token |
-| `POST` | `/v1/reports` | any role | store a report (members always as themselves) |
-| `GET` | `/v1/teams/:id/reports` | any role | super/admin: all reports, member: only its own |
-| `GET` | `/v1/teams/:id/members` | super, admin | member list — tokens included for super only |
+| `POST` | `/v1/reports` | member | store a report, always as the authenticated member |
+| `GET` | `/v1/teams/:id/reports` | any role | reports belonging to current ordinary members |
+| `GET` | `/v1/teams/:id/members` | super, admin, guest | member list — tokens included for super only |
 | `POST` | `/v1/teams/:id/members` | super | create a member `{name, role?}`, returns its token |
-| `DELETE` | `/v1/teams/:id/members/:memberId` | super | remove a member, their report and their history |
-| `GET` | `/v1/teams/:id/members/:mid/history?days=7` | super, admin, own member | usage history, up to 30 days |
+| `DELETE` | `/v1/teams/:id/members/:memberId` | super, admin | permanently delete identity and Macs; admin may delete ordinary members only |
+| `GET` | `/v1/teams/:id/members/:mid/history?days=7` | any role | usage history of current ordinary members, up to 30 days |
 
 ## Worker fleet and workflow queue
 
@@ -209,7 +213,7 @@ Macs. See [fleet setup](../docs/fleet-monitoring.md).
 | Method | Path | Who | Does |
 | --- | --- | --- | --- |
 | `GET` | `/fleet` or `/monitor` | anyone | dashboard shell, no team data or credentials |
-| `POST` | `/v1/teams/:id/heartbeat` | any role | register/update this Mac's liveness, battery and per-account usage |
+| `POST` | `/v1/teams/:id/heartbeat` | member | register/update this Mac's liveness, battery and per-account usage |
 | `GET` | `/v1/teams/:id/fleet` | any role | complete team fleet, queue and event log |
 | `GET` | `/v1/teams/:id/fleet/events` | any role | authenticated SSE change signals; clients reload the complete fleet |
 | `POST` | `/v1/teams/:id/queue` | super, admin | complete queue/worker-source snapshot or source-only error |

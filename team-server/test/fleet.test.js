@@ -125,7 +125,7 @@ test("shared authenticated relay supports fleet without changing existing report
       assert.ok(!JSON.stringify(result.body).includes("must-not-persist"));
     }
     assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", token: second.token, body: heartbeat() })).status, 409);
-    assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", body: heartbeat() })).status, 409);
+    assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", body: heartbeat() })).status, 403);
     assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", token: second.token, body: heartbeat(deviceB, { workerId: "studio-1" }) })).status, 409);
     assert.ok(!fs.readFileSync(path.join(directory, "DEMO1234", "fleet.json"), "utf8").includes("must-not-persist"));
   });

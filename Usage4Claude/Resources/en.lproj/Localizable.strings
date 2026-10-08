@@ -397,19 +397,19 @@
 "team.members.role" = "Role";
 "team.members.role_filter" = "Filter by role";
 "team.members.empty" = "No accounts with this role.";
-"team.members.roles_hint" = "Members report their Mac. Admins can also synchronize the queue. Guests can view everything and complete tasks without reporting a Mac.";
+"team.members.roles_hint" = "Only members appear as Macs. Admins manage the queue and can permanently delete Macs. Guests can view the overview and complete tasks.";
 "team.members.guest_hint" = "Guest access: view all Macs, tasks and quotas, and complete tasks. This Mac is not reported as a worker.";
 
 /* Team — member management (owner only) */
 "team.members.title" = "Members";
 "team.members.name_placeholder" = "Name";
 "team.members.add" = "Create";
-"team.members.remove" = "Remove";
+"team.members.remove" = "Permanently delete";
 "team.members.copy_token" = "Copy token";
 "team.members.copy_invite" = "Copy invitation";
 "team.members.token_hint" = "Hand this token to %@ — it is shown only once.";
-"team.members.delete_confirm_title" = "Remove member?";
-"team.members.delete_confirm_message" = "%@ can no longer report afterwards; the token becomes invalid.";
+"team.members.delete_confirm_title" = "Permanently delete member?";
+"team.members.delete_confirm_message" = "%@ and all associated Macs, usage data and history will be permanently deleted. Their access will be revoked. Automatic worker reports will not restore the Mac. This cannot be undone.";
 
 /* Ready-made invitation — goes to the clipboard */
 "team.invite.template" = "Max Monitor – Team access\n\n1. Get the app: https://github.com/AurelianSteiner/Max-Monitor/releases/latest\n2. In the app: Settings menu → Connection & worker → Change server\n3. Server address: %1$@\n4. Team ID: %2$@\n5. Personal token: %3$@\n6. Connect\n\nClaude credentials stay on your Mac.";

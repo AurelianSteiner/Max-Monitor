@@ -400,6 +400,8 @@ struct TeamMemberManagement: View {
                 .buttonStyle(.plain).disabled(member.token == nil)
                 .help(L.Team.membersCopyInvite)
                 .accessibilityLabel("\(L.Team.membersCopyInvite): \(member.name)")
+            }
+            if canManage || (connection.role?.canDeleteMacs == true && member.role == .member) {
                 Button(action: {
                     memberToDelete = member
                     showDeleteConfirmation = true

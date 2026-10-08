@@ -55,7 +55,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES } = require("./fleet");
-const { EnrollmentError, enrollWorkerMember } = require("./enrollment");
+const { EnrollmentError, enrollWorkerMember, validateEnrollment } = require("./enrollment");
 
 const PORT = process.env.PORT === undefined ? 8080 : Number(process.env.PORT);
 const HOST = process.env.HOST || undefined;
@@ -369,17 +369,27 @@ function readReports(teamId) {
   return reports;
 }
 
-// Access to the team is separate from participation as a reporting Mac. Keep
-// stored telemetry intact so changing a role is reversible, but omit guests'
-// devices (including their old liveness events) from every shared snapshot.
-function visibleFleet(teamId) {
-  const guests = new Set(readMembers(teamId).filter((member) => member.role === "guest").map((member) => member.id));
+// Only current ordinary members participate as Macs. Hub telemetry needs an
+// exact enrollment binding; stale, owner, admin and guest identities stay out.
+function visibleFleet(teamId, who) {
+  const members = readMembers(teamId).filter((member) => member.role === "member");
+  const memberIds = new Set(members.map((member) => member.id));
+  const enrolledWorkers = new Map(members.filter((member) => member.enrollment).map((member) => [member.enrollment.workerId, member]));
   const snapshot = fleet.snapshot(teamId);
-  const hiddenDevices = new Set(snapshot.machines.filter((machine) => guests.has(machine.memberId)).map((machine) => machine.deviceId));
+  const machines = snapshot.machines.flatMap((machine) => {
+    if (machine.telemetrySource !== "worker") return memberIds.has(machine.memberId) ? [machine] : [];
+    const member = enrolledWorkers.get(machine.workerId);
+    return member ? [{ ...machine, memberId: member.id }] : [];
+  });
+  const devices = new Set(machines.map((machine) => machine.deviceId));
+  const workers = new Set(machines.map((machine) => machine.workerId).filter(Boolean));
   return {
     ...snapshot,
-    machines: snapshot.machines.filter((machine) => !hiddenDevices.has(machine.deviceId)),
-    events: snapshot.events.filter((entry) => !hiddenDevices.has(entry.deviceId || entry.entityId)),
+    capabilities: { canDeleteMachines: ["admin", "super"].includes(who.role) },
+    machines,
+    events: snapshot.events.filter((entry) => entry.type.startsWith("machine_")
+      ? devices.has(entry.deviceId || entry.entityId)
+      : entry.type.startsWith("worker_") ? workers.has(entry.workerId || entry.entityId) : true),
   };
 }
 
@@ -409,7 +419,7 @@ const server = http.createServer((req, res) => {
 
       const who = identify(req, report.teamId);
       if (!who) return send(res, 401, { error: "Token fehlt oder passt nicht zum Team" });
-      if (who.role === "guest") return send(res, 403, { error: "Gäste melden keinen eigenen Mac und keine Kontingente" });
+      if (who.role !== "member") return send(res, 403, { error: "Nur Mitglieder melden einen eigenen Mac und Kontingente" });
 
       // Mitglieder melden immer unter ihrem eingetragenen Namen —
       // niemand kann unter fremdem Namen melden.
@@ -455,14 +465,16 @@ const server = http.createServer((req, res) => {
       try {
         // The complete read/check/write stays synchronous, so simultaneous
         // requests in this relay instance cannot create duplicate identities.
+        fleet.assertEnrollmentAllowed(teamId, validateEnrollment(body));
         const result = enrollWorkerMember(body, {
           read: () => readMembers(teamId, true),
           write: (members) => writeMembers(teamId, members),
         });
         return send(res, 200, { schema: 1, ...result });
       } catch (enrollmentError) {
-        return send(res, enrollmentError instanceof EnrollmentError ? enrollmentError.status : 500,
-          { error: enrollmentError instanceof EnrollmentError ? enrollmentError.message : "Worker-Registrierung konnte nicht gespeichert werden" });
+        const expected = enrollmentError instanceof EnrollmentError || enrollmentError instanceof FleetError;
+        return send(res, expected ? enrollmentError.status : 500,
+          { error: expected ? enrollmentError.message : "Worker-Registrierung konnte nicht gespeichert werden" });
       }
     });
   }
@@ -473,7 +485,7 @@ const server = http.createServer((req, res) => {
     return streamFleet(req, res, teamId);
   }
   if (req.method === "GET" && rest === "/fleet") {
-    return fleetResult(res, () => visibleFleet(teamId));
+    return fleetResult(res, () => visibleFleet(teamId, who));
   }
   // Every team member can resolve an attention item; source synchronization
   // remains restricted to the queue bridge/admin.
@@ -486,12 +498,17 @@ const server = http.createServer((req, res) => {
     });
   }
   if (req.method === "POST" && (rest === "/heartbeat" || rest === "/queue")) {
-    if (rest === "/heartbeat" && who.role === "guest") return send(res, 403, { error: "Gäste registrieren keinen Worker-Mac" });
+    if (rest === "/heartbeat" && who.role !== "member") return send(res, 403, { error: "Nur Mitglieder registrieren einen Worker-Mac" });
     if (rest === "/queue" && !["admin", "super"].includes(who.role)) return send(res, 403, { error: "nur Admin oder Team-Inhaber darf die Queue aktualisieren" });
     return readBody(req, (error, raw) => {
       if (error) return send(res, 413, { error: "Fleet-Meldung zu groß" });
       let body;
       try { body = JSON.parse(raw); } catch { return send(res, 400, { error: "kein gültiges JSON" }); }
+      // A buffered request must not resurrect a member deleted while reading.
+      const who = identify(req, teamId);
+      if (!who) return send(res, 401, { error: "Mitgliedszugang ist nicht mehr gültig" });
+      if (rest === "/heartbeat" && who.role !== "member") return send(res, 403, { error: "Nur Mitglieder melden Macs" });
+      if (rest === "/queue" && !["admin", "super"].includes(who.role)) return send(res, 403, { error: "Keine Berechtigung zum Queue-Abgleich" });
       if (rest === "/heartbeat" && who.member?.enrollment &&
         (String(body?.deviceId || "").toLowerCase() !== who.member.enrollment.deviceId || body?.workerId !== who.member.enrollment.workerId)) {
         return send(res, 409, { error: "Worker-Token ist an die registrierte Geräte-ID und Worker-ID gebunden" });
@@ -515,8 +532,8 @@ const server = http.createServer((req, res) => {
   // Auslastung teilt, bekommt die Übersicht auch zurück; der frühere Filter
   // auf die eigene Meldung nahm Mitgliedern genau den Anreiz dafür.
   if (req.method === "GET" && rest === "/reports") {
-    const guests = new Set(readMembers(teamId).filter((member) => member.role === "guest").map((member) => member.id));
-    return send(res, 200, { reports: readReports(teamId).filter((report) => !guests.has(report.memberId)) });
+    const members = new Set(readMembers(teamId).filter((member) => member.role === "member").map((member) => member.id));
+    return send(res, 200, { reports: readReports(teamId).filter((report) => members.has(report.memberId)) });
   }
 
   // POST /v1/teams/:id/members — Mitglied anlegen (nur Super-Admin)
@@ -575,6 +592,7 @@ const server = http.createServer((req, res) => {
   const historyMatch = rest.match(/^\/members\/([a-z0-9-]{1,64})\/history$/);
   if (req.method === "GET" && historyMatch) {
     const memberId = historyMatch[1];
+    if (!readMembers(teamId).some((member) => member.id === memberId && member.role === "member")) return send(res, 404, { error: "Mitglied nicht gefunden" });
     const days = Math.min(30, Math.max(1, Number(url.searchParams.get("days")) || 7));
     return send(res, 200, { memberId, days, samples: readHistory(teamId, memberId, days) });
   }
@@ -604,15 +622,19 @@ const server = http.createServer((req, res) => {
     });
   }
   if (req.method === "DELETE" && memberMatch) {
-    if (who.role !== "super") return send(res, 403, { error: "nur der Team-Inhaber darf Mitglieder entfernen" });
-    const members = readMembers(teamId);
-    const remaining = members.filter((member) => member.id !== memberMatch[1]);
-    if (remaining.length === members.length) return send(res, 404, { error: "Mitglied nicht gefunden" });
+    if (!["admin", "super"].includes(who.role)) return send(res, 403, { error: "Nur Admin oder Team-Inhaber darf Macs endgültig löschen" });
+    let members;
+    try { members = readMembers(teamId, true); } catch { return send(res, 500, { error: "Mitglieder konnten nicht gelesen werden" }); }
+    const member = members.find((entry) => entry.id === memberMatch[1]);
+    if (!member) return send(res, 404, { error: "Mitglied nicht gefunden" });
+    if (who.role === "admin" && member.role !== "member") return send(res, 403, { error: "Admins dürfen nur Macs von Mitgliedern löschen" });
     try {
-      writeMembers(teamId, remaining);
-      // Meldung und Verlauf des Mitglieds gleich mit entfernen
-      fs.rmSync(path.join(teamDir(teamId), "reports", `${memberMatch[1]}.json`), { force: true });
-      fs.rmSync(historyPath(teamId, memberMatch[1]), { force: true });
+      // Purge first and revoke last: a failed cleanup remains retryable.
+      fleet.removeMember(teamId, member);
+      fs.rmSync(path.join(teamDir(teamId), "reports", `${member.id}.json`), { force: true });
+      fs.rmSync(historyPath(teamId, member.id), { force: true });
+      writeMembers(teamId, members.filter((entry) => entry.id !== member.id));
+      fleet.notify(teamId);
     } catch (writeError) {
       console.error("Mitglied entfernen fehlgeschlagen:", writeError.message);
       return send(res, 500, { error: "Speichern fehlgeschlagen" });
