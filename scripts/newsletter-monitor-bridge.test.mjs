@@ -8,7 +8,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   DEFAULT_WORKFLOWS, normalizeTag, validateWorkflows, discoverTags, listTasks,
-  parseClaim, listClaims, buildQueue, parseObservedWorkers, readHubFleet,
+  parseClaim, listClaims, parseWorkerIssue, buildQueue, parseObservedWorkers, readHubFleet,
   collectSnapshot, relayEndpoint, publishSnapshot, syncOnce, runSyncLoop,
 } from './newsletter-monitor-bridge.mjs';
 
@@ -264,4 +264,73 @@ test('installer generates a valid launchd template without including a supplied 
     execFileSync('/bin/bash', ['-n', path.join(output, 'service/run.sh')]);
     if (process.platform === 'darwin') execFileSync('/usr/bin/plutil', ['-lint', plistFile]);
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
+
+const issueMessage = (overrides = {}) => ({ ts: '1791374000.001', text: ':red_circle: Mac `mac-1` holt keine Aufgaben\n```Failed to authenticate: OAuth session expired```\nAbhilfe: private path',
+  metadata: { event_type: 'ai_newsletter_fehler', event_payload: { kind: 'system', worker: 'mac-1', stage: 'claude' } }, ...overrides });
+
+test('worker diagnostics include auth and arbitrary system/update failures without tasks or secrets', () => {
+  const issue = parseWorkerIssue(issueMessage());
+  assert.equal(issue.workerId, 'mac-1');
+  assert.equal(issue.severity, 'error');
+  assert.match(issue.message, /OAuth session expired/);
+  assert.doesNotMatch(JSON.stringify(issue), /private path/);
+  for (const stage of ['clickup_list', 'finalize', 'slack', 'claude']) {
+    const message = issueMessage({ text: 'Systemfehler\n```HTTP 503\nBearer sensitive-value token=another-secret```' });
+    message.metadata.event_payload.stage = stage;
+    const parsed = parseWorkerIssue(message);
+    assert.equal(parsed.stage, stage);
+    assert.doesNotMatch(parsed.message, /sensitive-value|another-secret|\n/);
+  }
+  const warning = issueMessage({ text: ':hourglass: Der Claude-Token läuft in 12 Tagen ab' });
+  assert.equal(parseWorkerIssue(warning).severity, 'warning');
+  warning.text = ':hourglass: Der Claude-Token ist abgelaufen';
+  assert.equal(parseWorkerIssue(warning).severity, 'error');
+  const update = issueMessage(); update.metadata.event_payload = { kind: 'update', worker: 'mac-1', tool: 'rs-hub-mcp' };
+  assert.equal(parseWorkerIssue(update).stage, 'rs-hub-mcp');
+  const run = issueMessage(); run.metadata.event_payload.kind = 'lauf';
+  assert.equal(parseWorkerIssue(run), null);
+  assert.equal(parseWorkerIssue({ ...issueMessage(), ts: 'Infinity' }), null);
+  const legacy = { ts: '1791374000.001', bot_id: 'B1', text: ':warning: AI-Newsletter-Worker auf Mac `mac-1`: technischer Fehler bei clickup_list (Error). Lokales Log prüfen.' };
+  assert.equal(parseWorkerIssue(legacy).stage, 'clickup_list');
+  assert.equal(parseWorkerIssue({ ...legacy, bot_id: undefined }), null);
+});
+
+test('complete Slack warning scans clear resolved issues; partial scans preserve them', async () => {
+  const config = { clickup: { workspace_id: 'test' }, slack: { channel_id: 'status' }, fehler: { enabled: true, channel_id: 'errors' }, hub: {} };
+  let messages = [issueMessage()]; let failErrors = false; let failTasks = false;
+  const collect = () => collectSnapshot({ config, now, fleetReader: async () => [], hubFetch: async target => {
+    const url = new URL(target);
+    if (url.hostname !== 'slack.com') {
+      if (failTasks) throw new Error('ClickUp unavailable');
+      return response({ spaces: [] });
+    }
+    if (url.searchParams.get('channel') === 'errors') {
+      if (failErrors) return response({ ok: true, messages, has_more: true });
+      return response({ ok: true, messages, has_more: false });
+    }
+    return response({ ok: true, messages: [], has_more: false });
+  } });
+  assert.equal((await collect()).workerIssues.length, 1);
+  failTasks = true;
+  const partial = await collect();
+  assert.equal(partial.workerIssues.length, 1);
+  assert.match(partial.source.error, /ClickUp unavailable/);
+  assert.equal(Object.hasOwn(partial, 'tasks'), false);
+  let saved = false;
+  assert.equal((await syncOnce({ collect: async () => partial, publish: async () => {}, save: async () => { saved = true; } })).ok, false);
+  assert.equal(saved, false);
+  failTasks = false; failErrors = true;
+  assert.equal(Object.hasOwn(await collect(), 'workerIssues'), false);
+  failErrors = false; messages = [];
+  assert.deepEqual((await collect()).workerIssues, []);
+});
+
+test('a newer token-expiry warning cannot hide an existing Claude outage', async () => {
+  const warning = issueMessage({ ts: '1791374100.001', text: ':hourglass: Der Claude-Token läuft in 12 Tagen ab' });
+  const snapshot = await collectSnapshot({ now, config: { clickup: { workspace_id: 'test' }, slack: { channel_id: 'test' }, hub: {} },
+    hubFetch: async target => String(target).includes('slack.com')
+      ? response({ ok: true, messages: [warning, issueMessage()], has_more: false }) : response({ spaces: [] }), fleetReader: async () => [] });
+  assert.equal(snapshot.workerIssues.length, 2);
+  assert.ok(snapshot.workerIssues.some(issue => issue.severity === 'error' && /OAuth/.test(issue.message)));
 });

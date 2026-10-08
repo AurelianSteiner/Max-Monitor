@@ -147,8 +147,24 @@ function validateQueue(body) {
     error: diagnostic(rawSource.error, "source.error"),
     detail: diagnostic(rawSource.detail, "source.detail"),
   });
-  // A failed poll must never replace the last complete snapshot with an empty queue.
-  if (source.error) return { source };
+  let workerIssues;
+  if (body.workerIssues !== undefined) {
+    if (!Array.isArray(body.workerIssues) || body.workerIssues.length > 1000) throw new FleetError(400, "workerIssues ist ungültig");
+    workerIssues = body.workerIssues.map((raw) => {
+      object(raw, "workerIssue");
+      if (!["error", "warning"].includes(raw.severity)) throw new FleetError(400, "workerIssue.severity ist ungültig");
+      return {
+        id: string(raw.id, "workerIssue.id", 120),
+        workerId: string(raw.workerId, "workerIssue.workerId", 120),
+        stage: string(raw.stage, "workerIssue.stage", 80),
+        severity: raw.severity,
+        message: diagnostic(raw.message, "workerIssue.message") || "Worker-Fehler ohne Diagnose",
+        reportedAt: timestamp(raw.reportedAt, "workerIssue.reportedAt"),
+      };
+    });
+  }
+  // Independent worker diagnostics may update even when the task source fails.
+  if (source.error) return optionalFields({ source, workerIssues });
   if (!Array.isArray(body.tasks) || body.tasks.length > MAX_TASKS) {
     throw new FleetError(400, `tasks muss eine vollständige Liste mit höchstens ${MAX_TASKS} Einträgen sein`);
   }
@@ -212,7 +228,7 @@ function validateQueue(body) {
       });
     });
   }
-  return optionalFields({ tasks, source, observedWorkers });
+  return optionalFields({ tasks, source, observedWorkers, workerIssues });
 }
 
 function machineStatus(machine, now) {
@@ -434,6 +450,18 @@ function createFleetStore(dataDir, now = Date.now) {
     const state = read(teamId);
     const time = now();
     refreshStatuses(state, time);
+    if (incoming.workerIssues !== undefined) {
+      const previous = new Map((state.workerIssues || []).map(issue => [`${issue.workerId}:${issue.stage}:${issue.severity}`, issue]));
+      const current = new Map(incoming.workerIssues.map(issue => [`${issue.workerId}:${issue.stage}:${issue.severity}`, issue]));
+      for (const [key, issue] of current) {
+        if (previous.get(key)?.message !== issue.message || previous.get(key)?.severity !== issue.severity)
+          event(state, issue.severity === "warning" ? "worker_warning" : "worker_error", issue.workerId, issue.workerId, `${issue.stage}: ${issue.message}`, time);
+      }
+      for (const [key, issue] of previous) {
+        if (!current.has(key)) event(state, "worker_recovered", issue.workerId, issue.workerId, `Warnung bei ${issue.stage} nicht mehr vorhanden`, time);
+      }
+      state.workerIssues = incoming.workerIssues;
+    }
     const oldSource = state.queue.source;
     if (incoming.source.error) {
       if (oldSource.error !== incoming.source.error) event(state, "queue_source_error", "queue", incoming.source.name, incoming.source.error, time);
@@ -519,6 +547,14 @@ function createFleetStore(dataDir, now = Date.now) {
     for (const worker of workers.values()) {
       const { derivedStatus, ...visible } = worker;
       machines.push({ ...visible, name: worker.workerId, deviceId: `hub:${worker.workerId}`, telemetrySource: "worker", memberId: null, limits: [], status: machineStatus(worker, time), heartbeatAgeSeconds: Math.max(0, Math.floor((time - Date.parse(worker.lastSeenAt)) / 1000)), usageStale: true, usageStatus: "unavailable" });
+    }
+    for (const issue of state.workerIssues || []) {
+      let machine = machines.find(machine => machine.workerId === issue.workerId);
+      if (!machine) {
+        machine = { workerId: issue.workerId, name: issue.workerId, deviceId: `hub:${issue.workerId}`, telemetrySource: "worker", limits: [], status: "offline", usageStale: true, usageStatus: "unavailable" };
+        machines.push(machine);
+      }
+      (machine.workerIssues ||= []).push(issue);
     }
     return {
       schema: 1,

@@ -226,6 +226,7 @@ main:focus { outline: none; }
 .fleet-name small, .fleet-sub { display: block; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fleet-task { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fleet-task.idle { color: var(--muted); }
+.fleet-task.fleet-issue, .usage-note.fleet-issue { color: var(--st-failed); }
 .fleet-battery { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .fleet-battery small { font-size: 11px; color: var(--muted); }
 .meter { display: grid; grid-template-columns: minmax(0, 1fr) 34px; align-items: center; gap: 8px; }
