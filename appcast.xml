@@ -3,6 +3,19 @@
     <channel>
         <title>Max Monitor</title>
         <item>
+            <title>2.13</title>
+            <pubDate>Thu, 08 Oct 2026 10:24:33 +0000</pubDate>
+            <sparkle:version>2.13</sparkle:version>
+            <sparkle:shortVersionString>2.13</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<ul><li>OAuth-, Login- und andere gemeldete Worker-Fehler mit konkretem Grund in Übersicht, Details und Log.</li><li>Ausgefallene Worker und ausstehende ClickUp-Rückmeldungen sichtbar; behobene Fehler verschwinden wieder.</li><li>Nur reguläre Mitglieder erscheinen als Worker-Macs.</li><li>Admins und Inhaber können Mitglieds-Macs dauerhaft samt Zugang, Kontingentdaten und Verlauf entfernen.</li></ul>]]></description>
+            <enclosure
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.13/Max-Monitor-2.13.dmg"
+                sparkle:edSignature="mJFHv1i2l04Py0MkV3t6wOuAPjTjWekTqEh7HwHcC3NLAQmeop5mu2IRCGs44p1RerAtNyYug6pAN6p7tc4LBw=="
+                length="5751105"
+                type="application/octet-stream"/>
+        </item>
+        <item>
             <title>2.12</title>
             <pubDate>Thu, 08 Oct 2026 01:11:25 GMT</pubDate>
             <sparkle:version>2.12</sparkle:version>
