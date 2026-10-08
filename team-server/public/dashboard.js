@@ -60,11 +60,32 @@
     newsletter: "Pre-Gen",
     upload: "Upload",
   };
+  // Pipeline stages mirror the ClickUp tags: the trigger tag alone means
+  // "markiert"; a state tag or a worker reservation moves a task to "wartet".
+  const stages = [
+    ["marked", "Markiert", "queued"],
+    ["queued", "Wartet", "queued"],
+    ["running", "Läuft", "running"],
+    ["blocked", "Blockiert", "blocked"],
+    ["completed", "Fertig", "completed"],
+    ["failed", "Fehler", "failed"],
+  ];
   const timeFormat = new Intl.DateTimeFormat("de-DE", {
     dateStyle: "short",
     timeStyle: "short",
   });
+  const clockFormat = new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" });
   const numberFormat = new Intl.NumberFormat("de-DE");
+  function setSync(text, state) {
+    $("sync-status").textContent = text;
+    $("sync-status").dataset.state = state;
+  }
+  function stageOf(task) {
+    if (task.status !== "queued") return task.status;
+    const waiting = task.workerId || (task.tags || []).some((tag) =>
+      String(tag).toLocaleLowerCase("de-DE").replace(/[^\p{L}\p{N}]/gu, "").endsWith("wartet"));
+    return waiting ? "queued" : "marked";
+  }
   function node(tag, className, value) {
     const result = document.createElement(tag);
     if (className) result.className = className;
@@ -244,24 +265,38 @@
     $("notice").textContent = message || "";
     $("notice").hidden = !message;
   }
+  function skeleton(className, lines = 3) {
+    const shell = node("div", className);
+    for (let index = 0; index < lines; index++) shell.append(node("div", "loading-line"));
+    shell.setAttribute("aria-label", "Wird geladen");
+    return shell;
+  }
   function loading() {
     if (snapshot) return;
-    $("machine-grid").replaceChildren(
-      ...Array.from({ length: 3 }, () => {
-        const shell = node("div", "machine");
-        shell.append(
-          node("div", "loading-line"),
-          node("div", "loading-line"),
-          node("div", "loading-line"),
-        );
-        shell.setAttribute("aria-label", "Geräte werden geladen");
-        return shell;
-      }),
-    );
+    $("machine-grid").replaceChildren(...Array.from({ length: 3 }, () => skeleton("machine")));
+    $("pipeline").replaceChildren(skeleton("flow", 4));
+    $("attention-list").replaceChildren(skeleton("attention-calm", 3));
+    $("fleet-body").replaceChildren(...Array.from({ length: 4 }, () => {
+      const row = node("tr");
+      const cell = node("td");
+      cell.colSpan = 6;
+      cell.append(node("div", "loading-line"));
+      row.append(cell);
+      return row;
+    }));
+  }
+  function overviewMessage(message) {
+    $("pipeline").replaceChildren(node("div", "empty-state", message));
+    $("attention-list").replaceChildren();
+    const row = node("tr");
+    const cell = node("td", "empty-state", message);
+    cell.colSpan = 6;
+    row.append(cell);
+    $("fleet-body").replaceChildren(row);
   }
   function syncStatus() {
     if (!snapshot || busy || !$('connection-error').hidden) return;
-    $('sync-status').textContent = `${streamConnected ? 'Live' : 'Abgleich'} · ${new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' }).format(new Date(snapshotReceivedAt))}`;
+    setSync(`${streamConnected ? 'Live' : 'Abgleich'} · ${clockFormat.format(new Date(snapshotReceivedAt))}`, streamConnected ? 'live' : 'polling');
   }
   function stopLive() {
     clearTimeout(streamRetry);
@@ -340,7 +375,7 @@
     busy = true;
     $("refresh").disabled = true;
     $("connect").disabled = true;
-    $("sync-status").textContent = "Aktualisiert…";
+    setSync("Aktualisiert…", "busy");
     loading();
     fetchController = new AbortController();
     const timeout = setTimeout(() => fetchController?.abort(), 15000);
@@ -370,8 +405,7 @@
       if (epoch !== generation) return false;
       snapshot = data;
       snapshotReceivedAt = Date.now();
-      $("sync-status").textContent =
-        `${streamConnected ? "Live" : "Abgleich"} · ${new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" }).format(new Date())}`;
+      setSync(`${streamConnected ? "Live" : "Abgleich"} · ${clockFormat.format(new Date())}`, streamConnected ? "live" : "polling");
       $("connection-error").hidden = true;
       showNotice(
         data.queue.source?.error
@@ -392,7 +426,7 @@
         error.name === "AbortError"
           ? "Der Team-Server antwortet nicht. Prüfe die Verbindung und aktualisiere erneut."
           : error.message;
-      $("sync-status").textContent = "Verbindung gestört";
+      setSync("Verbindung gestört", "error");
       showNotice(
         snapshot
           ? `${message} Angezeigt wird der letzte geladene Stand.`
@@ -401,14 +435,11 @@
       if (snapshot) render();
       $("connection-error").textContent = message;
       $("connection-error").hidden = false;
-      if (!snapshot)
-        $("machine-grid").replaceChildren(
-          node(
-            "div",
-            "empty-state",
-            "Gerätedaten konnten nicht geladen werden. Prüfe dein Token unter „Verbindung anzeigen“.",
-          ),
-        );
+      if (!snapshot) {
+        const failed = "Daten konnten nicht geladen werden. Prüfe die Team-Verbindung (Zahnrad oben rechts).";
+        $("machine-grid").replaceChildren(node("div", "empty-state", failed));
+        overviewMessage(failed);
+      }
       return false;
     } finally {
       clearTimeout(timeout);
@@ -428,34 +459,20 @@
     const items = tasks();
     const devices = machines();
     const attention = attentionEntries(devices, items);
-    $("metric-online").textContent = snapshot
-      ? devices.filter((x) => x.status === "online").length
-      : "—";
-    $("metric-total").textContent = snapshot
-      ? `${devices.length} Macs insgesamt`
-      : "Noch keine Gerätedaten";
-    $("metric-running").textContent = snapshot
-      ? items.filter((x) => x.status === "running").length
-      : "—";
-    $("metric-queued").textContent = snapshot
-      ? items.filter((x) => x.status === "queued").length
-      : "—";
-    const quiet = attention.filter((entry) => entry.type === "machine").length;
-    const blocked = attention.filter((entry) => entry.type === "task").length;
-    $("metric-attention").textContent = snapshot ? quiet + blocked : "—";
-    $("metric-attention-detail").textContent = snapshot
-      ? `${quiet} Macs · ${blocked} Aufgaben`
-      : "Betroffene Macs & Aufgaben anzeigen";
+    const openCount = items.filter(isOpen).length;
+    $("nav-queue").textContent = snapshot ? numberFormat.format(openCount) : "—";
+    $("nav-machines").textContent = snapshot ? numberFormat.format(devices.length) : "—";
+    $("nav-attention").textContent = numberFormat.format(attention.length);
+    $("nav-attention").hidden = !snapshot || !attention.length;
     $("log-attention-count").textContent = snapshot ? attention.length : "—";
-    $("nav-queue").textContent = snapshot ? items.filter(isOpen).length : "—";
-    $("nav-machines").textContent = snapshot ? devices.length : "—";
     $("machine-count").textContent = devices.length;
     $("queue-count").textContent = items.length;
     const statusCounts = {
-      open: items.filter(isOpen).length,
+      open: openCount,
       running: items.filter((task) => task.status === "running").length,
       queued: items.filter((task) => task.status === "queued").length,
       blocked: items.filter((task) => task.status === "blocked").length,
+      completed: items.filter((task) => task.status === "completed").length,
       all: items.length,
     };
     for (const [status, count] of Object.entries(statusCounts)) {
@@ -463,15 +480,7 @@
       if (label) label.textContent = numberFormat.format(count);
     }
     $("page-title").textContent =
-      {
-        overview: "Alles im Blick.",
-        queue: "Was als Nächstes dran ist.",
-        machines: "Deine Mac-Worker.",
-        log:
-          logFilter === "attention"
-            ? "Hier braucht es einen Blick."
-            : "Was sich verändert hat.",
-      }[view] || "Alles im Blick.";
+      { overview: "Übersicht", queue: "Queue", machines: "Macs", log: "Log" }[view] || "Übersicht";
     document.querySelectorAll(".nav-item").forEach((button) => {
       button.classList.toggle("selected", button.dataset.view === view);
       button.setAttribute(
@@ -479,10 +488,10 @@
         button.dataset.view === view ? "page" : "false",
       );
     });
-    $("machines-section").hidden = ["queue", "log"].includes(view);
-    $("queue-section").hidden = ["machines", "log"].includes(view);
+    $("overview-section").hidden = view !== "overview";
+    $("machines-section").hidden = view !== "machines";
+    $("queue-section").hidden = view !== "queue";
     $("log-section").hidden = view !== "log";
-    document.querySelector(".metrics").hidden = view === "log";
     document.querySelectorAll("#status-tabs .tab").forEach((button) => {
       button.classList.toggle(
         "selected",
@@ -498,17 +507,14 @@
       button.classList.toggle("selected", selected);
       button.setAttribute("aria-pressed", String(selected));
     });
-    $("log-description").textContent =
-      logFilter === "attention"
-        ? "Betroffene Macs und Aufgaben mit dem aktuellen Grund."
-        : "Neue Aufgaben, Statuswechsel und Meldungen der Geräte.";
     $("worker-filter").hidden = !workerFilter;
     $("worker-filter-label").textContent = `Aufgaben für ${workerFilter}`;
     $("team-label").textContent = credentials
-      ? `Team ${credentials.teamId} · ${location.host}`
-      : "Gemeinsamer Team-Server";
+      ? `Verbunden mit Team ${credentials.teamId} · ${location.host}`
+      : "Jeder Mac nutzt dieselbe Team-ID mit eigenem Mitglieds-Token.";
+    $("sync-status").title = credentials ? `Team ${credentials.teamId} · ${location.host}` : "";
     $("queue-updated").textContent = snapshot?.queue?.source?.lastSuccessAt
-      ? `Queue · ${relative(snapshot.queue.source.lastSuccessAt)}`
+      ? `ClickUp · ${relative(snapshot.queue.source.lastSuccessAt)}`
       : "Quelle noch nicht verbunden";
     const selectedWorkflow = workflowFilter;
     $("workflow").replaceChildren(node("option", "", "Alle Workflows"));
@@ -524,9 +530,223 @@
       $("workflow").append(option);
     });
     $("workflow").value = selectedWorkflow;
-    if (snapshot) renderMachines(devices);
+    if (snapshot) {
+      renderMachines(devices);
+      renderOverview(devices, items, attention);
+    }
     renderQueue(items);
     renderEvents(attention);
+  }
+  function openQueue(status, workflowValue = "") {
+    workerFilter = "";
+    workflowFilter = workflowValue;
+    query = "";
+    $("search").value = "";
+    selectView("queue", status);
+    $("queue-heading").focus({ preventScroll: true });
+  }
+  function renderPipeline(items) {
+    const groups = new Map();
+    for (const task of items) {
+      const name = workflow(task.workflow);
+      if (!groups.has(name)) groups.set(name, { value: task.workflow || "", tasks: [] });
+      groups.get(name).tasks.push(task);
+    }
+    const order = (name) => (name === "Pre-Gen" ? 0 : name === "Upload" ? 1 : 2);
+    const flows = [...groups.entries()].sort(([a], [b]) => order(a) - order(b) || a.localeCompare(b));
+    const open = items.filter(isOpen).length;
+    const done = items.length - open;
+    $("pipeline-summary").textContent = snapshot
+      ? `${numberFormat.format(open)} offen · ${numberFormat.format(done)} fertig`
+      : "—";
+    if (!flows.length) {
+      $("pipeline").replaceChildren(node("div", "empty-state", snapshot?.queue?.source?.lastSuccessAt
+        ? "Die Queue ist leer. Neue markierte Aufgaben erscheinen hier."
+        : "Queue-Quelle noch nicht verbunden."));
+      return;
+    }
+    $("pipeline").replaceChildren(...flows.map(([name, group]) => {
+      const counts = new Map(stages.map(([key]) => [key, 0]));
+      for (const task of group.tasks) counts.set(stageOf(task), (counts.get(stageOf(task)) || 0) + 1);
+      const shown = stages.filter(([key]) => key !== "failed" || counts.get("failed") > 0);
+      const max = Math.max(1, ...shown.map(([key]) => counts.get(key)));
+      const flow = node("div", "flow");
+      const head = node("div", "flow-head");
+      const openInFlow = group.tasks.filter(isOpen).length;
+      head.append(node("h3", "", name), node("span", "", `${numberFormat.format(openInFlow)} offen`));
+      const bars = node("div", "bars");
+      const labels = node("div", "bar-labels");
+      labels.setAttribute("aria-hidden", "true");
+      for (const [key, label, status] of shown) {
+        const count = counts.get(key);
+        const column = node("button", count ? "bar-col" : "bar-col zero");
+        column.type = "button";
+        column.dataset.stage = key;
+        column.setAttribute("aria-label", `${name} · ${label}: ${numberFormat.format(count)} Aufgaben anzeigen`);
+        const tip = node("span", "bar-tip", `${name} · ${label}: ${numberFormat.format(count)}`);
+        tip.setAttribute("aria-hidden", "true");
+        const value = node("span", "bar-value", numberFormat.format(count));
+        value.setAttribute("aria-hidden", "true");
+        value.append(tip);
+        const bar = node("span", "bar");
+        bar.style.height = `${(count / max) * 78}%`;
+        column.append(value, bar);
+        column.addEventListener("click", () => openQueue(status, group.value));
+        bars.append(column);
+        labels.append(node("span", "", label));
+      }
+      flow.append(head, bars, labels);
+      return flow;
+    }));
+  }
+  function attentionSeverity(entry) {
+    const status = entry.entity.status;
+    if (status === "offline" || status === "failed") return 0;
+    if (status === "blocked") return 1;
+    if (entry.reasons.some((reason) => reason.startsWith("Claude-Limit erreicht"))) return 1;
+    if (status === "silent") return 2;
+    return 3;
+  }
+  function renderAttention(attention) {
+    const list = $("attention-list");
+    $("attention-count").textContent = numberFormat.format(attention.length);
+    $("attention-more").hidden = !attention.length;
+    if (!attention.length) {
+      const calm = node("li", "attention-calm");
+      calm.append(node("span", "dot good"), node("span", "", "Alles in Ordnung – kein Mac und keine Aufgabe braucht dich."));
+      list.replaceChildren(calm);
+      return;
+    }
+    const limit = window.innerHeight >= 860 && window.innerWidth >= 1100 ? 6 : 4;
+    const sorted = attention.slice().sort((a, b) => attentionSeverity(a) - attentionSeverity(b));
+    list.replaceChildren(...sorted.slice(0, limit).map((entry) => {
+      const task = entry.type === "task";
+      const entity = entry.entity;
+      const item = node("li");
+      const button = node("button", "attention-item");
+      button.type = "button";
+      const severity = attentionSeverity(entry);
+      const dot = node("span", `dot ${task ? entity.status : severity <= 1 ? "offline" : severity === 2 ? "silent" : "unknown"}`);
+      const title = task ? entity.title || entity.id : entity.name || entity.workerId || "Mac";
+      const label = node("strong", "", title);
+      label.title = title;
+      const reason = entry.reasons.length > 1
+        ? `${entry.reasons[0]} · +${entry.reasons.length - 1}`
+        : entry.reasons[0];
+      const detail = node("small", "", reason);
+      detail.title = entry.reasons.join(" · ");
+      button.append(dot, label, node("span", "kind", task ? workflow(entity.workflow) : "Mac"), detail);
+      button.setAttribute("aria-label", `${title}: ${entry.reasons.join(", ")}`);
+      button.addEventListener("click", () => (task ? taskDetails(entity) : machineDetails(entity)));
+      item.append(button);
+      return item;
+    }));
+    $("attention-more").textContent = attention.length > limit
+      ? `Alle ${numberFormat.format(attention.length)} im Log ansehen →`
+      : "Im Log ansehen →";
+  }
+  function machineAccount(machine) {
+    return (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
+  }
+  function machineLimit(machine, account, kind) {
+    if (!account || !Array.isArray(machine.limits)) return null;
+    return machine.limits.find((item) => item.accountId === account.accountId && item.kind === kind) || null;
+  }
+  function runningTasks(machine) {
+    return machine.workerId
+      ? tasks().filter((task) => task.workerId === machine.workerId && task.status === "running")
+      : [];
+  }
+  function batteryText(machine) {
+    if (machine.batteryPercent == null) return ["—", ""];
+    const source = machine.isCharging ? "lädt"
+      : ["ac", "AC", "AC Power", "mains"].includes(machine.powerSource) ? "Netzteil"
+        : machine.powerSource === "battery" ? "Akku" : "";
+    return [`${machine.batteryPercent} %`, source];
+  }
+  function meter(limit, stale) {
+    const value = limit?.percent ?? null;
+    const wrap = node("div", `meter${value == null ? " unknown" : ""}${stale && value != null ? " stale" : ""}`);
+    const track = node("div", "usage-track");
+    const fill = node("div", `usage-fill ${value >= 100 ? "full" : value >= 80 ? "high" : ""}`);
+    fill.style.width = `${Math.min(100, Math.max(0, value || 0))}%`;
+    track.append(fill);
+    wrap.append(track, node("b", "", value == null ? "—" : `${value} %`));
+    return wrap;
+  }
+  function sortedMachines(devices) {
+    return devices.slice().sort(
+      (a, b) =>
+        (a.status === "online") - (b.status === "online") ||
+        String(a.name).localeCompare(String(b.name)),
+    );
+  }
+  function renderFleet(devices) {
+    const online = devices.filter((machine) => machine.status === "online").length;
+    $("fleet-summary").textContent = `${numberFormat.format(online)} von ${numberFormat.format(devices.length)} online`;
+    $("fleet-dots").replaceChildren(...sortedMachines(devices).map((machine) => node("span", `dot ${machine.status || "unknown"}`)));
+    if (!devices.length) {
+      const row = node("tr");
+      const cell = node("td", "empty-state", "Noch kein Mac erfasst. Verbinde Max Monitor auf jedem Mac mit diesem Team-Server.");
+      cell.colSpan = 6;
+      row.append(cell);
+      $("fleet-body").replaceChildren(row);
+      return;
+    }
+    $("fleet-body").replaceChildren(...sortedMachines(devices).map((machine) => {
+      const row = node("tr", `fleet-row ${machine.status || "unknown"}`);
+      const label = machine.workerId || machine.name || "Mac";
+      const nameCell = node("td");
+      const name = node("div", "fleet-name");
+      const signal = node("span", `dot ${machine.status || "unknown"}`);
+      signal.title = statusNames[machine.status] || "Unbekannt";
+      const identity = node("span");
+      const open = node("button", "", label);
+      open.type = "button";
+      open.title = label;
+      open.setAttribute("aria-label", `${label} · ${statusNames[machine.status] || "Unbekannt"} · Details`);
+      const deviceName = machine.deviceName || (machine.name !== machine.workerId ? machine.name : null);
+      open.title = [label, deviceName && deviceName !== label ? `macOS: ${deviceName}` : ""].filter(Boolean).join("\n");
+      identity.append(open);
+      if (!machine.workerId) identity.append(node("small", "", "ohne Worker-ID"));
+      name.append(signal, identity);
+      nameCell.append(name);
+      const active = runningTasks(machine);
+      const taskCell = node("td");
+      const current = node("span", active.length ? "fleet-task" : "fleet-task idle",
+        active.length ? active[0].title || active[0].id : machine.status === "online" ? "frei" : "—");
+      if (active.length) current.title = active.map((task) => task.title || task.id).join("\n");
+      taskCell.append(current);
+      if (active.length > 1) taskCell.append(node("span", "fleet-sub", `+ ${active.length - 1} weitere`));
+      const [battery, source] = batteryText(machine);
+      const batteryCell = node("td", "fleet-battery", battery);
+      if (source && source !== "Akku") batteryCell.append(node("small", "", ` · ${source}`));
+      const account = machineAccount(machine);
+      const stale = usageStale(machine);
+      const sessionCell = node("td");
+      const weeklyCell = node("td");
+      if (account) {
+        sessionCell.append(meter(machineLimit(machine, account, "session"), stale));
+        weeklyCell.append(meter(machineLimit(machine, account, "weekly"), stale));
+        if (stale) sessionCell.title = weeklyCell.title = `Letzte Messung ${relative(machine.usageUpdatedAt)}`;
+      } else {
+        const unbound = node("span", "fleet-unbound", "kein Account");
+        unbound.title = "Monitoring-Account auf diesem Worker-Mac verbinden";
+        sessionCell.append(unbound);
+        weeklyCell.append(node("span", "fleet-unbound", "—"));
+      }
+      const seenAt = machine.receivedAt || machine.seenAt || machine.lastSeenAt;
+      const seen = node("td", "fleet-seen", relative(seenAt).replace(/^vor /, ""));
+      seen.title = exact(seenAt);
+      row.append(nameCell, taskCell, batteryCell, sessionCell, weeklyCell, seen);
+      row.addEventListener("click", () => machineDetails(machine));
+      return row;
+    }));
+  }
+  function renderOverview(devices, items, attention) {
+    renderPipeline(items);
+    renderAttention(attention);
+    renderFleet(devices);
   }
   function renderMachines(devices) {
     $("machine-grid").replaceChildren();
@@ -540,138 +760,77 @@
       );
       return;
     }
-    devices
-      .slice()
-      .sort(
-        (a, b) =>
-          (a.status === "online") - (b.status === "online") ||
-          String(a.name).localeCompare(String(b.name)),
-      )
-      .forEach((machine) => {
-        const card = node("article", `machine ${machine.status || "unknown"}`);
-        const title = node("div", "machine-title");
-        title.append(node("span", "computer-icon"));
-        title.firstChild.setAttribute("aria-hidden", "true");
-        const identity = node("div", "machine-name");
-        const machineName = node(
-          "h3",
-          "",
-          machine.workerId || machine.name || "Mac",
-        );
-        machineName.title = machine.workerId || machine.name || "Mac";
-        const deviceName = machine.deviceName || (machine.name !== machine.workerId ? machine.name : null);
-        const subtitle = node("small", "", !machine.workerId ? "Worker-ID nicht zugeordnet"
-          : deviceName ? `macOS: ${deviceName}` : "Wie in Slack");
-        subtitle.title = subtitle.textContent;
-        identity.append(machineName, subtitle);
-        const signal = badge(machine.status);
-        if (machine.telemetrySource === "worker")
-          signal.lastChild.textContent = `Worker ${statusNames[machine.status]?.toLowerCase() || machine.status}`;
-        title.append(identity, signal);
-        card.append(title);
-        const data = node("div", "machine-data");
-        const battery = node("div");
-        battery.append(node("span", "datum-label", "Akku"));
-        const batteryValue = node(
-          "span",
-          "datum-value",
-          machine.batteryPercent == null
-            ? "Unbekannt"
-            : `${machine.batteryPercent} %`,
-        );
-        batteryValue.append(
-          node(
-            "small",
-            "",
-            machine.isCharging
-              ? " · lädt"
-              : ["ac", "AC", "AC Power", "mains"].includes(machine.powerSource)
-                ? " · Netzteil"
-                : machine.powerSource === "battery"
-                  ? " · Batterie"
-                  : "",
-          ),
-        );
-        battery.append(batteryValue);
-        const work = node("div");
-        work.append(node("span", "datum-label", "Aufgaben"));
-        const active = tasks().filter(
-          (x) => x.workerId === machine.workerId && x.status === "running",
-        );
-        work.append(node("span", "datum-value", `${active.length} aktiv`));
-        data.append(battery, work);
-        card.append(data);
-        const account = (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
-        const accountLabel = node("p", "machine-account meta", account
-          ? `Claude · ${account.name}` : "Monitoring-Account nicht verbunden");
-        accountLabel.title = account?.name || "Monitoring-Account auf diesem Worker-Mac verbinden";
-        card.append(accountLabel);
-        const limits = account && Array.isArray(machine.limits)
-          ? machine.limits.filter((item) => item.accountId === account.accountId) : [];
-        const session = limits.find((item) => item.kind === "session");
-        const weekly = limits.find((item) => item.kind === "weekly");
+    sortedMachines(devices).forEach((machine) => {
+      const card = node("article", `machine ${machine.status || "unknown"}`);
+      const title = node("div", "machine-title");
+      const identity = node("div", "machine-name");
+      const label = machine.workerId || machine.name || "Mac";
+      const machineName = node("h3", "", label);
+      machineName.title = label;
+      const deviceName = machine.deviceName || (machine.name !== machine.workerId ? machine.name : null);
+      const subtitle = node("small", "", !machine.workerId ? "Worker-ID nicht zugeordnet"
+        : deviceName ? `macOS: ${deviceName}` : "Wie in Slack");
+      subtitle.title = subtitle.textContent;
+      identity.append(machineName, subtitle);
+      const signal = badge(machine.status);
+      if (machine.telemetrySource === "worker")
+        signal.textContent = `Worker ${statusNames[machine.status]?.toLowerCase() || machine.status}`;
+      title.append(identity, signal);
+      const data = node("div", "machine-data");
+      const [battery, source] = batteryText(machine);
+      const active = runningTasks(machine);
+      const seenAt = machine.receivedAt || machine.seenAt || machine.lastSeenAt;
+      for (const [name, value, hint, tooltip] of [
+        ["Akku", battery, source === "Akku" ? "" : source],
+        ["Aufgaben", `${active.length} aktiv`, ""],
+        ["Meldung", relative(seenAt).replace(/^vor /, ""), "", exact(seenAt)],
+      ]) {
+        const datum = node("div");
+        const text = node("span", "datum-value", value);
+        if (hint) text.append(node("small", "", ` · ${hint}`));
+        if (tooltip) text.title = tooltip;
+        datum.append(node("span", "datum-label", name), text);
+        data.append(datum);
+      }
+      card.append(title, data);
+      const account = machineAccount(machine);
+      const accountLabel = node("p", account ? "machine-account" : "machine-account unbound", account
+        ? `Claude · ${account.name}` : "Kein Monitoring-Account verbunden");
+      accountLabel.title = account?.name || "Monitoring-Account auf diesem Worker-Mac verbinden";
+      card.append(accountLabel);
+      if (account) {
         const limitGroup = node("div", "machine-limits");
-        for (const [label, list] of [
-          ["5-Stunden-Limit", session],
-          ["Wochenlimit", weekly],
-        ]) {
-          const value = list?.percent ?? null;
+        for (const [name, kind] of [["5-Stunden-Limit", "session"], ["Wochenlimit", "weekly"]]) {
+          const value = machineLimit(machine, account, kind)?.percent ?? null;
           const limit = node("div", "machine-limit");
           const line = node("div", "usage-line");
-          line.append(
-            node("span", "", label),
-            node("strong", "", value == null ? "—" : `${value} % genutzt`),
-          );
-          limit.append(line);
+          line.append(node("span", "", name), node("strong", "", value == null ? "—" : `${value} %`));
           const track = node("div", "usage-track");
-          const fill = node(
-            "div",
-            `usage-fill ${value >= 100 ? "full" : value >= 80 ? "high" : ""}`,
-          );
+          const fill = node("div", `usage-fill ${value >= 100 ? "full" : value >= 80 ? "high" : ""}`);
           fill.style.width = `${Math.min(100, Math.max(0, value || 0))}%`;
           track.append(fill);
-          limit.append(track);
+          limit.append(line, track);
           limitGroup.append(limit);
         }
         card.append(limitGroup);
+        const limits = machine.limits || [];
         if (!limits.length || usageStale(machine) || machine.usageError)
-          card.append(
-            node(
-              "p",
-              "usage-note",
-              machine.usageError ||
-                (!limits.length
-                  ? (account ? "Claude-Kontingente noch nicht gemeldet." : "Monitoring-Account auf diesem Worker-Mac verbinden.")
-                  : `Kontingente veraltet · ${relative(machine.usageUpdatedAt)}`),
-            ),
-          );
-        if (machine.workerStatus && machine.workerStatus !== "online")
-          card.append(
-            node(
-              "p",
-              "usage-note",
-              `Newsletter-Worker: ${statusNames[machine.workerStatus] || machine.workerStatus} · ${relative(machine.workerLastSeenAt)}`,
-            ),
-          );
-        const bottom = node("div", "machine-bottom");
-        const seen = node(
-          "span",
-          "",
-          relative(machine.receivedAt || machine.seenAt || machine.lastSeenAt),
-        );
-        seen.title = exact(
-          machine.receivedAt || machine.seenAt || machine.lastSeenAt,
-        );
-        const detail = node("button", "text-button", "Details ↗");
-        detail.setAttribute(
-          "aria-label",
-          `Details für ${machine.name || machine.workerId || "Mac"}`,
-        );
-        detail.addEventListener("click", () => machineDetails(machine));
-        bottom.append(seen, detail);
-        card.append(bottom);
-        $("machine-grid").append(card);
-      });
+          card.append(node("p", "usage-note", machine.usageError ||
+            (!limits.length ? "Claude-Kontingente noch nicht gemeldet." : `Kontingente veraltet · ${relative(machine.usageUpdatedAt)}`)));
+      }
+      if (machine.workerStatus && machine.workerStatus !== "online")
+        card.append(node("p", "usage-note",
+          `Newsletter-Worker: ${statusNames[machine.workerStatus] || machine.workerStatus} · ${relative(machine.workerLastSeenAt)}`));
+      const bottom = node("div", "machine-bottom");
+      const current = node("span", "machine-current", active.length ? active[0].title || active[0].id : "Keine laufende Aufgabe");
+      current.title = current.textContent;
+      const detail = node("button", "text-button", "Details ↗");
+      detail.setAttribute("aria-label", `Details für ${label}`);
+      detail.addEventListener("click", () => machineDetails(machine));
+      bottom.append(current, detail);
+      card.append(bottom);
+      $("machine-grid").append(card);
+    });
   }
   function filtered(items) {
     const workerNames = new Map(machines().filter(machine => machine.workerId).map(machine => [machine.workerId, [machine.name, machine.deviceName].filter(Boolean).join(" ")]));
@@ -750,7 +909,7 @@
       if (snapshot) snapshot.queue.tasks = snapshot.queue.tasks.map((entry) => entry.id === task.id ? data.task : entry);
       $("detail-dialog").close();
       render();
-      $(view === "log" ? "log-heading" : "queue-heading").focus({ preventScroll: true });
+      $(view === "log" ? "log-heading" : view === "queue" ? "queue-heading" : "main").focus({ preventScroll: true });
       await refresh();
     } catch (error) {
       if (connection !== credentials) return;
@@ -1034,7 +1193,7 @@
           type: task ? "task" : "machine",
           title: task ? entity.title || entity.id : entity.name || entity.workerId || "Mac",
           id: task ? entity.id : entity.workerId || entity.deviceId,
-          kind: task ? workflow(entity.workflow) : "Mac-Worker",
+          kind: task ? workflow(entity.workflow) : "Mac",
           workerId: entity.workerId,
           at: task ? entity.updatedAt : entity.receivedAt || entity.lastSeenAt,
           status: entity.status,
@@ -1074,7 +1233,7 @@
           : event.title || entity?.title || (type === "source" ? "Queue-Quelle" : "Status aktualisiert"),
         id: type === "task" ? event.taskId || event.entityId : type === "machine" ? event.workerId || entity?.workerId : "",
         kind: type === "task" ? workflow(event.workflow || entity?.workflow || "Aufgabe")
-          : type === "machine" ? "Mac-Worker" : "Queue-Quelle",
+          : type === "machine" ? "Mac" : "Queue-Quelle",
         workerId,
         currentWorker: !capturedWorker && Boolean(workerId),
         at: event.at || event.receivedAt || event.timestamp,
@@ -1147,7 +1306,8 @@
     $("log-event-count").textContent = numberFormat.format(Array.isArray(snapshot?.events) ? snapshot.events.length : 0);
     $("log-summary").textContent = !snapshot ? "Noch keine Daten geladen."
       : logFilter === "attention" ? `${numberFormat.format(attention.filter((entry) => entry.type === "machine").length)} Macs · ${numberFormat.format(attention.filter((entry) => entry.type === "task").length)} Aufgaben brauchen Aufmerksamkeit. Jeder Eintrag zählt einmal.`
-        : "Statuswechsel, neue Aufgaben und Meldungen der Macs im zeitlichen Verlauf.";
+        : "";
+    $("log-summary").hidden = !$("log-summary").textContent;
     for (const row of visible.slice(logPage * pageSize, (logPage + 1) * pageSize)) {
       const line = node("tr", row.attention ? "log-row attention-entry" : "log-row");
       line.dataset.logType = row.type;
@@ -1344,7 +1504,7 @@
     $("disconnect").hidden = true;
     $("refresh").disabled = false;
     $("connect").disabled = false;
-    $("sync-status").textContent = "Nicht verbunden";
+    setSync("Nicht verbunden", "idle");
     showNotice("");
     $("machine-grid").replaceChildren(
       node(
@@ -1353,11 +1513,15 @@
         "Verbinde deinen Team-Server, um alle Macs zu sehen.",
       ),
     );
+    overviewMessage("Verbinde deinen Team-Server, um Queue und Macs zu sehen.");
     render();
   });
   render();
   if (credentials) { refresh(); startLive(); }
-  else $("connection-dialog").showModal();
+  else {
+    overviewMessage("Verbinde deinen Team-Server, um Queue und Macs zu sehen.");
+    $("connection-dialog").showModal();
+  }
   setInterval(() => {
     if (!document.hidden) refresh();
   }, 30000);

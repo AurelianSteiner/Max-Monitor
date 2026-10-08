@@ -2,6 +2,8 @@
 
 ## 2.12
 
+- **Neue Dashboard-Übersicht.** Eine helle, kompakte Übersicht zeigt die Workflow-Pipeline, wichtige Meldungen und alle Macs mit Akku, Aufgaben und Claude-Limits. Pipeline und Meldungen öffnen direkt die passenden Aufgaben und Details; Queue, Macs und Log funktionieren auch auf kleinen Bildschirmen.
+
 - **Gäste ohne Worker-Mac.** Gäste sehen alle Macs, Aufgaben und Kontingente und können Aufgaben abhaken. Ihr eigener Mac meldet sich nicht in der Worker-Übersicht; auch ältere App-Versionen können mit einem Gastzugang keinen Mac registrieren.
 - **Eigener Mitglieder-Reiter.** Die Hauptübersicht enthält einen Mitglieder-Reiter mit den Filtern Alle, Mitglied, Admin und Gast. Der Inhaber kann Rollen ändern, Einladungen kopieren und Zugänge verwalten. Neue manuelle Einladungen sind standardmäßig Gastzugänge.
 - **Rollen ändern ohne neuen Token.** Beim Wechsel zu Gast bleiben Name, Zugang und bisheriger Token erhalten. Frühere Geräteberichte werden aus der Übersicht ausgeblendet; die Rollenänderung ist reversibel.

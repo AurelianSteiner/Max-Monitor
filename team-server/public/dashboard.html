@@ -3,291 +3,265 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#f5f6f8" />
-    <title>Max Monitor · Worker & Queue</title>
+    <meta name="color-scheme" content="light only" />
+    <meta name="theme-color" content="#f4f2ee" />
+    <title>Max Monitor</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./fleet-assets/dashboard.css" />
     <script src="./fleet-assets/dashboard.js" defer></script>
   </head>
   <body>
-    <a class="skip-link" href="#main">Zur Übersicht</a>
-    <div class="app-shell">
-      <aside class="sidebar" aria-label="Navigation">
-        <a class="brand" href="./fleet"
-          ><span class="brand-mark" aria-hidden="true">M</span
-          ><span>Max Monitor<small>Worker control</small></span></a
+    <a class="skip-link" href="#main">Zum Inhalt</a>
+    <header class="topbar">
+      <button class="brand" type="button" data-view="overview" aria-label="Max Monitor · Übersicht"
+        ><span class="brand-mark" aria-hidden="true">M</span
+        ><span class="brand-name">Max Monitor</span></button
+      >
+      <nav class="nav" aria-label="Ansichten">
+        <button class="nav-item selected" data-view="overview">
+          Übersicht
+        </button>
+        <button class="nav-item" data-view="queue" data-status="running">
+          Queue <span id="nav-queue" class="nav-count">—</span>
+        </button>
+        <button class="nav-item" data-view="machines">
+          Macs <span id="nav-machines" class="nav-count">—</span>
+        </button>
+        <button class="nav-item" data-view="log">
+          Log <span id="nav-attention" class="nav-count attention" hidden></span>
+        </button>
+      </nav>
+      <div class="topbar-actions">
+        <span id="sync-status" class="sync" data-state="idle" role="status"
+          >Nicht verbunden</span
+        ><button
+          id="refresh"
+          class="icon-button"
+          aria-label="Aktualisieren"
+          title="Aktualisieren"
         >
-        <div class="workspace-label">AI Newsletter Creation</div>
-        <nav>
-          <button class="nav-item selected" data-view="overview">
-            <span>Übersicht</span><span aria-hidden="true">↗</span>
-          </button>
-          <button class="nav-item" data-view="queue" data-status="running">
-            <span
-              ><span class="desktop-label">Aufgaben-Queue</span
-              ><span class="mobile-label">Queue</span></span
-            ><span id="nav-queue" class="nav-count">—</span>
-          </button>
-          <button class="nav-item" data-view="machines">
-            <span
-              ><span class="desktop-label">Mac-Worker</span
-              ><span class="mobile-label">Macs</span></span
-            ><span id="nav-machines" class="nav-count">—</span>
-          </button>
-          <button class="nav-item" data-view="log">
-            <span
-              ><span class="desktop-label">Queue-Log</span
-              ><span class="mobile-label">Log</span></span
-            ><span aria-hidden="true">≡</span>
-          </button>
-        </nav>
-      </aside>
-      <main id="main" tabindex="-1">
-        <header class="page-header">
-          <div>
-            <div class="eyebrow">Fleet / Operations</div>
-            <h1 id="page-title">Alles im Blick.</h1>
-            <p>Deine Mac-Worker und die Arbeit, die als Nächstes dran ist.</p>
-          </div>
-          <div class="header-actions">
-            <span id="sync-status" role="status">Noch nicht verbunden</span
-            ><button
-              id="connection-top"
-              class="icon-button connection-top"
-              aria-label="Team-Verbindung"
-              title="Team-Verbindung"
-            >
-              ⚙</button
-            ><button id="refresh" class="button secondary">
-              Aktualisieren <span aria-hidden="true">↻</span>
-            </button>
-          </div>
-        </header>
-        <div id="notice" class="notice" role="status" hidden></div>
-        <div id="task-action-status" class="notice" role="status" hidden></div>
-        <section class="metrics" aria-label="Zusammenfassung">
-          <button class="metric" data-view="machines">
-            <span>Macs erreichbar</span><strong id="metric-online">—</strong
-            ><small id="metric-total">Noch keine Gerätedaten</small>
-          </button>
-          <button class="metric" data-view="queue" data-status="running">
-            <span>In Bearbeitung</span><strong id="metric-running">—</strong
-            ><small>Aktive Workflow-Aufgaben</small>
-          </button>
-          <button class="metric" data-view="queue" data-status="queued">
-            <span>In der Queue</span><strong id="metric-queued">—</strong
-            ><small>Wartet auf einen Worker</small>
-          </button>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13.5 2.5v3h-3" /></svg></button
+        ><button
+          id="connection-top"
+          class="icon-button"
+          aria-label="Team-Verbindung"
+          title="Team-Verbindung"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5h6.5M12.5 5h1M2.5 11h1M7 11h6.5" /><circle cx="10.75" cy="5" r="1.75" /><circle cx="5.25" cy="11" r="1.75" /></svg>
+        </button>
+      </div>
+    </header>
+    <main id="main" tabindex="-1">
+      <h1 id="page-title" class="sr-only">Übersicht</h1>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <div id="task-action-status" class="notice" role="status" hidden></div>
+
+      <section id="overview-section" class="overview" aria-label="Übersicht">
+        <article class="panel pipeline-panel" aria-labelledby="pipeline-heading">
+          <header class="panel-head">
+            <h2 id="pipeline-heading">Pipeline</h2>
+            <span id="pipeline-summary" class="panel-meta">—</span>
+          </header>
+          <div id="pipeline" class="pipeline"></div>
+        </article>
+        <article class="panel attention-panel" aria-labelledby="attention-heading">
+          <header class="panel-head">
+            <h2 id="attention-heading">
+              Braucht Aufmerksamkeit
+              <span id="attention-count" class="count">—</span>
+            </h2>
+          </header>
+          <ul id="attention-list" class="attention-list"></ul>
           <button
-            class="metric attention"
+            id="attention-more"
+            class="text-button panel-foot"
             data-view="log"
             data-log-filter="attention"
+            hidden
           >
-            <span>Braucht Aufmerksamkeit</span
-            ><strong id="metric-attention">—</strong
-            ><small id="metric-attention-detail"
-              >Betroffene Macs & Aufgaben anzeigen</small
-            >
+            Alle im Log ansehen →
           </button>
-        </section>
-        <section id="machines-section" class="content-section">
-          <div class="section-heading">
-            <div>
-              <h2>
-                Mac-Worker <span id="machine-count" class="count">—</span>
-              </h2>
-              <p>Erreichbarkeit und Kontingente pro Gerät.</p>
-            </div>
-            <span class="interval">Heartbeat · 10 min</span>
-          </div>
-          <div id="machine-grid" class="machine-grid" aria-live="polite">
-            <div class="empty-state">
-              Verbinde deinen Team-Server, um alle Macs zu sehen.
-            </div>
-          </div>
-        </section>
-        <section id="queue-section" class="content-section">
-          <div class="section-heading">
-            <div>
-              <h2 id="queue-heading" tabindex="-1">
-                Aufgaben-Queue <span id="queue-count" class="count">—</span>
-              </h2>
-              <p id="queue-source">
-                Pre-Gen, Uploads und weitere Automatisierungen.
-              </p>
-            </div>
-            <span id="queue-updated" class="interval"
-              >Quelle noch nicht verbunden</span
-            >
-          </div>
-          <div class="queue-toolbar">
-            <div
-              id="status-tabs"
-              class="status-tabs"
-              aria-label="Aufgabenstatus"
-            >
-              <button class="tab" data-status="open" aria-pressed="false">
-                Offen <span id="open-count">0</span></button
-              ><button class="tab selected" data-status="running" aria-pressed="true">
-                Läuft <span id="running-count">0</span></button
-              ><button class="tab" data-status="queued" aria-pressed="false">
-                Wartet <span id="queued-count">0</span></button
-              ><button class="tab" data-status="blocked" aria-pressed="false">
-                Blockiert <span id="blocked-count">0</span></button
-              ><button class="tab" data-status="all" aria-pressed="false">
-                Alle <span id="all-count">0</span></button>
-            </div>
-            <div class="filters">
-              <label class="search"
-                ><span aria-hidden="true">⌕</span
-                ><span class="sr-only">Aufgabe, Unternehmen, Mac oder ClickUp-Link suchen</span
-                ><input
-                  id="search"
-                  name="search"
-                  type="search"
-                  placeholder="Aufgabe, Unternehmen, Mac oder ClickUp-Link…"
-                  autocomplete="off" /></label
-              ><label
-                ><span class="sr-only">Workflow filtern</span
-                ><select id="workflow" name="workflow">
-                  <option value="">Alle Workflows</option>
-                </select></label
-              >
-            </div>
-          </div>
-          <div id="worker-filter" class="worker-filter" hidden>
-            <span id="worker-filter-label"></span
-            ><button id="clear-worker" class="text-button">
-              Filter entfernen ×
-            </button>
-          </div>
-          <div class="table-scroll">
-            <table class="queue-table">
+        </article>
+        <article class="panel fleet-panel" aria-labelledby="fleet-heading">
+          <header class="panel-head">
+            <h2 id="fleet-heading">Macs</h2>
+            <span id="fleet-summary" class="panel-meta">—</span>
+            <span id="fleet-dots" class="fleet-dots" aria-hidden="true"></span>
+          </header>
+          <div class="fleet-table-wrap">
+            <table class="fleet-table">
               <thead>
                 <tr>
-                  <th scope="col">Aufgabe</th>
-                  <th scope="col">Workflow</th>
-                  <th scope="col">Status</th>
-                  <th scope="col">Mac / Fortschritt</th>
-                  <th scope="col">Aktualisiert</th>
-                  <th scope="col" class="queue-links-heading">Aktionen</th>
+                  <th scope="col">Mac</th>
+                  <th scope="col">Arbeitet an</th>
+                  <th scope="col" class="num">Akku</th>
+                  <th scope="col">5 h</th>
+                  <th scope="col">Woche</th>
+                  <th scope="col" class="num">Meldung</th>
                 </tr>
               </thead>
-              <tbody id="queue-body"></tbody>
+              <tbody id="fleet-body"></tbody>
             </table>
           </div>
-          <div id="queue-empty" class="empty-state" hidden>
-            Keine Aufgaben für diesen Filter.
+        </article>
+      </section>
+
+      <section id="machines-section" class="content-section" hidden>
+        <div class="section-heading">
+          <h2>Macs <span id="machine-count" class="count">—</span></h2>
+          <span class="interval" title="Keine Meldung seit 15 min: still · seit 30 min: offline">Heartbeat · 10 min</span>
+        </div>
+        <div id="machine-grid" class="machine-grid" aria-live="polite">
+          <div class="empty-state">
+            Verbinde deinen Team-Server, um alle Macs zu sehen.
           </div>
+        </div>
+      </section>
+
+      <section id="queue-section" class="content-section" hidden>
+        <div class="section-heading">
+          <h2 id="queue-heading" tabindex="-1">
+            Queue <span id="queue-count" class="count">—</span>
+          </h2>
+          <span id="queue-updated" class="interval">Quelle noch nicht verbunden</span>
+        </div>
+        <div class="queue-toolbar">
+          <div id="status-tabs" class="status-tabs" aria-label="Aufgabenstatus">
+            <button class="tab" data-status="open" aria-pressed="false">
+              Offen <span id="open-count">0</span></button
+            ><button class="tab selected" data-status="running" aria-pressed="true">
+              Läuft <span id="running-count">0</span></button
+            ><button class="tab" data-status="queued" aria-pressed="false">
+              Wartet <span id="queued-count">0</span></button
+            ><button class="tab" data-status="blocked" aria-pressed="false">
+              Blockiert <span id="blocked-count">0</span></button
+            ><button class="tab" data-status="completed" aria-pressed="false">
+              Fertig <span id="completed-count">0</span></button
+            ><button class="tab" data-status="all" aria-pressed="false">
+              Alle <span id="all-count">0</span></button>
+          </div>
+          <div class="filters">
+            <label class="search"
+              ><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3 3" /></svg
+              ><span class="sr-only">Aufgabe, Unternehmen, Mac oder ClickUp-Link suchen</span
+              ><input
+                id="search"
+                name="search"
+                type="search"
+                placeholder="Aufgabe, Unternehmen, Mac oder Link…"
+                autocomplete="off" /></label
+            ><label class="select"
+              ><span class="sr-only">Workflow filtern</span
+              ><select id="workflow" name="workflow">
+                <option value="">Alle Workflows</option>
+              </select></label
+            >
+          </div>
+        </div>
+        <div id="worker-filter" class="worker-filter" hidden>
+          <span id="worker-filter-label"></span
+          ><button id="clear-worker" class="text-button">Filter entfernen ×</button>
+        </div>
+        <div class="table-scroll">
+          <table class="queue-table">
+            <thead>
+              <tr>
+                <th scope="col">Aufgabe</th>
+                <th scope="col">Workflow</th>
+                <th scope="col">Status</th>
+                <th scope="col">Mac / Fortschritt</th>
+                <th scope="col">Aktualisiert</th>
+                <th scope="col" class="queue-links-heading">Aktionen</th>
+              </tr>
+            </thead>
+            <tbody id="queue-body"></tbody>
+          </table>
+        </div>
+        <div id="queue-empty" class="empty-state" hidden>
+          Keine Aufgaben für diesen Filter.
+        </div>
+        <div class="table-footer">
+          <span id="result-count">Noch keine Queue-Daten</span>
           <div id="pagination" class="pagination" hidden>
-            <button id="page-previous" class="button secondary">← Zurück</button
+            <button id="page-previous" class="button secondary" aria-label="Vorherige Seite">←</button
             ><span id="page-label"></span
-            ><button id="page-next" class="button secondary">Weiter →</button>
+            ><button id="page-next" class="button secondary" aria-label="Nächste Seite">→</button>
           </div>
-          <div class="table-footer">
-            <span id="result-count">Noch keine Queue-Daten</span
-            ><span>ClickUp bleibt die Aufgabenquelle.</span>
-          </div>
-        </section>
-        <section id="log-section" class="content-section" hidden>
-          <div class="section-heading">
-            <div>
-              <h2 id="log-heading" tabindex="-1">Queue-Log <span id="log-count" class="count">0</span></h2>
-              <p id="log-description">
-                Neue Aufgaben, Statuswechsel und Meldungen der Geräte.
-              </p>
-            </div>
-          </div>
-          <div
-            id="log-filters"
-            class="status-tabs log-filters"
-            aria-label="Queue-Log filtern"
-          >
-            <button
-              class="tab selected"
-              data-log-filter="all"
-              aria-pressed="true"
-            >
-              Alle Ereignisse <span id="log-event-count">0</span>
-            </button>
-            <button
-              class="tab"
-              data-log-filter="attention"
-              aria-pressed="false"
-            >
+        </div>
+      </section>
+
+      <section id="log-section" class="content-section" hidden>
+        <div class="section-heading">
+          <h2 id="log-heading" tabindex="-1">
+            Log <span id="log-count" class="count">0</span>
+          </h2>
+        </div>
+        <div class="log-toolbar">
+          <div id="log-filters" class="status-tabs log-filters" aria-label="Log filtern">
+            <button class="tab selected" data-log-filter="all" aria-pressed="true">
+              Alle Ereignisse <span id="log-event-count">0</span></button
+            ><button class="tab" data-log-filter="attention" aria-pressed="false">
               Braucht Aufmerksamkeit <span id="log-attention-count">—</span>
             </button>
           </div>
-          <div class="log-toolbar">
+          <div class="filters">
             <label class="search">
               <span class="sr-only">Log durchsuchen</span>
-              <span aria-hidden="true">⌕</span>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3 3" /></svg>
               <input id="log-search" type="search" name="log-search" autocomplete="off"
-                placeholder="Aufgabe, Mac oder Meldung suchen…" />
+                placeholder="Aufgabe, Mac oder Meldung…" />
             </label>
-            <label>
+            <label class="select">
               <span class="sr-only">Log-Typ filtern</span>
               <select id="log-type" name="log-type">
                 <option value="all">Alle Typen</option>
                 <option value="task">Aufgaben</option>
-                <option value="machine">Mac-Worker</option>
+                <option value="machine">Macs</option>
                 <option value="source" id="log-source-option">Queue-Quelle</option>
               </select>
             </label>
             <button id="log-sort" class="button secondary" type="button">Neueste zuerst ↓</button>
           </div>
-          <p id="log-summary" class="log-summary" role="status"></p>
-          <div id="event-list" class="log-table-wrap">
-            <table class="log-table" role="table">
-              <caption id="log-caption" class="sr-only">Queue-Log: Alle Ereignisse</caption>
-              <colgroup>
-                <col class="log-time-column" /><col class="log-entity-column" />
-                <col class="log-worker-column" /><col class="log-status-column" />
-                <col /><col class="log-action-column" />
-              </colgroup>
-              <thead><tr>
-                <th id="log-time-heading" scope="col" aria-sort="descending">
-                  <button id="log-time-sort" class="log-heading-sort" type="button">Zeitpunkt ↓</button>
-                </th>
-                <th scope="col">Aufgabe / Bezug</th><th scope="col">Mac</th>
-                <th scope="col">Status</th><th id="log-message-heading" scope="col">Ereignis</th>
-                <th scope="col"><span class="sr-only">Aktionen</span></th>
-              </tr></thead>
-              <tbody id="log-body"></tbody>
-            </table>
+        </div>
+        <p id="log-summary" class="log-summary" role="status"></p>
+        <div id="event-list" class="log-table-wrap">
+          <table class="log-table" role="table">
+            <caption id="log-caption" class="sr-only">Queue-Log: Alle Ereignisse</caption>
+            <colgroup>
+              <col class="log-time-column" /><col class="log-entity-column" />
+              <col class="log-worker-column" /><col class="log-status-column" />
+              <col /><col class="log-action-column" />
+            </colgroup>
+            <thead><tr>
+              <th id="log-time-heading" scope="col" aria-sort="descending">
+                <button id="log-time-sort" class="log-heading-sort" type="button">Zeitpunkt ↓</button>
+              </th>
+              <th scope="col">Aufgabe / Bezug</th><th scope="col">Mac</th>
+              <th scope="col">Status</th><th id="log-message-heading" scope="col">Ereignis</th>
+              <th scope="col"><span class="sr-only">Aktionen</span></th>
+            </tr></thead>
+            <tbody id="log-body"></tbody>
+          </table>
+        </div>
+        <p id="log-empty" class="empty-state" hidden></p>
+        <div class="log-footer">
+          <span id="log-results"></span>
+          <div id="log-pagination" class="log-pagination" hidden>
+            <button id="log-previous" class="button secondary" type="button" aria-label="Vorherige Log-Seite">←</button>
+            <span id="log-page-label"></span>
+            <button id="log-next" class="button secondary" type="button" aria-label="Nächste Log-Seite">→</button>
           </div>
-          <p id="log-empty" class="empty-state" hidden></p>
-          <div class="log-footer">
-            <span id="log-results"></span>
-            <div id="log-pagination" class="log-pagination" hidden>
-              <button id="log-previous" class="button secondary" type="button" aria-label="Vorherige Log-Seite">←</button>
-              <span id="log-page-label"></span>
-              <button id="log-next" class="button secondary" type="button" aria-label="Nächste Log-Seite">→</button>
-            </div>
-          </div>
-        </section>
-        <footer class="page-footer">
-          <span id="team-label">Gemeinsamer Team-Server</span
-          ><span>Keine Meldung seit 15 min: still · seit 30 min: offline</span>
-        </footer>
-      </main>
-    </div>
+        </div>
+      </section>
+    </main>
     <dialog id="connection-dialog" aria-labelledby="connection-title">
       <form id="connection-form">
         <div class="dialog-heading">
           <h2 id="connection-title">Team-Server verbinden</h2>
-          <button
-            type="button"
-            class="icon-button"
-            data-close
-            aria-label="Dialog schließen"
-          >
-            ×
-          </button>
+          <button type="button" class="icon-button" data-close aria-label="Dialog schließen">×</button>
         </div>
-        <p>
-          Nutze auf jedem Mac dieselbe Server-Adresse und Team-ID. Jeder Mac
-          erhält ein eigenes Mitglieds-Token.
+        <p id="team-label" class="form-hint">
+          Jeder Mac nutzt dieselbe Team-ID mit eigenem Mitglieds-Token.
         </p>
         <label
           >Team-ID<input
@@ -309,26 +283,18 @@
             spellcheck="false"
             placeholder="Mitglieds-Token…"
         /></label>
-        <p class="form-hint">
-          Der Server ist diese Webseite. Dein Token bleibt für diese Sitzung im
-          Speicher.
-        </p>
+        <p class="form-hint">Das Token bleibt nur für diese Sitzung im Speicher.</p>
         <div id="connection-error" class="form-error" role="alert" hidden></div>
         <div class="dialog-actions">
-          <button id="disconnect" type="button" class="button secondary" hidden>
-            Trennen</button
-          ><button type="submit" id="connect" class="button primary">
-            Verbinden
-          </button>
+          <button id="disconnect" type="button" class="button secondary" hidden>Trennen</button
+          ><button type="submit" id="connect" class="button primary">Verbinden</button>
         </div>
       </form>
     </dialog>
     <dialog id="detail-dialog" aria-labelledby="detail-title">
       <div class="dialog-heading">
         <h2 id="detail-title">Details</h2>
-        <button class="icon-button" data-close aria-label="Dialog schließen">
-          ×
-        </button>
+        <button class="icon-button" data-close aria-label="Dialog schließen">×</button>
       </div>
       <div id="detail-body"></div>
       <p id="detail-action-error" class="form-error" role="alert" hidden></p>
