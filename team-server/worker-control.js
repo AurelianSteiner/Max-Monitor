@@ -21,7 +21,11 @@ function controlForWorker(workerId, members, machines, deviceId = null) {
     ? new Set(native.map(machine => machine.memberId === null ? 'team-owner' : machine.memberId))
     : new Set(enrolled.map(member => member.id));
   const identity = ids.size === 1 ? members.find(member => ids.has(member.id)) : null;
-  const enabled = Boolean(identity && (typeof identity.macWorker === "boolean" ? identity.macWorker : identity.role === "member"));
+  const allows = member => typeof member.macWorker === "boolean" ? member.macWorker : member.role === "member";
+  // Every row that carries this Mac's Worker ID must allow it as well: switching
+  // off the Mac's own row in Members stops new work at once, even while its app
+  // reports as another identity such as the team owner (user decision 09.10.2026).
+  const enabled = Boolean(identity && allows(identity) && enrolled.every(allows));
   return { schema: 1, workerId, enabled,
     reason: ids.size > 1 ? "ambiguous" : !identity ? "unregistered" : enabled ? "enabled" : "disabled" };
 }

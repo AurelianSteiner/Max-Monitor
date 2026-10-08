@@ -21,6 +21,24 @@ test('control uses exact identity bindings and fails closed for unknown or ambig
   assert.equal(controlForWorker('mac-b', [...members, { id: 'c', role: 'member', enrollment: { workerId: 'mac-b' } }], []).reason, 'ambiguous');
 });
 
+test('switching off the Mac\'s own row stops it even while its app reports as another identity', () => {
+  // 09.10.2026: macbook-till-main's app reports as the team owner (macWorker
+  // true), the user switched off the Mac's own row — it must stop taking work.
+  const members = [{ id: 'mac-row', role: 'member', macWorker: false, enrollment: { workerId: 'mac-a' } },
+    { id: 'team-owner', role: 'super', macWorker: true }];
+  const native = [{ workerId: 'mac-a', memberId: null }];
+  assert.deepEqual(controlForWorker('mac-a', members, native), { schema: 1, workerId: 'mac-a', enabled: false, reason: 'disabled' });
+  members[0].macWorker = true;
+  assert.equal(controlForWorker('mac-a', members, native).enabled, true, 'both switches on → enabled');
+  members[1].macWorker = false;
+  assert.equal(controlForWorker('mac-a', members, native).reason, 'disabled', 'owner switch still counts');
+  members[1].macWorker = true;
+  delete members[0].macWorker;
+  assert.equal(controlForWorker('mac-a', members, native).enabled, true, 'member default (role member) allows');
+  members[0].role = 'guest';
+  assert.equal(controlForWorker('mac-a', members, native).reason, 'disabled', 'guest row without switch does not allow');
+});
+
 test('HTTP control follows saved member/owner switches and reassignment without emitting credentials', async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'max-monitor-control-'));
   process.env.DATA_DIR = directory;
