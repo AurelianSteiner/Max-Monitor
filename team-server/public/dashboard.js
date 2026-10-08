@@ -14,6 +14,7 @@
       : null;
   let snapshot = null;
   let snapshotReceivedAt = null;
+  const completingTasks = new Set();
   let busy = false;
   let fetchController = null;
   let generation = 0;
@@ -701,6 +702,77 @@
             ] ?? 5) || String(a.title).localeCompare(String(b.title)),
       );
   }
+  function canComplete(task) {
+    return task && ["blocked", "failed"].includes(task.status) && task.taskVersion;
+  }
+  function completionButton(task, expanded = false) {
+    const button = node("button", expanded ? "button secondary complete-task" : "icon-button complete-task");
+    button.type = "button";
+    const icon = node("span", "", "✓");
+    icon.setAttribute("aria-hidden", "true");
+    button.append(icon);
+    if (expanded) button.append(node("span", "", "Als erledigt abhaken"));
+    button.title = "Als erledigt abhaken";
+    button.setAttribute("aria-label", `Als erledigt abhaken: ${task.title || task.id}`);
+    button.disabled = completingTasks.has(task.id);
+    button.setAttribute("aria-busy", String(button.disabled));
+    button.addEventListener("click", () => completeTask(task));
+    return button;
+  }
+  async function completeTask(task) {
+    if (!credentials || completingTasks.has(task.id)) return;
+    const connection = credentials;
+    completingTasks.add(task.id);
+    $("task-action-status").hidden = true;
+    $("detail-action-error").hidden = true;
+    render();
+    $("detail-body").querySelectorAll(".complete-task").forEach((button) => {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(`${relayPrefix}/v1/teams/${encodeURIComponent(connection.teamId)}/fleet/tasks/complete`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${connection.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId: task.id, taskVersion: task.taskVersion }),
+        signal: controller.signal,
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Abhaken fehlgeschlagen. Versuche es erneut.");
+      if (connection !== credentials) return;
+      // Abort older reads so they cannot put the just-completed task back.
+      stopLive();
+      generation += 1;
+      fetchController?.abort();
+      busy = false;
+      if (snapshot) snapshot.queue.tasks = snapshot.queue.tasks.map((entry) => entry.id === task.id ? data.task : entry);
+      $("detail-dialog").close();
+      render();
+      $(view === "log" ? "log-heading" : "queue-heading").focus({ preventScroll: true });
+      await refresh();
+    } catch (error) {
+      if (connection !== credentials) return;
+      const message = error.name === "AbortError"
+        ? "Abhaken konnte nicht bestätigt werden. Aktualisiere die Ansicht und versuche es erneut."
+        : `${error.message} Aktualisiere die Ansicht und versuche es erneut.`;
+      $("task-action-status").textContent = message;
+      $("task-action-status").hidden = false;
+      $("detail-action-error").textContent = message;
+      $("detail-action-error").hidden = !$("detail-dialog").open;
+    } finally {
+      clearTimeout(timeout);
+      completingTasks.delete(task.id);
+      if (connection === credentials) {
+        render();
+        $("detail-body").querySelectorAll(".complete-task").forEach((button) => {
+          button.disabled = false;
+          button.setAttribute("aria-busy", "false");
+        });
+      }
+    }
+  }
   function renderQueue(items) {
     const visible = filtered(items);
     const body = $("queue-body");
@@ -752,7 +824,9 @@
       const category = node("td");
       category.append(node("span", "workflow-name", workflow(task.workflow)));
       const state = node("td");
-      state.append(badge(task.status));
+      const status = badge(task.status);
+      if (task.completion === "manual") status.lastChild.textContent = "Erledigt";
+      state.append(status);
       const assigned = node("td");
       const assignment = node("div", "progress");
       assignment.append(
@@ -789,6 +863,7 @@
       detail.setAttribute("aria-label", `Details zu ${task.title || task.id}`);
       detail.addEventListener("click", () => taskDetails(task));
       actionGroup.append(detail, links);
+      if (canComplete(task)) actionGroup.append(completionButton(task));
       actions.append(actionGroup);
       row.append(titleCell, category, state, assigned, updated, actions);
       body.append(row);
@@ -805,6 +880,7 @@
   function openDetail(title, children) {
     $("detail-title").textContent = title;
     $("detail-body").replaceChildren(...children);
+    $("detail-action-error").hidden = true;
     $("detail-dialog").showModal();
   }
   function taskDetails(task) {
@@ -812,7 +888,7 @@
     grid.append(
       detailField("Unternehmen", task.company || "Nicht hinterlegt"),
       detailField("Workflow", workflow(task.workflow)),
-      detailField("Status", statusNames[task.status] || task.status),
+      detailField("Status", task.completion === "manual" ? "Manuell erledigt" : statusNames[task.status] || task.status),
       detailField("Worker", task.workerId || "Noch nicht zugewiesen"),
       detailField(
         "Fortschritt",
@@ -849,6 +925,8 @@
       link.rel = "noopener noreferrer";
       children.push(link);
     }
+    if (task.completion === "manual") grid.append(detailField("Abgehakt", exact(task.completedAt)));
+    if (canComplete(task)) children.push(completionButton(task, true));
     openDetail(task.title || task.id, children);
   }
   function machineDetails(machine) {
@@ -1028,6 +1106,9 @@
         ? taskDetails(row.entity) : machineDetails(row.entity));
       children.push(button);
     }
+    if (row.type === "task" && ["blocked", "failed"].includes(row.status) && canComplete(row.entity)) {
+      children.push(completionButton(row.entity, true));
+    }
     openDetail(row.title, children);
   }
   function renderEvents(attention) {
@@ -1115,11 +1196,14 @@
         phase.title = row.phase;
         message.append(phase);
       }
-      const action = cell("action", "Details");
+      const action = cell("action", "Aktionen");
       const button = node("button", "icon-button", "↗");
       button.setAttribute("aria-label", `Details zu ${row.title}`);
       button.addEventListener("click", () => logDetails(row));
       action.append(button);
+      if (row.type === "task" && ["blocked", "failed"].includes(row.status) && canComplete(row.entity)) {
+        action.append(completionButton(row.entity));
+      }
       line.append(when, subject, worker, state, message, action);
       body.append(line);
     }
@@ -1218,13 +1302,12 @@
     });
   }
   $("refresh").addEventListener("click", refresh);
-  for (const id of ["connection-button", "connection-top"])
-    $(id).addEventListener("click", () => {
-      $("team-id").value = credentials?.teamId || "";
-      $("team-token").value = "";
-      $("disconnect").hidden = !credentials;
-      $("connection-dialog").showModal();
-    });
+  $("connection-top").addEventListener("click", () => {
+    $("team-id").value = credentials?.teamId || "";
+    $("team-token").value = "";
+    $("disconnect").hidden = !credentials;
+    $("connection-dialog").showModal();
+  });
   document
     .querySelectorAll("[data-close]")
     .forEach((button) =>

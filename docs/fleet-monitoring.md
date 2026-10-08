@@ -349,6 +349,26 @@ Zeitstempel. Eine erfolgreich vollständig gelesene, tatsächlich leere Queue
 darf den alten Snapshot dagegen ersetzen. Relay-Fehler bestätigen keine
 Übernahme und aktualisieren den lokalen Cache nicht.
 
+## Blockierte Aufgaben abhaken
+
+Queue, Queue-Log und Aufgabendetails bieten für blockierte und fehlgeschlagene
+Aufgaben rechts einen Haken „Als erledigt abhaken“. Die Erledigung wird im Relay
+für das gesamte Team gespeichert. Sie entfernt die Aufgabe aus „Offen“,
+„Blockiert“ und „Braucht Aufmerksamkeit“; unter „Alle“ steht sie als „Erledigt“.
+ClickUp und die Worker bleiben die Quelle für den tatsächlichen Arbeitsstatus.
+Die manuelle Erledigung bestätigt daher keinen erfolgreichen Upload.
+
+`POST /v1/teams/:id/fleet/tasks/complete` ist für alle authentifizierten
+Team-Mitglieder verfügbar und erhält `{ "taskId": "…", "taskVersion": "…" }`.
+Die Version stammt aus dem Fleet-Snapshot und schützt vor dem Abhaken einer
+inzwischen veränderten Blockierung. Wiederholte Anfragen sind idempotent.
+
+Ein unveränderter Queue-Abgleich, Quellenfehler oder Relay-Neustart erhält die
+Erledigung. Ändert sich Status, Blockierungsgrund, Worker oder ClickUp-Status,
+oder verschwindet die Aufgabe aus der Quelle, wird die Erledigung entfernt.
+Ein neuer Lauf oder eine neue Blockierung erscheint damit wieder regulär.
+Die Historie bleibt erhalten und enthält zusätzlich den Zeitpunkt des Abhakens.
+
 ## API-Vertrag
 
 `POST /v1/teams/:id/queue` benötigt einen Admin- oder Super-Bearer. Ein erfolgreicher

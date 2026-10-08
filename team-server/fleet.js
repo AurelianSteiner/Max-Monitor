@@ -279,6 +279,21 @@ function publicMachineEvent(entry, machines) {
   return workerId ? { ...entry, title: workerId } : entry;
 }
 
+// A completion belongs to one blocking state, not every future attempt of a task.
+function taskVersion(task) {
+  return crypto.createHash("sha256").update(JSON.stringify([
+    task.status, task.phase || null, task.workerId || null, task.sourceStatus || null,
+  ])).digest("hex");
+}
+
+function publicTask(task, completions = []) {
+  const version = taskVersion(task);
+  const completion = completions.find((entry) => entry.taskId === task.id && entry.taskVersion === version);
+  return completion
+    ? { ...task, taskVersion: version, status: "completed", phase: "Manuell erledigt", completion: "manual", completedAt: completion.completedAt }
+    : { ...task, taskVersion: version };
+}
+
 function createFleetStore(dataDir, now = Date.now) {
   const subscribers = new Map();
   function subscribe(teamId, listener) {
@@ -438,6 +453,10 @@ function createFleetStore(dataDir, now = Date.now) {
       if (oldSource.error) event(state, "queue_source_recovered", "queue", incoming.source.name, "Queue-Quelle ist wieder erreichbar", time);
       state.queue = {
         tasks: incoming.tasks,
+        completions: (state.queue.completions || []).filter((entry) => {
+          const task = incoming.tasks.find((task) => task.id === entry.taskId);
+          return task && entry.taskVersion === taskVersion(task);
+        }),
         source: {
           ...incoming.source,
           lastSuccessAt: incoming.source.lastSuccessAt || new Date(time).toISOString(),
@@ -453,6 +472,29 @@ function createFleetStore(dataDir, now = Date.now) {
     }
     write(teamId, state);
     return { taskCount: state.queue.tasks.length, source: state.queue.source };
+  }
+
+  function completeTask(teamId, who, raw) {
+    object(raw, "completion");
+    const taskId = string(raw.taskId, "taskId", 160);
+    const version = string(raw.taskVersion, "taskVersion", 64);
+    const state = read(teamId);
+    const task = state.queue.tasks.find((entry) => entry.id === taskId);
+    if (!task) throw new FleetError(404, "Die Aufgabe ist nicht mehr in der Queue. Aktualisiere die Ansicht.");
+    if (version !== taskVersion(task)) throw new FleetError(409, "Die Aufgabe hat sich geändert. Aktualisiere die Ansicht und prüfe den neuen Status.");
+    if (!["blocked", "failed"].includes(task.status)) throw new FleetError(409, "Nur blockierte oder fehlgeschlagene Aufgaben können abgehakt werden.");
+    const completions = state.queue.completions || [];
+    if (completions.some((entry) => entry.taskId === taskId && entry.taskVersion === version)) {
+      return publicTask(task, completions);
+    }
+    const time = now();
+    state.queue.completions = [...completions.filter((entry) => entry.taskId !== taskId), {
+      taskId, taskVersion: version, completedAt: new Date(time).toISOString(),
+      completedBy: who.member?.id || "__team_owner__",
+    }];
+    event(state, "task_completed", task.id, task.title, "Blockierung manuell als erledigt abgehakt", time, task);
+    write(teamId, state);
+    return publicTask(task, state.queue.completions);
   }
 
   function snapshot(teamId) {
@@ -483,12 +525,12 @@ function createFleetStore(dataDir, now = Date.now) {
       generatedAt: new Date(time).toISOString(),
       heartbeatIntervalSeconds: HEARTBEAT_INTERVAL_SECONDS,
       machines: machines.sort((a, b) => a.name.localeCompare(b.name)),
-      queue: { tasks: state.queue.tasks, source: { ...source, stale, status: source.error ? "error" : !source.lastSuccessAt ? "unavailable" : stale ? "stale" : "fresh" } },
+      queue: { tasks: state.queue.tasks.map((task) => publicTask(task, state.queue.completions)), source: { ...source, stale, status: source.error ? "error" : !source.lastSuccessAt ? "unavailable" : stale ? "stale" : "fresh" } },
       events: [...state.events].reverse().map((entry) => publicMachineEvent(entry, state.machines)),
     };
   }
 
-  return { heartbeat, updateQueue, snapshot, subscribe };
+  return { heartbeat, updateQueue, completeTask, snapshot, subscribe };
 }
 
 module.exports = { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, validateHeartbeat, validateQueue };

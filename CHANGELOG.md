@@ -1,5 +1,11 @@
 # Änderungen
 
+## 2.11
+
+- **Blockierte Aufgaben abhaken.** Blockierte und fehlgeschlagene Aufgaben lassen sich in Queue, Queue-Log und Aufgabendetails manuell als erledigt markieren. Die Erledigung wird für das ganze Team gespeichert und entfernt den Eintrag aus Offen, Blockiert und Braucht Aufmerksamkeit.
+- **Neue Versuche bleiben sichtbar.** Die Markierung bleibt bei unverändertem Abgleich und Server-Neustarts bestehen. Ändern sich Status, Blockierungsgrund, Worker oder ClickUp-Status, erscheint die Aufgabe wieder regulär; veraltete Ansichten können keine inzwischen veränderte Aufgabe abhaken.
+- **Direkter zur laufenden Arbeit.** Aufgaben-Queue und die Kennzahl für laufende Aufgaben öffnen die gefilterte Queue. Der zusätzliche Verbindungskasten entfällt, und die Aktionen im mobilen Queue-Log bleiben innerhalb der Zeilen.
+
 ## 2.10.1
 
 - **Ein eigener Claude-Account pro Mac.** Unter Queue & Macs verbindet jeder Worker seinen Monitoring-Account separat. Login, Zugangsspeicher und Limit-Abfrage sind unabhängig von Account Limits.
