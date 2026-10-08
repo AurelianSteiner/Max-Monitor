@@ -45,9 +45,10 @@ Wer die Auslastung eines ganzen Teams sehen will (eine Karte pro Person, wer hat
 
 ## Mac-Worker und AI Newsletter Creation
 
-**Max Monitor öffnet direkt die gemeinsame Übersicht.** Menüleisten-Klick und App-Start führen in dasselbe, frei skalierbare Fenster. Der erste Tab **„Queue & Macs“** zeigt:
-alle Worker, Akku und Stromversorgung, Claude-Kontingente pro Konto, letzte Meldung
-und die gemeinsame Aufgaben-Queue mit Status, Worker-Zuordnung und Queue-Log.
+**Max Monitor öffnet direkt die gemeinsame Übersicht.** Menüleisten-Klick und App-Start führen in dasselbe, frei skalierbare Fenster. Der erste Tab **„Queue & Macs“** zeigt alles auf einen Blick:
+ein Pipeline-Diagramm pro Workflow (Markiert, Wartet, Läuft, Blockiert, Fertig), was gerade Aufmerksamkeit braucht,
+und alle Worker mit aktueller Aufgabe, Akku, Claude-Kontingenten und letzter Meldung.
+Dazu kommen die gemeinsame Aufgaben-Queue mit Status und Worker-Zuordnung sowie das Queue-Log.
 Pre-Gen, Uploads und weitere Workflows lassen sich filtern und durchsuchen.
 
 Im Tab **„Account Limits“** liegen die lokalen Claude-/Codex-Konten, ihre Nutzungslimits

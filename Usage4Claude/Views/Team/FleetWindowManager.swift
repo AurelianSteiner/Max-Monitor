@@ -25,6 +25,8 @@ final class FleetWindowManager: NSObject, NSWindowDelegate {
         let window = NSWindow(contentViewController: controller)
         window.title = "Max Monitor"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        // The overview is designed light only; keep its native chrome matching the web content.
+        window.appearance = NSAppearance(named: .aqua)
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 720, height: 520)
         let screen = NSScreen.main?.visibleFrame.size ?? NSSize(width: 1440, height: 900)

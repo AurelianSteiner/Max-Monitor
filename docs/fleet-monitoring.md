@@ -28,9 +28,18 @@ Mac 3: Claude-Konto 3 + Gerätebericht ─┘                  ↑
 ClickUp + Slack-Reservierungen + Hub-Worker-Dateien ── Newsletter-Bridge
 ```
 
+Die **Übersicht** zeigt alles auf einer Seite: oben pro Workflow ein Balkendiagramm
+der Stufen **Markiert · Wartet · Läuft · Blockiert · Fertig** (bei Bedarf **Fehler**),
+daneben die dringendsten Einträge aus **Braucht Aufmerksamkeit** und darunter alle Macs
+mit Status, aktueller Aufgabe, Akku, 5h-/Wochenlimit und letzter Meldung. „Markiert“
+heißt: nur das Start-Tag (z. B. `pre gen.`) ist gesetzt; ein Status-Tag wie
+`pre gen · wartet` oder eine Worker-Reservierung zählt als „Wartet“. Ein Klick auf einen
+Balken öffnet die Queue mit genau diesem Status- und Workflow-Filter. Das Dashboard ist
+bewusst immer hell, auch im macOS-Dunkelmodus.
+
 Im **Queue-Log → Braucht Aufmerksamkeit** stehen die aktuell betroffenen Macs und
-blockierten oder fehlgeschlagenen Aufgaben mit ihren Gründen und Details. Ein
-Klick auf die Kennzahl öffnet diesen Filter direkt. Jeder Mac und jede Aufgabe
+blockierten oder fehlgeschlagenen Aufgaben mit ihren Gründen und Details. „Im Log
+ansehen“ in der Übersicht und die Zahl am Log-Reiter öffnen diesen Filter direkt. Jeder Mac und jede Aufgabe
 zählt einmal, auch wenn mehrere Gründe vorliegen; gelöste Einträge verschwinden
 beim nächsten Abgleich. **Alle Ereignisse** zeigt weiterhin die Historie.
 
@@ -39,8 +48,8 @@ beim nächsten Abgleich. **Alle Ereignisse** zeigt weiterhin die Historie.
 Slack zeigt die `worker_id` aus der Newsletter-Konfiguration. Genau diese Kennung
 ist auch der Hauptname in der Mac-Übersicht, der Aufgaben-Queue und dem Q-Log,
 einschließlich älterer Geräte-Ereignisse. Der macOS-Gerätename bleibt als
-Zusatzinformation unter dem Hauptnamen und in den Details sichtbar; die Suche
-findet beide. Eine Umbenennung in macOS ändert die Zuordnung nicht.
+Zusatzinformation unter dem Hauptnamen der Mac-Karten, als Tooltip in der Übersicht
+und in den Details sichtbar; die Suche findet beide. Eine Umbenennung in macOS ändert die Zuordnung nicht.
 
 Bei einem Mac ohne Worker-ID wird dessen gemeldeter Gerätename angezeigt und die
 fehlende Zuordnung ausdrücklich kenntlich gemacht. Namen werden nie anhand eines
