@@ -192,7 +192,16 @@ identities or copy invitation tokens. Admins can permanently delete ordinary mem
 and their Macs from the Members tab or the Mac details in the overview, after confirmation.
 Admins cannot delete guest or admin access. New manual invitations default to Guest;
 automatic worker enrollment still creates Members with MacWorker enabled. The MacWorker
-checkbox controls reporting independently of the role.
+checkbox controls reporting independently of the role. Updated newsletter workers also check this
+saved capability through the trusted Hub before reserving or starting any new newsletter/upload.
+Disabling it releases unstarted reservations while already running work continues. The worker
+service stays running and discovers re-enablement on its next poll (normally every minute).
+Unknown/ambiguous bindings and permission-check failures block new work. Match the exact worker ID
+in the app and worker configuration. Older manually connected Macs can supply their existing
+random app UUID as `?deviceId=...`; a conflicting Worker ID/device binding is rejected.
+Display names and queue observations are not identity bindings.
+Deploy the relay and `scripts/check-worker-control.mjs` on the Hub and verify existing worker
+bindings before distributing worker code. The existing native checkbox needs no app update.
 
 ## Endpoints
 
@@ -202,6 +211,7 @@ All of them except `/health` need `Authorization: Bearer <token>`.
 | --- | --- | --- | --- |
 | `GET` | `/health` | anyone | `{"ok":true}` |
 | `GET` | `/v1/teams/:id/me` | any role | role, name, member ID and macWorker of this token |
+| `GET` | `/v1/teams/:id/workers/:workerId/control` | super | current admission `{schema:1, workerId, enabled, reason}`, without credentials; no-store |
 | `POST` | `/v1/reports` | MacWorker | store a report, always as the authenticated member |
 | `GET` | `/v1/teams/:id/reports` | any role | reports belonging to enabled MacWorkers |
 | `GET` | `/v1/teams/:id/members` | super, admin, guest | member list — tokens included for super only |

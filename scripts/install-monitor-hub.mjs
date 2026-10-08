@@ -15,6 +15,7 @@ const BEGIN = '# MAX MONITOR BEGIN';
 const END = '# MAX MONITOR END';
 const SOURCE_FILES = ['team-server/server.js', 'team-server/fleet.js', 'team-server/enrollment.js', 'team-server/package.json',
   'team-server/public/dashboard.html', 'team-server/public/dashboard.css', 'team-server/public/dashboard.js', 'scripts/enroll-monitor-worker.mjs',
+  'team-server/worker-control.js', 'scripts/check-worker-control.mjs',
   'scripts/install-monitor-hub.mjs', 'scripts/install-monitor-hub.sh', 'scripts/newsletter-monitor-bridge.mjs'];
 const defaults = { serverURL: 'https://api.ruegamer-steiner.de/max-monitor', teamId: 'RSMACS01', port: 8941, nodeBinary: '/usr/bin/node' };
 

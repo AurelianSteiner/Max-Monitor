@@ -40,6 +40,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES } = require("./fleet");
 const { EnrollmentError, enrollWorkerMember, validateEnrollment } = require("./enrollment");
+const { controlForWorker, WORKER_ID, DEVICE_ID } = require("./worker-control");
 
 const PORT = process.env.PORT === undefined ? 8080 : Number(process.env.PORT);
 const HOST = process.env.HOST || undefined;
@@ -487,6 +488,21 @@ const server = http.createServer((req, res) => {
           { error: expected ? enrollmentError.message : "Worker-Registrierung konnte nicht gespeichert werden" });
       }
     });
+  }
+
+  // The trusted Hub checks this immediately before reserving/starting work.
+  // Read current identities, not the filtered dashboard or cached queue source.
+  const controlMatch = rest.match(/^\/workers\/([^/]+)\/control$/);
+  if (req.method === "GET" && controlMatch) {
+    if (who.role !== "super") return send(res, 403, { error: "nur der Team-Inhaber darf Worker-Freigaben abfragen" });
+    if (!WORKER_ID.test(controlMatch[1])) return send(res, 400, { error: "ungültige Worker-ID" });
+    const deviceId = url.searchParams.get('deviceId');
+    if (deviceId !== null && !DEVICE_ID.test(deviceId)) return send(res, 400, { error: "ungültige Geräte-ID" });
+    try {
+      const members = [ownerIdentity(teamId, true), ...readMembers(teamId, true)];
+      res.setHeader("Cache-Control", "no-store");
+      return send(res, 200, controlForWorker(controlMatch[1], members, fleet.snapshot(teamId).machines, deviceId));
+    } catch { return send(res, 503, { error: "Worker-Freigabe konnte nicht geprüft werden" }); }
   }
 
   // Fleet and queue are shared by all authenticated team members. Only the
