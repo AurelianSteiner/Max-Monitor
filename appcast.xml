@@ -3,6 +3,24 @@
     <channel>
         <title>Max Monitor</title>
         <item>
+            <title>2.11</title>
+            <pubDate>Thu, 08 Oct 2026 00:22:55 GMT</pubDate>
+            <sparkle:version>2.11</sparkle:version>
+            <sparkle:shortVersionString>2.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <link>https://github.com/AurelianSteiner/Max-Monitor/releases/tag/v2.11</link>
+            <description><![CDATA[Blockierte und fehlgeschlagene Aufgaben lassen sich jetzt in Queue, Queue-Log und Details für das ganze Team als erledigt abhaken. Neue Versuche oder geänderte Blockierungen erscheinen wieder regulär.
+
+Die Aufgaben-Queue öffnet laufende Aufgaben direkt. Der zusätzliche Verbindungskasten entfällt; auf dem Handy bleiben die Aktionen innerhalb der Queue-Log-Zeilen.
+
+Enthält alle Änderungen aus 2.10.2. App und Update-Paket sind mit den bisherigen Signierschlüsseln signiert.]]></description>
+            <enclosure
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.11/Max-Monitor-2.11.dmg"
+                sparkle:edSignature="TB37rZKuvyU2Fnu8EwonuXGK+r3IbsOnQVjJATaqU38d25UoDeKdkFHQ14bj4mtMS/ZP3rJteHvQiDstJY1YAA=="
+                length="5672731"
+                type="application/octet-stream"/>
+        </item>
+        <item>
             <title>2.10.2</title>
             <pubDate>Wed, 07 Oct 2026 23:04:45 +0000</pubDate>
             <sparkle:version>2.10.2</sparkle:version>

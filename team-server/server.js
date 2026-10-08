@@ -485,6 +485,16 @@ const server = http.createServer((req, res) => {
       return fleetResult(res, () => ({ ok: true, task: fleet.completeTask(teamId, who, body) }));
     });
   }
+  // Every team member can resolve an attention item; source synchronization
+  // remains restricted to the queue bridge/admin.
+  if (req.method === "POST" && rest === "/fleet/tasks/complete") {
+    return readBody(req, (error, raw) => {
+      if (error) return send(res, 413, { error: "Abhak-Anfrage zu groß" });
+      let body;
+      try { body = JSON.parse(raw); } catch { return send(res, 400, { error: "kein gültiges JSON" }); }
+      return fleetResult(res, () => ({ ok: true, task: fleet.completeTask(teamId, who, body) }));
+    });
+  }
   if (req.method === "POST" && (rest === "/heartbeat" || rest === "/queue")) {
     if (rest === "/heartbeat" && who.role === "guest") return send(res, 403, { error: "Gäste registrieren keinen Worker-Mac" });
     if (rest === "/queue" && !["admin", "super"].includes(who.role)) return send(res, 403, { error: "nur Admin oder Team-Inhaber darf die Queue aktualisieren" });
