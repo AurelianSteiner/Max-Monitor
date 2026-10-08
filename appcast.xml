@@ -3,6 +3,24 @@
     <channel>
         <title>Max Monitor</title>
         <item>
+            <title>2.13.1</title>
+            <pubDate>Thu, 08 Oct 2026 11:10:25 +0000</pubDate>
+            <sparkle:version>2.13.1</sparkle:version>
+            <sparkle:shortVersionString>2.13.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[Laufende Macs werden zuverlässig als erreichbar angezeigt: Max Monitor berücksichtigt jetzt sowohl Meldungen der Mac-App als auch des zugeordneten Newsletter-Workers. Das behebt falsche Offline-Anzeigen, etwa nach dem Wechsel zum Inhaberzugang.
+
+App- und Worker-Meldungen sind in den Details getrennt sichtbar. Veraltete Akkuwerte werden ausgeblendet, Kontingente behalten ihren ursprünglichen Messzeitpunkt. „Meldung fehlt“ ersetzt den missverständlichen Status „Still“.
+
+Der gemeinsame Monitor ist bereits aktualisiert. Echte Worker-Ausfälle und Anmeldefehler bleiben sichtbar.
+]]></description>
+            <enclosure
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.13.1/Max-Monitor-2.13.1.dmg"
+                sparkle:edSignature="k7XkP+GcjXGGD1xcTHAI5KkHF7/JziJIkEHelox7JY9/wuKWItX/O88/28CdUMRNH0vPxQeeETM9ZQ/WEZ6hDQ=="
+                length="5751065"
+                type="application/octet-stream"/>
+        </item>
+        <item>
             <title>2.13</title>
             <pubDate>Thu, 08 Oct 2026 10:24:33 +0000</pubDate>
             <sparkle:version>2.13</sparkle:version>
