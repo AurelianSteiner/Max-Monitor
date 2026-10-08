@@ -1208,6 +1208,7 @@
     cancel.disabled = true;
     button.textContent = "Wird gelöscht…";
     button.setAttribute("aria-busy", "true");
+    $("detail-action-error").hidden = true;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
     try {
@@ -1223,7 +1224,13 @@
       generation += 1;
       fetchController?.abort();
       busy = false;
+      const removed = snapshot.machines.filter((entry) => entry.memberId === machine.memberId);
+      const devices = new Set(removed.map((entry) => entry.deviceId));
+      const workers = new Set(removed.map((entry) => entry.workerId).filter(Boolean));
       snapshot.machines = snapshot.machines.filter((entry) => entry.memberId !== machine.memberId);
+      snapshot.events = snapshot.events.filter((entry) => entry.type.startsWith("machine_")
+        ? !devices.has(entry.deviceId || entry.entityId)
+        : entry.type.startsWith("worker_") ? !workers.has(entry.workerId || entry.entityId) : true);
       $("detail-dialog").close();
       render();
       $("main").focus({ preventScroll: true });
