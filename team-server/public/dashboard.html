@@ -22,7 +22,7 @@
           <button class="nav-item selected" data-view="overview">
             <span>Übersicht</span><span aria-hidden="true">↗</span>
           </button>
-          <button class="nav-item" data-view="queue">
+          <button class="nav-item" data-view="queue" data-status="running">
             <span
               ><span class="desktop-label">Aufgaben-Queue</span
               ><span class="mobile-label">Queue</span></span
@@ -41,17 +41,6 @@
             ><span aria-hidden="true">≡</span>
           </button>
         </nav>
-        <div class="sidebar-bottom">
-          <span class="signal" aria-hidden="true"></span
-          ><strong>Eine gemeinsame Übersicht</strong>
-          <p>
-            Alle Macs melden an denselben Team-Server. Geräteprüfung alle 10
-            Minuten.
-          </p>
-          <button id="connection-button" class="text-button">
-            Verbindung anzeigen
-          </button>
-        </div>
       </aside>
       <main id="main" tabindex="-1">
         <header class="page-header">
@@ -75,6 +64,7 @@
           </div>
         </header>
         <div id="notice" class="notice" role="status" hidden></div>
+        <div id="task-action-status" class="notice" role="status" hidden></div>
         <section class="metrics" aria-label="Zusammenfassung">
           <button class="metric" data-view="machines">
             <span>Macs erreichbar</span><strong id="metric-online">—</strong
@@ -119,7 +109,7 @@
         <section id="queue-section" class="content-section">
           <div class="section-heading">
             <div>
-              <h2>
+              <h2 id="queue-heading" tabindex="-1">
                 Aufgaben-Queue <span id="queue-count" class="count">—</span>
               </h2>
               <p id="queue-source">
@@ -180,7 +170,7 @@
                   <th scope="col">Status</th>
                   <th scope="col">Mac / Fortschritt</th>
                   <th scope="col">Aktualisiert</th>
-                  <th scope="col" class="queue-links-heading">Links <span class="sr-only">und Details</span></th>
+                  <th scope="col" class="queue-links-heading">Aktionen</th>
                 </tr>
               </thead>
               <tbody id="queue-body"></tbody>
@@ -261,7 +251,7 @@
                 </th>
                 <th scope="col">Aufgabe / Bezug</th><th scope="col">Mac</th>
                 <th scope="col">Status</th><th id="log-message-heading" scope="col">Ereignis</th>
-                <th scope="col"><span class="sr-only">Details</span></th>
+                <th scope="col"><span class="sr-only">Aktionen</span></th>
               </tr></thead>
               <tbody id="log-body"></tbody>
             </table>
@@ -341,6 +331,7 @@
         </button>
       </div>
       <div id="detail-body"></div>
+      <p id="detail-action-error" class="form-error" role="alert" hidden></p>
     </dialog>
   </body>
 </html>

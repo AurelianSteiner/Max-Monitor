@@ -187,29 +187,6 @@ p {
 .nav-count {
   font-size: 11px;
 }
-.sidebar-bottom {
-  margin-top: auto;
-  padding: 24px 8px 0;
-  font-size: 12px;
-}
-.sidebar-bottom strong {
-  font-weight: 500;
-}
-.sidebar-bottom p {
-  font-size: 12px;
-  margin-top: 8px;
-}
-.sidebar-bottom .text-button {
-  margin-top: 16px;
-}
-.signal {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  margin-right: 5px;
-}
 main {
   padding: 32px;
   min-width: 0;
@@ -860,7 +837,7 @@ dialog .form-hint {
 .log-entity-column { width: 27%; }
 .log-worker-column { width: 17%; }
 .log-status-column { width: 92px; }
-.log-action-column { width: 44px; }
+.log-action-column { width: 80px; }
 .log-table th, .log-table td { padding: 12px 8px; text-align: left; font-size: 12px; vertical-align: top; }
 .log-table th {
   position: sticky; top: 0; z-index: 1;
@@ -886,6 +863,13 @@ dialog .form-hint {
 .attention-reasons { color: var(--warn); }
 .log-detail-messages { font-size: 13px; }
 .log-action .icon-button { width: 28px; height: 28px; }
+.log-action { white-space: nowrap; }
+.complete-task { color: var(--accent); flex-shrink: 0; }
+.complete-task:hover { background: var(--accent-soft); }
+.complete-task:active { transform: translateY(1px); }
+.complete-task:disabled { opacity: .5; cursor: wait; }
+.complete-task.button { gap: 8px; }
+.complete-task:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .log-footer, .log-pagination { display: flex; align-items: center; gap: 12px; }
 .log-footer { justify-content: space-between; margin-top: 12px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .log-pagination .button { min-height: 36px; }
@@ -985,8 +969,7 @@ dialog .form-hint {
   .brand small {
     display: none;
   }
-  .workspace-label,
-  .sidebar-bottom {
+  .workspace-label {
     display: none;
   }
   .sidebar nav {
