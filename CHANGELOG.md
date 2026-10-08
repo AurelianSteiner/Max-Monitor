@@ -2,7 +2,10 @@
 
 ## 2.12
 
-- **Neue Dashboard-Übersicht.** Eine helle, kompakte Übersicht zeigt die Workflow-Pipeline, wichtige Meldungen und alle Macs mit Akku, Aufgaben und Claude-Limits. Pipeline und Meldungen öffnen direkt die passenden Aufgaben und Details; Queue, Macs und Log funktionieren auch auf kleinen Bildschirmen.
+- **Alles auf einen Blick.** Die helle, kompakte Übersicht zeigt Pipeline, wichtige Meldungen und alle Macs auf einer Seite. Eine schmale Kopfleiste enthält Navigation, Live-Status, Aktualisieren und Team-Verbindung.
+- **Pipeline-Diagramm wie in ClickUp.** Pro Workflow zeigt ein Balkendiagramm markierte, wartende, laufende, blockierte und fertige Aufgaben. Ein Klick öffnet die passende Queue; fertige Aufgaben haben einen eigenen Filter.
+- **Wer arbeitet woran.** Die Mac-Liste zeigt Status, aktuelle Aufgabe, Akku, 5-Stunden- und Wochenlimit sowie die letzte Meldung. Hinweise sind nach Dringlichkeit sortiert und öffnen direkt die Details. Queue, Macs und Log funktionieren auch auf kleinen Bildschirmen.
+- **Immer heller Modus.** Dashboard und Fenster bleiben auch bei dunklem macOS hell.
 
 - **Gäste ohne Worker-Mac.** Gäste sehen alle Macs, Aufgaben und Kontingente und können Aufgaben abhaken. Ihr eigener Mac meldet sich nicht in der Worker-Übersicht; auch ältere App-Versionen können mit einem Gastzugang keinen Mac registrieren.
 - **Eigener Mitglieder-Reiter.** Die Hauptübersicht enthält einen Mitglieder-Reiter mit den Filtern Alle, Mitglied, Admin und Gast. Der Inhaber kann Rollen ändern, Einladungen kopieren und Zugänge verwalten. Neue manuelle Einladungen sind standardmäßig Gastzugänge.

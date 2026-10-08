@@ -265,8 +265,8 @@
     $("notice").textContent = message || "";
     $("notice").hidden = !message;
   }
-  function skeleton(className, lines = 3) {
-    const shell = node("div", className);
+  function skeleton(className, lines = 3, tag = "div") {
+    const shell = node(tag, className);
     for (let index = 0; index < lines; index++) shell.append(node("div", "loading-line"));
     shell.setAttribute("aria-label", "Wird geladen");
     return shell;
@@ -275,7 +275,7 @@
     if (snapshot) return;
     $("machine-grid").replaceChildren(...Array.from({ length: 3 }, () => skeleton("machine")));
     $("pipeline").replaceChildren(skeleton("flow", 4));
-    $("attention-list").replaceChildren(skeleton("attention-calm", 3));
+    $("attention-list").replaceChildren(skeleton("attention-calm", 3, "li"));
     $("fleet-body").replaceChildren(...Array.from({ length: 4 }, () => {
       const row = node("tr");
       const cell = node("td");
