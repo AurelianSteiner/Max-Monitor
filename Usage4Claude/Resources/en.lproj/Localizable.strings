@@ -397,8 +397,10 @@
 "team.members.role" = "Role";
 "team.members.role_filter" = "Filter by role";
 "team.members.empty" = "No accounts with this role.";
-"team.members.roles_hint" = "Only members appear as Macs. Admins manage the queue and can permanently delete Macs. Guests can view the overview and complete tasks.";
-"team.members.guest_hint" = "Guest access: view all Macs, tasks and quotas, and complete tasks. This Mac is not reported as a worker.";
+"team.members.roles_hint" = "Roles control access. MacWorker independently reports battery and quotas and shows the Mac in the overview, including admins, guests and the owner.";
+"team.members.guest_hint" = "Guests can view all Macs, tasks and quotas and complete tasks. Enabling MacWorker also lets them send their own device report.";
+"team.members.mac_worker" = "MacWorker";
+"team.members.mac_worker_hint" = "Send device reports: battery, power source and monitoring-account limits update every minute. The app must be running on this Mac.";
 
 /* Team — member management (owner only) */
 "team.members.title" = "Members";
@@ -451,7 +453,7 @@
 "fleet.intro" = "All newsletter tasks and Mac workers in one place. Connect every Mac to the same team server and team ID. Give each Mac its own member token.";
 "fleet.worker_id" = "Worker ID (optional)";
 "fleet.worker_id_help" = "Enter the worker_id from the newsletter worker configuration to link tasks to this Mac. Monitoring continues without a worker ID.";
-"fleet.heartbeat_help" = "This Mac reports its battery, power source and every Claude account's limits every 10 minutes. After 15 minutes without a heartbeat it is silent, and after 30 minutes it is offline. Claude credentials stay on this Mac.";
+"fleet.heartbeat_help" = "This Mac reports its battery, power source and monitoring-account limits every minute. After 15 minutes without a heartbeat it is silent, and after 30 minutes it is offline. Claude credentials stay on this Mac.";
 "fleet.retry" = "Reload";
 "fleet.settings" = "Connection & worker";
 "fleet.load_error" = "The shared overview could not be loaded";

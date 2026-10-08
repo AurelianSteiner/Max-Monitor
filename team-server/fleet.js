@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 
-const HEARTBEAT_INTERVAL_SECONDS = 600;
+const HEARTBEAT_INTERVAL_SECONDS = 60;
 const SILENT_AFTER_MS = 15 * 60 * 1000;
 const OFFLINE_AFTER_MS = 30 * 60 * 1000;
 const MAX_EVENTS = 300;
@@ -415,7 +415,12 @@ function createFleetStore(dataDir, now = Date.now) {
     }
     const ownerId = who.member ? who.member.id : "__team_owner__";
     const previous = state.machines.find((machine) => machine.deviceId === incoming.deviceId);
-    if (previous && previous.ownerId !== ownerId) throw new FleetError(409, "deviceId gehört bereits zu einem anderen Team-Mitglied");
+    // An owner who opts in may resume their existing Mac after switching from
+    // its member token. Preserve the device and worker identity without a duplicate.
+    const ownerResumesMac = who.role === "super" && previous &&
+      (previous.ownerId === "__team_owner__" ||
+        (incoming.workerId && incoming.workerId === previous.workerId));
+    if (previous && previous.ownerId !== ownerId && !ownerResumesMac) throw new FleetError(409, "deviceId gehört bereits zu einem anderen Team-Mitglied");
     if (incoming.workerId && state.machines.some((machine) => machine.workerId === incoming.workerId && machine.deviceId !== incoming.deviceId)) {
       throw new FleetError(409, "workerId ist bereits einem anderen Mac zugeordnet");
     }
@@ -605,8 +610,11 @@ function createFleetStore(dataDir, now = Date.now) {
     const devices = new Set(owned.map((machine) => machine.deviceId));
     const workers = new Set(owned.map((machine) => machine.workerId).filter(Boolean));
     if (member.enrollment) {
-      devices.add(member.enrollment.deviceId);
-      workers.add(member.enrollment.workerId);
+      const reassigned = state.machines.some((machine) => machine.deviceId === member.enrollment.deviceId && machine.ownerId !== member.id);
+      if (!reassigned) {
+        devices.add(member.enrollment.deviceId);
+        workers.add(member.enrollment.workerId);
+      }
     }
     // Keep only identity deny lists, never deleted telemetry or account data.
     state.deletedDevices = [...new Set([...(state.deletedDevices || []), ...devices])];

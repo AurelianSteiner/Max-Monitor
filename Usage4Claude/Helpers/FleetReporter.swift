@@ -7,7 +7,7 @@ import OSLog
 /// failure. The older person-level TeamAutoReporter remains compatible.
 final class FleetReporter {
     static let shared = FleetReporter()
-    static let heartbeatInterval: TimeInterval = 10 * 60
+    static let heartbeatInterval: TimeInterval = 60
 
     private var timer: Timer?
     private var cancellables = Set<AnyCancellable>()
@@ -37,13 +37,13 @@ final class FleetReporter {
     func connectionDidChange() {
         dispatchPrecondition(condition: .onQueue(.main))
         let connection = TeamServerConnection.shared
-        let connected = connection.client != nil && connection.role?.reportsDevice == true
+        let connected = connection.client != nil && connection.reportsDevice
 
         timer?.invalidate()
         timer = nil
         if connected {
             let timer = Timer(timeInterval: Self.heartbeatInterval, repeats: true) { [weak self] _ in
-                self?.report()
+                self?.report(force: true)
             }
             RunLoop.main.add(timer, forMode: .common)
             self.timer = timer
@@ -57,7 +57,7 @@ final class FleetReporter {
         dispatchPrecondition(condition: .onQueue(.main))
         let connection = TeamServerConnection.shared
         guard let teamId = connection.teamId, let client = connection.client,
-              connection.role?.reportsDevice == true else { return }
+              connection.reportsDevice else { return }
         if isPosting {
             if force { pendingReport = true }
             return
@@ -85,9 +85,10 @@ final class FleetReporter {
             let battery = await Task.detached(priority: .utility) { Self.readBattery() }.value
             guard TeamServerConnection.shared.teamId == teamId,
                   TeamServerConnection.shared.isConnected,
-                  TeamServerConnection.shared.role?.reportsDevice == true else { return }
+                  TeamServerConnection.shared.reportsDevice else { return }
             let heartbeat = Self.buildHeartbeat(teamId: teamId, monitoring: FleetMonitoringManager.shared,
                                                 battery: battery, now: Date())
+            self.pendingReport = false
             do {
                 try await client.postHeartbeat(heartbeat)
                 Logger.team.debug("Mac-Heartbeat gemeldet")

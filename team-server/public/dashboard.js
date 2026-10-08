@@ -1255,7 +1255,7 @@
       });
       children.push(button);
     }
-    if (snapshot?.capabilities?.canDeleteMachines && machine.memberId) {
+    if (snapshot?.capabilities?.canDeleteMachines && machine.memberId && machine.memberId !== "team-owner") {
       const remove = node("button", "button danger", "Mac endgültig löschen…");
       remove.addEventListener("click", () => confirmMachineDeletion(machine));
       children.push(remove);

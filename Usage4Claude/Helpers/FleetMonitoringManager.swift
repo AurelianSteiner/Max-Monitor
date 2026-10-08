@@ -50,7 +50,7 @@ final class FleetMonitoringManager: ObservableObject {
 
     func refresh(force: Bool = false) {
         guard let account = store.account, !isRefreshing else { return }
-        if !force, let lastAttemptAt, Date().timeIntervalSince(lastAttemptAt) < 10 * 60 { return }
+        if !force, let lastAttemptAt, Date().timeIntervalSince(lastAttemptAt) < 55 { return }
         lastAttemptAt = Date()
         isRefreshing = true
         if service == nil {

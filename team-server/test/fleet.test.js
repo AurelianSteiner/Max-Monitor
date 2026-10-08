@@ -120,7 +120,7 @@ test("shared authenticated relay supports fleet without changing existing report
       const result = await request(`${endpoint}/fleet`, { token });
       assert.equal(result.status, 200);
       assert.equal(result.body.machines.length, 2);
-      assert.equal(result.body.heartbeatIntervalSeconds, 600);
+      assert.equal(result.body.heartbeatIntervalSeconds, 60);
       assert.ok(!JSON.stringify(result.body).includes(member.token));
       assert.ok(!JSON.stringify(result.body).includes("must-not-persist"));
     }

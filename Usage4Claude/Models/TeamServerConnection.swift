@@ -39,7 +39,7 @@ enum TeamServerRole: String, Codable, Equatable, CaseIterable {
     case admin
     /// Participates with a reporting Mac.
     case member
-    /// Reads all team data and resolves tasks, without reporting a Mac.
+    /// Reads all team data and resolves tasks. MacWorker is independent.
     case guest
 
     init(lenient raw: String?) {
@@ -55,7 +55,6 @@ enum TeamServerRole: String, Codable, Equatable, CaseIterable {
     var canManageMembers: Bool { self == .superAdmin }
     var canViewMembers: Bool { self != .member }
     var canDeleteMacs: Bool { self == .superAdmin || self == .admin }
-    var reportsDevice: Bool { self == .member }
 }
 
 // MARK: - Persistenz-Schlüssel
@@ -74,6 +73,7 @@ enum TeamServerDefaultsKeys {
     static let role       = prefix + "teamServerRole"
     static let memberName = prefix + "teamServerMemberName"
     static let memberId   = prefix + "teamServerMemberId"
+    static let macWorker  = prefix + "teamServerMacWorker"
 }
 
 // MARK: - Verbindung
@@ -101,6 +101,8 @@ final class TeamServerConnection: ObservableObject {
     @Published private(set) var memberName: String?
     /// Server-interne Mitglieds-ID (nur Mitglieder)
     @Published private(set) var memberId: String?
+    @Published private(set) var macWorker = false
+    var reportsDevice: Bool { role != nil && macWorker }
     /// Läuft gerade ein Verbindungsversuch?
     @Published private(set) var isConnecting = false
     /// Letzter Fehler in Alltagssprache („Token ungültig.") — `nil`, wenn alles gut
@@ -111,6 +113,8 @@ final class TeamServerConnection: ObservableObject {
     /// Das Token — im Speicher gehalten, dauerhaft nur im Schlüsselbund
     private(set) var token: String?
     private let defaults = UserDefaults.standard
+    private var identityTimer: Timer?
+    private var isVerifyingIdentity = false
 
     // MARK: - Abfragen
 
@@ -158,6 +162,13 @@ final class TeamServerConnection: ObservableObject {
         role = defaults.string(forKey: TeamServerDefaultsKeys.role).flatMap(TeamServerRole.init(rawValue:))
         memberName = defaults.string(forKey: TeamServerDefaultsKeys.memberName)
         memberId = defaults.string(forKey: TeamServerDefaultsKeys.memberId)
+        macWorker = defaults.object(forKey: TeamServerDefaultsKeys.macWorker) as? Bool ?? (role == .member)
+        let identityTimer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            guard let self, self.isConnected else { return }
+            self.verifyIdentity()
+        }
+        RunLoop.main.add(identityTimer, forMode: .common)
+        self.identityTimer = identityTimer
         token = KeychainManager.shared.loadTeamServerToken()
 
         // Nachgelagert (nicht im init!), damit sich die Singletons nicht
@@ -279,23 +290,31 @@ final class TeamServerConnection: ObservableObject {
             completion?(.failure(.notConnected))
             return
         }
+        guard !isVerifyingIdentity else { return }
+        isVerifyingIdentity = true
+        let requestedTeam = teamId
+        let requestedToken = token
+        let requestedURL = serverURL
         Task { [weak self] in
             let outcome = await Self.identify(with: client)
             await MainActor.run {
                 guard let self else { return }
+                self.isVerifyingIdentity = false
+                guard self.teamId == requestedTeam, self.token == requestedToken,
+                      self.serverURL == requestedURL else { return }
                 switch outcome {
                 case .success(let identity):
                     let changed = identity.role != self.role || identity.name != self.memberName
+                        || identity.memberId != self.memberId || identity.macWorker != self.macWorker
                     self.apply(identity: identity)
                     self.lastError = nil
-                    if changed {
-                        NotificationCenter.default.post(name: .teamServerChanged, object: nil)
-                    }
+                    if changed { NotificationCenter.default.post(name: .teamServerChanged, object: nil) }
                 case .failure(.invalidToken):
                     self.role = nil
+                    self.macWorker = false
                     self.defaults.removeObject(forKey: TeamServerDefaultsKeys.role)
                     self.lastError = TeamServerError.invalidToken.errorDescription
-                    Logger.team.notice("Team-Server: Token abgelehnt, Rolle verworfen")
+                    NotificationCenter.default.post(name: .teamServerChanged, object: nil)
                 case .failure(let error):
                     self.lastError = error.errorDescription
                 }
@@ -315,6 +334,7 @@ final class TeamServerConnection: ObservableObject {
         role = nil
         memberName = nil
         memberId = nil
+        macWorker = false
         lastError = nil
         serverURL = Self.defaultServerURL
 
@@ -322,7 +342,8 @@ final class TeamServerConnection: ObservableObject {
                     TeamServerDefaultsKeys.teamId,
                     TeamServerDefaultsKeys.role,
                     TeamServerDefaultsKeys.memberName,
-                    TeamServerDefaultsKeys.memberId] {
+                    TeamServerDefaultsKeys.memberId,
+                    TeamServerDefaultsKeys.macWorker] {
             defaults.removeObject(forKey: key)
         }
         KeychainManager.shared.deleteTeamServerToken()
@@ -340,15 +361,15 @@ final class TeamServerConnection: ObservableObject {
 
     /// POST /members — Mitglied anlegen (nur super). Die Antwort enthält das
     /// frische Token zum Weitergeben.
-    func addMember(name: String, role: TeamServerRole,
+    func addMember(name: String, role: TeamServerRole, macWorker: Bool? = nil,
                    completion: @escaping (Result<TeamServerMember, TeamServerError>) -> Void) {
-        perform({ try await $0.addMember(name: name, role: role) }, completion: completion)
+        perform({ try await $0.addMember(name: name, role: role, macWorker: macWorker) }, completion: completion)
     }
 
     /// Changes a role without rotating the member's existing invitation token.
-    func updateMember(id: String, role: TeamServerRole,
+    func updateMember(id: String, role: TeamServerRole? = nil, macWorker: Bool? = nil,
                       completion: @escaping (Result<TeamServerMember, TeamServerError>) -> Void) {
-        perform({ try await $0.updateMember(id: id, role: role) }, completion: completion)
+        perform({ try await $0.updateMember(id: id, role: role, macWorker: macWorker) }, completion: completion)
     }
 
     /// DELETE /members/<id> — Mitglied samt Meldung entfernen (nur super).
@@ -430,6 +451,8 @@ final class TeamServerConnection: ObservableObject {
         role = identity.role
         memberName = identity.name
         memberId = identity.memberId
+        macWorker = identity.macWorker
+        defaults.set(identity.macWorker, forKey: TeamServerDefaultsKeys.macWorker)
 
         defaults.set(identity.role.rawValue, forKey: TeamServerDefaultsKeys.role)
         if let name = identity.name {

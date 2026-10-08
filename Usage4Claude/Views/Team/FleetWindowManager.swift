@@ -137,7 +137,7 @@ private struct FleetDashboardView: View {
             Spacer(minLength: 8)
             if showsAccountLimits {
                 Button(L.Fleet.manageAccounts) { activeSheet = .accounts }
-            } else if selectedTab == .queue && connection.role?.reportsDevice == true {
+            } else if selectedTab == .queue && connection.reportsDevice {
                 Button(L.Fleet.monitoringAccount) { activeSheet = .monitoring }
             }
             Button(action: { sleepGuard.toggleAwake() }) {
@@ -152,7 +152,7 @@ private struct FleetDashboardView: View {
                     .accessibilityLabel(L.Fleet.retry)
             }
             Menu {
-                if connection.role?.reportsDevice == true {
+                if connection.reportsDevice {
                     Button(L.Fleet.monitoringAccount) { activeSheet = .monitoring }
                 }
                 Button(L.Fleet.settings) { activeSheet = .connection }

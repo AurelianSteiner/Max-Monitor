@@ -14,6 +14,15 @@ ohne Verbindung bleiben die Limits unbekannt, während der Gerätebericht weiter
 Die Werte **5h** und **Woche** stammen jeweils aus dem Fünf-Stunden-Limit und dem
 gesamten Wochenlimit dieses Accounts. Einzelne Modelllimits stehen in den Details.
 
+Unter **Mitglieder → MacWorker** bestimmt der Inhaber unabhängig von der Rolle,
+welche Zugänge Geräteberichte senden und als Macs in der Übersicht erscheinen.
+Das gilt auch für Admins, Gäste und die Inhaber-Zeile. Die Rolle und ihre
+Zugriffsrechte bleiben erhalten. Bestehende Mitglieder und automatisch registrierte
+Worker sind beim Upgrade aktiviert; andere Zugänge zunächst deaktiviert.
+Eine laufende App übernimmt Änderungen innerhalb einer Minute. Ausschalten
+blendet Geräte und Kontingente aus und sperrt weitere Meldungen, ohne die
+gespeicherten Daten zu löschen. Erneutes Einschalten stellt die Ansicht wieder her.
+
 Alle Macs verbinden sich mit **demselben Team-Relay und derselben Team-ID**. Das
 Repository verteilt den Programmcode; das Relay speichert die gemeinsamen Daten.
 Damit hängt die Übersicht nicht von Tills Arbeits-Mac ab. Das Relay läuft auf einem
@@ -92,7 +101,7 @@ Authorization-Header, niemals in einer Stream-URL oder im Browser-Speicher.
 Änderungen in ClickUp/Slack werden beim nächsten Quellenabgleich erkannt; es
 werden keine direkten ClickUp-Webhooks vorausgesetzt. Die Quellenlaufzeit und
 Verfügbarkeit bestimmen die tatsächliche Verzögerung. Geräte- und
-Account-Heartbeats bleiben unabhängig davon im Zehn-Minuten-Takt.
+Account-Heartbeats laufen unabhängig davon im Minuten-Takt.
 
 ## Automatische Einrichtung neuer Worker
 
@@ -135,10 +144,10 @@ Bridge erforderlich.
    Relay-URL und Team-ID sind auf allen Macs gleich; der Member-Token ist pro Mac
    verschieden. Den Super-Token beim Owner belassen. Die App benötigt weder
    ClickUp-Zugangsdaten noch das Claude-Konto eines anderen Macs.
-3. Auf jedem Mac dessen eigenes Claude-Konto über **Queue & Macs → Monitoring-Account** verbinden. Nach der
+3. Den Zugang unter **Mitglieder → MacWorker** aktivieren und auf jedem Mac dessen eigenes Claude-Konto über **Queue & Macs → Monitoring-Account** verbinden. Nach der
    Team-Verbindung sendet die App automatisch den Gerätebericht. Akku,
    Stromversorgung, Gerät und Usage-Werte stammen von diesem Mac. Der regelmäßige
-   Bericht wird alle zehn Minuten gesendet, außerdem beim Start und nach dem
+   Bericht wird jede Minute gesendet, außerdem beim Start und nach dem
    Aufwachen.
    Unter **Einstellungen → Allgemein** „Beim Anmelden starten“ einschalten,
    damit die Meldung nach einem Neustart wieder läuft. Die App muss geöffnet sein;

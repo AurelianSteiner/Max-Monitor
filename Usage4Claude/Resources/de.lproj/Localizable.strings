@@ -396,8 +396,10 @@
 "team.members.role" = "Rolle";
 "team.members.role_filter" = "Nach Rolle filtern";
 "team.members.empty" = "Keine Zugänge in dieser Rolle.";
-"team.members.roles_hint" = "Nur Mitglieder erscheinen als Macs. Admins verwalten die Queue und können Macs endgültig löschen. Gäste sehen die Übersicht und können Aufgaben abhaken.";
-"team.members.guest_hint" = "Gastzugang: alle Macs, Aufgaben und Kontingente ansehen und Aufgaben abhaken. Dieser Mac wird nicht als Worker gemeldet.";
+"team.members.roles_hint" = "Die Rolle bestimmt die Zugriffsrechte. MacWorker meldet unabhängig davon Akku und Kontingente und zeigt den Mac in der Übersicht – auch bei Admins, Gästen und dem Inhaber.";
+"team.members.guest_hint" = "Gäste sehen alle Macs, Aufgaben und Kontingente und können Aufgaben abhaken. Mit aktiviertem MacWorker senden sie auch ihren eigenen Gerätebericht.";
+"team.members.mac_worker" = "MacWorker";
+"team.members.mac_worker_hint" = "Gerätebericht senden: Akku, Stromversorgung und Limits des Monitoring-Accounts werden jede Minute aktualisiert. Die App muss auf diesem Mac laufen.";
 
 /* Team — Mitgliederverwaltung (nur Inhaber) */
 "team.members.title" = "Mitglieder";
@@ -450,7 +452,7 @@
 "fleet.intro" = "Alle Newsletter-Aufgaben und Mac-Worker an einem Ort. Verbinde jeden Mac mit demselben Team-Server und derselben Team-ID. Jeder Mac bekommt einen eigenen Mitglieds-Token.";
 "fleet.worker_id" = "Worker-ID (optional)";
 "fleet.worker_id_help" = "Trage die worker_id aus der Newsletter-Worker-Konfiguration ein, damit Aufgaben diesem Mac zugeordnet werden. Ohne Worker-ID wird der Mac weiterhin überwacht.";
-"fleet.heartbeat_help" = "Dieser Mac meldet alle 10 Minuten seinen Akku, Stromversorgung und die Limits aller Claude-Konten. Nach 15 Minuten ohne Meldung erscheint er als still, nach 30 Minuten als offline. Claude-Zugangsdaten bleiben auf diesem Mac.";
+"fleet.heartbeat_help" = "Dieser Mac meldet jede Minute Akku, Stromversorgung und die Limits seines Monitoring-Accounts. Nach 15 Minuten ohne Meldung erscheint er als still, nach 30 Minuten als offline. Claude-Zugangsdaten bleiben auf diesem Mac.";
 "fleet.retry" = "Erneut laden";
 "fleet.settings" = "Verbindung & Worker";
 "fleet.load_error" = "Die gemeinsame Übersicht konnte nicht geladen werden";

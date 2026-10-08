@@ -72,18 +72,18 @@ extension TeamServerError: LocalizedError {
 /// Antwort von GET /me: Wer ist dieses Token?
 struct TeamServerIdentity: Equatable {
     let role: TeamServerRole
-    /// Eingetragener Name — nur bei Mitgliedern, `nil` beim Super-Token
     let name: String?
-    /// Server-interne Mitglieds-ID — nur bei Mitgliedern
     let memberId: String?
+    let macWorker: Bool
 }
 
 extension TeamServerIdentity: Decodable {
-    private enum CodingKeys: String, CodingKey { case role, name, memberId }
+    private enum CodingKeys: String, CodingKey { case role, name, memberId, macWorker }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         role = TeamServerRole(lenient: try? container.decodeIfPresent(String.self, forKey: .role))
+        macWorker = try container.decodeIfPresent(Bool.self, forKey: .macWorker) ?? (role == .member)
         name = (try? container.decodeIfPresent(String.self, forKey: .name)) ?? nil
         memberId = (try? container.decodeIfPresent(String.self, forKey: .memberId)) ?? nil
     }
@@ -98,16 +98,18 @@ struct TeamServerMember: Identifiable, Equatable {
     /// die Kollegen weiter. Admins sehen `nil`.
     let token: String?
     let createdAt: Date?
+    let macWorker: Bool
 }
 
 extension TeamServerMember: Decodable {
-    private enum CodingKeys: String, CodingKey { case id, name, role, token, createdAt }
+    private enum CodingKeys: String, CodingKey { case id, name, role, token, createdAt, macWorker }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         role = TeamServerRole(lenient: try? container.decodeIfPresent(String.self, forKey: .role))
+        macWorker = try container.decodeIfPresent(Bool.self, forKey: .macWorker) ?? (role == .member)
         token = (try? container.decodeIfPresent(String.self, forKey: .token)) ?? nil
         if let raw = (try? container.decodeIfPresent(String.self, forKey: .createdAt)) ?? nil {
             createdAt = TeamDateFormat.parse(raw)
@@ -240,9 +242,10 @@ final class TeamServerClient {
 
     /// POST /v1/teams/<ID>/members — Mitglied anlegen (nur super).
     /// Die Antwort enthält das frische Token zum Weitergeben.
-    func addMember(name: String, role: TeamServerRole) async throws -> TeamServerMember {
+    func addMember(name: String, role: TeamServerRole, macWorker: Bool? = nil) async throws -> TeamServerMember {
         struct Envelope: Decodable { let member: TeamServerMember }
-        let payload: [String: String] = ["name": name, "role": role.rawValue]
+        var payload: [String: Any] = ["name": name, "role": role.rawValue]
+        if let macWorker { payload["macWorker"] = macWorker }
         guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
             throw TeamServerError.invalidResponse
         }
@@ -250,9 +253,12 @@ final class TeamServerClient {
         return try Self.decode(Envelope.self, from: data).member
     }
 
-    func updateMember(id: String, role: TeamServerRole) async throws -> TeamServerMember {
+    func updateMember(id: String, role: TeamServerRole? = nil, macWorker: Bool? = nil) async throws -> TeamServerMember {
         struct Envelope: Decodable { let member: TeamServerMember }
-        guard let body = try? JSONSerialization.data(withJSONObject: ["role": role.rawValue]) else {
+        var payload: [String: Any] = [:]
+        if let role { payload["role"] = role.rawValue }
+        if let macWorker { payload["macWorker"] = macWorker }
+        guard !payload.isEmpty, let body = try? JSONSerialization.data(withJSONObject: payload) else {
             throw TeamServerError.invalidResponse
         }
         let data = try await request("PATCH", "/v1/teams/\(teamId)/members/\(id)", body: body)
