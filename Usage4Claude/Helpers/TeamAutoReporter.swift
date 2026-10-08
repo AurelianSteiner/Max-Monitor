@@ -26,9 +26,9 @@
 //    • Codex-Konten werden bewusst nicht gemeldet — die Team-Übersicht
 //      beantwortet „welcher Claude ist noch frei".
 //
-//  Takt: höchstens alle 15 Minuten, und nur wenn seit der letzten Meldung
+//  Takt: höchstens einmal pro Minute, und nur wenn seit der letzten Meldung
 //  frische Nutzungsdaten eingetroffen sind. Fehlschläge bleiben still —
-//  der nächste Zyklus (neuer Snapshot oder der 5-Minuten-Zeitgeber)
+//  der nächste Zyklus (neuer Snapshot oder der Minuten-Zeitgeber)
 //  versucht es erneut. Kein Alarm, kein Dialog.
 //
 //  Thread-Regel: alles auf dem Main-Thread, nur der POST selbst läuft
@@ -47,15 +47,15 @@ final class TeamAutoReporter {
 
     // MARK: - Takt
 
-    /// Höchstens alle 15 Minuten eine Meldung
-    static let minimumPostInterval: TimeInterval = 15 * 60
+    /// Höchstens einmal pro Minute eine Meldung
+    static let minimumPostInterval: TimeInterval = 60
     /// Nach einem Versuch (auch einem gescheiterten) mindestens eine Minute Ruhe
     static let minimumAttemptGap: TimeInterval = 60
     /// Zeitgeber für Wiederholungen, falls kein neuer Snapshot mehr eintrifft
-    private static let checkInterval: TimeInterval = 5 * 60
+    private static let checkInterval: TimeInterval = 60
 
     /// UserDefaults-Schlüssel für den Zeitpunkt der letzten erfolgreichen
-    /// Meldung — dauerhaft, damit der 15-Minuten-Takt auch einen Neustart der
+    /// Meldung — dauerhaft, damit der Minuten-Takt auch einen Neustart der
     /// App überlebt (sonst meldete jede Startschleife sofort erneut).
     private static let lastPostDefaultsKey: String = {
         #if DEBUG
@@ -72,7 +72,7 @@ final class TeamAutoReporter {
     private var cancellables = Set<AnyCancellable>()
     private var isPosting = false
     /// Wann zuletzt erfolgreich gemeldet wurde — gespiegelt in UserDefaults,
-    /// damit die 15-Minuten-Untergrenze App-Neustarts übersteht
+    /// damit die Minuten-Untergrenze App-Neustarts übersteht
     private var lastPostAt: Date? {
         didSet {
             if let lastPostAt {
@@ -116,7 +116,7 @@ final class TeamAutoReporter {
     /// Verbunden → Datenquelle und Zeitgeber an; getrennt → beides aus.
     func connectionDidChange() {
         dispatchPrecondition(condition: .onQueue(.main))
-        let connected = TeamServerConnection.shared.isConnected && TeamServerConnection.shared.role?.reportsDevice == true
+        let connected = TeamServerConnection.shared.isConnected && TeamServerConnection.shared.reportsDevice
         syncDashboardRefresh(connected)
         updateTimer(connected)
         if connected {
@@ -134,7 +134,7 @@ final class TeamAutoReporter {
     // MARK: - Melden
 
     /// Meldet die eigene Auslastung, wenn alle Bedingungen stimmen:
-    /// verbunden, frische Daten, 15 Minuten seit der letzten Meldung.
+    /// verbunden, frische Daten, eine Minute seit der letzten Meldung.
     /// Sonst passiert still gar nichts.
     func reportIfDue(now: Date = Date()) {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -145,7 +145,7 @@ final class TeamAutoReporter {
         // `verifyIdentity` die Rolle auf `nil` — erst eine erfolgreiche
         // Prüfung (oder ein neues Verbinden) setzt sie wieder und öffnet
         // damit auch diese Schleife wieder.
-        guard connection.role?.reportsDevice == true else { return }
+        guard connection.reportsDevice else { return }
         guard !isPosting else { return }
 
         let snapshots = DashboardRefreshManager.shared.snapshots
@@ -153,7 +153,7 @@ final class TeamAutoReporter {
 
         // Nur melden, wenn seit der letzten Meldung neue Daten kamen …
         if let posted = lastPostedDataStamp, dataStamp <= posted { return }
-        // … höchstens alle 15 Minuten …
+        // … höchstens einmal pro Minute …
         if let last = lastPostAt, now.timeIntervalSince(last) < Self.minimumPostInterval { return }
         // … und nicht in schneller Folge erneut nach einem Fehlschlag.
         if let attempt = lastAttemptAt, now.timeIntervalSince(attempt) < Self.minimumAttemptGap { return }

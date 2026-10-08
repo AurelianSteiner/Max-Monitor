@@ -1,5 +1,11 @@
 # Änderungen
 
+## 2.14
+
+- **MacWorker unabhängig von der Rolle.** In der Mitgliederverwaltung schaltet das Häkchen „MacWorker“ Geräteberichte für Mitglieder, Admins, Gäste und den Inhaber ein oder aus. Aktivierte Macs erscheinen mit Akku, Stromversorgung und Monitoring-Kontingenten in der gemeinsamen Übersicht; die Zugriffsrechte bleiben erhalten.
+- **Aktualisierung jede Minute.** Geräteberichte und Monitoring-Kontingente werden im Minutentakt aktualisiert. Änderungen am MacWorker-Häkchen übernimmt eine laufende App automatisch innerhalb einer Minute. Fehlgeschlagene Provider-Abfragen behalten den letzten erfolgreichen Messzeitpunkt.
+- **Inhaber-Mac weiter melden.** Beim Wechsel eines bestehenden Worker-Macs zum Inhaberzugang bleibt seine Geräte- und Worker-Zuordnung erhalten, ohne eine zweite Mac-Karte anzulegen.
+
 ## 2.13.1
 
 - **Laufende Macs bleiben erreichbar.** Eine aktuelle Meldung des zugeordneten Newsletter-Workers bestätigt jetzt die Erreichbarkeit des Macs, auch wenn die Monitor-App keine eigenen Meldungen sendet, etwa nach dem Wechsel zum Inhaberzugang. Übersicht, Zeitangabe und Erreichbarkeitsereignisse verwenden das neueste gültige Lebenszeichen.

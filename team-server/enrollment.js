@@ -28,7 +28,7 @@ function enrollWorkerMember(body, { read, write }) {
   const existing = members.find((member) => member.enrollment?.workerId === enrollment.workerId);
   if (existing) {
     if (existing.enrollment.deviceId !== enrollment.deviceId) throw new EnrollmentError(409, "Worker-ID ist bereits einem anderen Mac zugeordnet");
-    if (existing.role !== "member" || typeof existing.token !== "string" || !/^[0-9a-f]{32}$/.test(existing.token)) throw new EnrollmentError(409, "registriertes Worker-Mitglied muss vom Inhaber geprüft werden");
+    if (!["member", "admin", "guest"].includes(existing.role) || typeof existing.token !== "string" || !/^[0-9a-f]{32}$/.test(existing.token)) throw new EnrollmentError(409, "registriertes Worker-Mitglied muss vom Inhaber geprüft werden");
     return { member: existing, created: false };
   }
   if (members.some((member) => member.enrollment?.deviceId === enrollment.deviceId)) throw new EnrollmentError(409, "Mac ist bereits mit einer anderen Worker-ID registriert");
@@ -37,6 +37,7 @@ function enrollWorkerMember(body, { read, write }) {
     id: `worker-${crypto.createHash("sha256").update(enrollment.workerId).digest("hex").slice(0, 24)}`,
     name: enrollment.name,
     role: "member",
+    macWorker: true,
     token: crypto.randomBytes(16).toString("hex"),
     createdAt: new Date().toISOString(),
     enrollment: { workerId: enrollment.workerId, deviceId: enrollment.deviceId },

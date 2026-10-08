@@ -97,7 +97,7 @@ struct TeamServerSection: View {
                     Text(L.Fleet.tokenStored).font(.caption)
                 }
                 DisclosureGroup(L.Fleet.editConnection) { connectForm.padding(.top, 8) }
-                if connection.role?.reportsDevice == true {
+                if connection.reportsDevice {
                     fleetSettings
                 } else if connection.role == .guest {
                     Text(L.Team.guestHint).font(.callout).foregroundColor(.secondary)
@@ -285,6 +285,7 @@ struct TeamMemberManagement: View {
     @State private var updatingMemberId: String?
     @State private var newName = ""
     @State private var newRole: TeamServerRole = .guest
+    @State private var newMacWorker = false
     @State private var isAdding = false
     @State private var freshMember: TeamServerMember?
     @State private var memberToDelete: TeamServerMember?
@@ -321,6 +322,7 @@ struct TeamMemberManagement: View {
                 Text(TeamServerRole.member.displayName).tag(TeamServerRole?.some(.member))
                 Text(TeamServerRole.admin.displayName).tag(TeamServerRole?.some(.admin))
                 Text(TeamServerRole.guest.displayName).tag(TeamServerRole?.some(.guest))
+                Text(TeamServerRole.superAdmin.displayName).tag(TeamServerRole?.some(.superAdmin))
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -368,7 +370,7 @@ struct TeamMemberManagement: View {
                 .help(member.name)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if canManage {
+            if canManage && member.role != .superAdmin {
                 Picker(L.Team.membersRole, selection: Binding(
                     get: { member.role },
                     set: { updateRole(member, to: $0) }
@@ -382,18 +384,30 @@ struct TeamMemberManagement: View {
                 .disabled(updatingMemberId != nil)
                 .accessibilityLabel("\(L.Team.membersRole): \(member.name)")
             } else {
-                TeamRoleBadge(role: member.role)
+                TeamRoleBadge(role: member.role).frame(width: 100, alignment: .leading)
             }
 
-            if updatingMemberId == member.id {
-                ProgressView().controlSize(.mini)
+            Toggle(L.Team.macWorker, isOn: Binding(
+                get: { member.macWorker },
+                set: { updateMacWorker(member, enabled: $0) }
+            ))
+            .toggleStyle(.checkbox)
+            .font(.callout)
+            .disabled(!canManage || updatingMemberId != nil)
+            .accessibilityLabel("\(L.Team.macWorker): \(member.name)")
+            .help(L.Team.macWorkerHint)
+
+            if updatingMemberId == member.id { ProgressView().controlSize(.mini) }
+            Text(member.createdAt.map {
+                DateFormatter.localizedString(from: $0, dateStyle: .short, timeStyle: .none)
+            } ?? "")
+                .font(.caption).foregroundColor(.secondary)
+                .frame(width: 68, alignment: .trailing)
+
+            if canManage && member.role == .superAdmin {
+                Color.clear.frame(width: 40, height: 16).accessibilityHidden(true)
             }
-            if let created = member.createdAt {
-                Text(DateFormatter.localizedString(from: created, dateStyle: .short, timeStyle: .none))
-                    .font(.caption).foregroundColor(.secondary)
-                    .frame(width: 68, alignment: .trailing)
-            }
-            if canManage {
+            if canManage && member.role != .superAdmin {
                 Button(action: { copyInvitation(token: member.token) }) {
                     Image(systemName: "doc.on.clipboard")
                 }
@@ -401,7 +415,7 @@ struct TeamMemberManagement: View {
                 .help(L.Team.membersCopyInvite)
                 .accessibilityLabel("\(L.Team.membersCopyInvite): \(member.name)")
             }
-            if canManage || (connection.role?.canDeleteMacs == true && member.role == .member) {
+            if member.role != .superAdmin && (canManage || (connection.role?.canDeleteMacs == true && member.role == .member)) {
                 Button(action: {
                     memberToDelete = member
                     showDeleteConfirmation = true
@@ -429,6 +443,10 @@ struct TeamMemberManagement: View {
                     Text(TeamServerRole.guest.displayName).tag(TeamServerRole.guest)
                 }.labelsHidden().frame(width: 100)
             }
+            Toggle(L.Team.macWorker, isOn: $newMacWorker)
+                .toggleStyle(.checkbox)
+                .help(L.Team.macWorkerHint)
+                .disabled(isAdding)
             Button(L.Team.membersAdd, action: add)
                 .disabled(trimmedNewName.isEmpty || isAdding)
             if isAdding { ProgressView().controlSize(.small) }
@@ -490,11 +508,26 @@ struct TeamMemberManagement: View {
         }
     }
 
+    private func updateMacWorker(_ member: TeamServerMember, enabled: Bool) {
+        guard canManage, updatingMemberId == nil, member.macWorker != enabled else { return }
+        updatingMemberId = member.id
+        connection.updateMember(id: member.id, macWorker: enabled) { result in
+            updatingMemberId = nil
+            switch result {
+            case .success(let updated):
+                if let index = members.firstIndex(where: { $0.id == updated.id }) { members[index] = updated }
+                errorText = nil
+                connection.verifyIdentity()
+            case .failure(let error): errorText = error.errorDescription
+            }
+        }
+    }
+
     private func add() {
         let name = trimmedNewName
         guard canManage, !name.isEmpty, !isAdding else { return }
         isAdding = true
-        connection.addMember(name: name, role: newRole) { result in
+        connection.addMember(name: name, role: newRole, macWorker: newMacWorker) { result in
             isAdding = false
             switch result {
             case .success(let member):

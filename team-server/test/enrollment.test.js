@@ -50,7 +50,7 @@ test("trusted enrollment safely provisions a separate ordinary token for every w
     assert.equal(check.ok, true);
     assert.equal(check.role, "member");
     assert.ok(!JSON.stringify(check).includes(owner));
-    assert.equal((await request("/members")).body.members.length, 0);
+    assert.equal((await request("/members")).body.members.filter(member => member.role !== "super").length, 0);
     assert.ok(!fs.existsSync(path.join(directory, "ENROLL01", "members.json")));
   });
 
@@ -61,7 +61,7 @@ test("trusted enrollment safely provisions a separate ordinary token for every w
     assert.equal(attempts.filter((response) => response.body.created).length, 1);
     fifth = attempts[0].body.member;
     assert.equal(fifth.role, "member");
-    assert.equal((await request("/members")).body.members.length, 1);
+    assert.equal((await request("/members")).body.members.filter(member => member.role !== "super").length, 1);
     assert.equal(fs.statSync(path.join(directory, "ENROLL01", "members.json")).mode & 0o777, 0o600);
     assert.equal((await helper.enrollMonitorWorker(config(), identity)).token, fifth.token);
   });
@@ -72,7 +72,7 @@ test("trusted enrollment safely provisions a separate ordinary token for every w
     assert.notEqual(sixth.memberId, fifth.id);
     assert.equal((await request("/workers/enroll", { method: "POST", body: { ...identity, deviceId: deviceB } })).status, 409);
     assert.equal((await request("/workers/enroll", { method: "POST", body: { ...identity, workerId: "mac-7" } })).status, 409);
-    assert.equal((await request("/members")).body.members.length, 2);
+    assert.equal((await request("/members")).body.members.filter(member => member.role !== "super").length, 2);
   });
 
   await t.test("workers cannot enroll, read member tokens, create administrators, or update the queue", async () => {
@@ -100,7 +100,7 @@ test("trusted enrollment safely provisions a separate ordinary token for every w
     for (const body of [null, [], { workerId: "../escape", deviceId: deviceA }, { workerId: "mac-5", deviceId: "not-a-uuid" }, { ...identity, name: "\nsecret" }]) {
       assert.equal((await request("/workers/enroll", { method: "POST", body })).status, 400);
     }
-    assert.equal((await request("/members")).body.members.length, 2);
+    assert.equal((await request("/members")).body.members.filter(member => member.role !== "super").length, 2);
   });
 
   await t.test("restart retains the exact enrollment token; corrupt storage never overwrites prior identities", async () => {

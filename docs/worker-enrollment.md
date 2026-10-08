@@ -71,7 +71,9 @@ wird abgelehnt. Bei einem echten Geräteaustausch muss der Inhaber die bestehend
 Mitglieds-Zuordnung bewusst entfernen beziehungsweise prüfen. Der Installer
 kopiert keine Identität von einem anderen Mac.
 
-Ein automatisch registrierter Worker hat Rolle `member`. Sein Token darf seine
+Ein automatisch registrierter Worker hat Rolle `member` und `macWorker: true`.
+Der Inhaber kann die Rolle unabhängig vom MacWorker-Häkchen ändern; die bestehende
+Gerätebindung und der Token bleiben erhalten. Nur mit aktiviertem MacWorker darf sein Token seine
 Gerätemeldungen schreiben und die gemeinsame Übersicht lesen. Er darf keine
 Mitglieder anlegen, Mitglieds-Tokens lesen oder die zentrale Aufgaben-Queue
 überschreiben. Seine Heartbeats müssen die registrierte Worker-ID und

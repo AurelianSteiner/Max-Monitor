@@ -71,11 +71,11 @@ test("only current members appear as Macs and admin deletion is permanent", asyn
       assert.equal((await call("/v1/reports", "POST", { teamId: "MACS1234", person: "Hidden", limits: [{ label: "5h", percent: 0 }] }, token)).status, 403);
     }
   });
-  await t.test("changing a member to admin immediately hides their Mac without deleting telemetry", async () => {
-    assert.equal((await call(`/members/${survivor.id}`, "PATCH", { role: "admin" })).status, 200);
+  await t.test("disabling MacWorker immediately hides their Mac without deleting telemetry", async () => {
+    assert.equal((await call(`/members/${survivor.id}`, "PATCH", { role: "admin", macWorker: false })).status, 200);
     assert.ok(!(await call("/fleet")).body.machines.some((machine) => machine.memberId === survivor.id));
     assert.equal((await call("/heartbeat", "POST", heartbeat(4, "survivor"), survivor.token)).status, 403);
-    assert.equal((await call(`/members/${survivor.id}`, "PATCH", { role: "member" })).status, 200);
+    assert.equal((await call(`/members/${survivor.id}`, "PATCH", { role: "member", macWorker: true })).status, 200);
     assert.ok((await call("/fleet")).body.machines.some((machine) => machine.memberId === survivor.id));
   });
   await t.test("members and guests cannot delete; admins cannot delete other access roles", async () => {

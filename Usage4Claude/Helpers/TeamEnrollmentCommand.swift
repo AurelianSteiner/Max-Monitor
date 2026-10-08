@@ -77,6 +77,7 @@ enum TeamEnrollmentCommand {
         defaults.set(enrollment.serverURL.absoluteString, forKey: TeamServerDefaultsKeys.serverURL)
         defaults.set(enrollment.teamId, forKey: TeamServerDefaultsKeys.teamId)
         defaults.set(identity.role, forKey: TeamServerDefaultsKeys.role)
+        defaults.set(identity.macWorker ?? (identity.role == "member"), forKey: TeamServerDefaultsKeys.macWorker)
         defaults.set(identity.memberId, forKey: TeamServerDefaultsKeys.memberId)
         if let name = identity.name { defaults.set(name, forKey: TeamServerDefaultsKeys.memberName) }
         else { defaults.removeObject(forKey: TeamServerDefaultsKeys.memberName) }
@@ -113,6 +114,8 @@ enum TeamEnrollmentCommand {
             "workerId": FleetSettings.workerId as Any? ?? NSNull(),
             "memberId": defaults.string(forKey: TeamServerDefaultsKeys.memberId) as Any? ?? NSNull(),
             "role": defaults.string(forKey: TeamServerDefaultsKeys.role) as Any? ?? NSNull(),
+            "macWorker": defaults.object(forKey: TeamServerDefaultsKeys.macWorker) as? Bool
+                ?? (defaults.string(forKey: TeamServerDefaultsKeys.role) == "member"),
             "launchAtLoginStatus": loginStatus()
         ]
     }
@@ -136,7 +139,7 @@ private static func verifyStoredConnection() -> Int32 {
                 memberId: memberId, workerId: workerId, deviceId: FleetSettings.deviceId(),
                 launchAtLogin: false).validated()
             let identity = try identify(enrollment)
-            guard identity.role == "member", identity.memberId == memberId else {
+            guard (identity.macWorker ?? (identity.role == "member")), identity.memberId == memberId else {
                 throw EnrollmentCommandError.validationFailed
             }
             let fleet = try relayData(enrollment, path: "fleet", maximumBytes: 16 * 1024 * 1024)
@@ -169,6 +172,7 @@ private static func verifyStoredConnection() -> Int32 {
         let role: String
         let memberId: String
         let name: String?
+        let macWorker: Bool?
     }
 
     private final class RedirectGuard: NSObject, URLSessionTaskDelegate {

@@ -46,7 +46,7 @@ test("guests share the team and complete tasks without ever becoming reporting M
   assert.equal((await request("/v1/reports", "POST", report, viewer.token)).status, 200);
   assert.equal((await request("/v1/reports", "POST", report, worker.token)).status, 200);
 
-  const changed = await call(`/members/${viewer.id}`, "PATCH", { role: "guest" });
+  const changed = await call(`/members/${viewer.id}`, "PATCH", { role: "guest", macWorker: false });
   assert.equal(changed.status, 200);
   assert.equal(changed.body.member.token, viewer.token);
   assert.equal(changed.body.member.name, viewer.name);
@@ -61,7 +61,7 @@ test("guests share the team and complete tasks without ever becoming reporting M
     assert.deepEqual(reports.map((entry) => entry.memberId), [worker.id]);
   }
   const membership = (await call("/members", "GET", undefined, guest.token)).body.members;
-  assert.equal(membership.length, 3);
+  assert.equal(membership.length, 4);
   assert.ok(membership.every((member) => !Object.hasOwn(member, "token")));
   assert.equal((await call(`/members/${worker.id}/history`, "GET", undefined, guest.token)).status, 200);
 
@@ -95,12 +95,13 @@ test("guests share the team and complete tasks without ever becoming reporting M
   assert.equal((await call("/fleet")).body.queue.tasks[0].status, "completed");
 
   // Stored data is preserved; reverting a mistaken role change restores it.
-  assert.equal((await call(`/members/${viewer.id}`, "PATCH", { role: "member" })).status, 200);
+  assert.equal((await call(`/members/${viewer.id}`, "PATCH", { role: "member", macWorker: true })).status, 200);
   assert.equal((await call("/fleet")).body.machines.length, 2);
   assert.equal((await call("/reports")).body.reports.length, 2);
   const enrolled = (await call("/workers/enroll", "POST", { workerId: "enrolled-worker", deviceId: "610be10e-8a00-4e00-b000-000000000003" })).body.member;
-  assert.equal((await call(`/members/${enrolled.id}`, "PATCH", { role: "guest" })).status, 409);
-  assert.equal((await call("/me", "GET", undefined, enrolled.token)).body.role, "member");
+  assert.equal((await call(`/members/${enrolled.id}`, "PATCH", { role: "guest" })).status, 200);
+  assert.equal((await call("/me", "GET", undefined, enrolled.token)).body.role, "guest");
+  assert.equal((await call("/me", "GET", undefined, enrolled.token)).body.macWorker, true);
   fs.writeFileSync(path.join(directory, "DEMO1234", "members.json"), "invalid json");
   assert.equal((await call(`/members/${viewer.id}`, "PATCH", { role: "guest" })).status, 500);
 });

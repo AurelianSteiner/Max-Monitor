@@ -554,6 +554,8 @@ enum L {
         static var membersRoleFilter: String { localized("team.members.role_filter") }
         static var membersEmpty: String { localized("team.members.empty") }
         static var membersRolesHint: String { localized("team.members.roles_hint") }
+        static var macWorker: String { localized("team.members.mac_worker") }
+        static var macWorkerHint: String { localized("team.members.mac_worker_hint") }
         static var guestHint: String { localized("team.members.guest_hint") }
 
         // MARK: Mitgliederverwaltung (nur Inhaber)

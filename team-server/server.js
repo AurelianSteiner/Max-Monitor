@@ -1,30 +1,14 @@
 //
 // Max Monitor — Team-Relay
 //
-// Winziger Dienst ohne Abhängigkeiten. Vier Rollen:
-//   super   Team-Inhaber (Token aus TEAM_TOKENS): verwaltet Mitglieder,
-//           sieht alles inklusive der Mitglieds-Tokens.
-//   admin   sieht alle Meldungen des Teams, verwaltet aber nichts.
-//   guest   sieht das ganze Team und kann Aufgaben abhaken; meldet keinen Mac.
-//   member  meldet die eigene Auslastung; sehen dürfen alle alles —
-//           geteilt werden ohnehin nur freiwillige Prozentwerte.
-//
-// Gespeichert werden ausschließlich Prozentwerte, Labels und Reset-
-// Zeitpunkte — niemals Session Keys, OAuth-Tokens, Chats oder andere
-// Inhalte. Personenbezogen ist darin trotzdem etwas, und das sollte
-// wissen, wer selbst hostet oder einem Team beitritt:
-//   report.person  Anzeigename der Meldung. Gehört das Token zu einem
-//                  Eintrag in members.json (member wie admin), setzt der
-//                  Server unten den vom Inhaber vergebenen Namen ein. Zum
-//                  Super-Token gibt es keinen solchen Eintrag — dann bleibt
-//                  stehen, was die App schickt: der volle Mac-Benutzername
-//                  aus NSFullUserName().
-//   limit.label    Beschriftung einer Zeile („7 Tage"). Meldet jemand
-//                  mehrere Konten, steht der Kontoname davor — und der ist
-//                  bei OAuth-Konten ohne selbst vergebenen Alias die
-//                  E-Mail-Adresse des Logins.
-// Wer das nicht auf dem Server haben will, vergibt in der App je Konto
-// einen Alias; der steht dann anstelle der E-Mail im Label.
+// Winziger Dienst ohne Abhängigkeiten. Rollen steuern Zugriffsrechte:
+// super verwaltet Mitglieder und Tokens, admin verwaltet die Queue und darf
+// gewöhnliche Mitglieder löschen, guest und member lesen das Team und haken
+// Aufgaben ab. Geräteberichte sind für jede Rolle mit macWorker=true erlaubt.
+// Meldungen enthalten Geräte-/Worker-Metadaten sowie freiwillige Prozentwerte,
+// Labels und Reset-Zeitpunkte, niemals Session Keys, OAuth-Tokens oder Chats.
+// Der Server ersetzt report.person durch den gespeicherten Identitätsnamen.
+// Konten-Aliase können E-Mail-Adressen in Labels ersetzen.
 //
 // Umgebungsvariablen:
 //   TEAM_TOKENS "TEAMID1:supertoken1,TEAMID2:supertoken2" — je Team genau
@@ -36,11 +20,11 @@
 // Endpunkte (alle außer /health mit "Authorization: Bearer <token>"):
 //   GET    /health                              Lebenszeichen
 //   GET    /v1/teams/:id/me                     wer bin ich? (Rolle, Name)
-//   POST   /v1/teams/:id/members                Mitglied anlegen  {name, role?}   super
+//   POST   /v1/teams/:id/members                Mitglied anlegen  {name, role?, macWorker?}   super
 //   GET    /v1/teams/:id/members                Mitglieder auflisten              super (mit Token), admin (ohne)
 //   DELETE /v1/teams/:id/members/:memberId      Mitglied entfernen                super
-//   PATCH  /v1/teams/:id/members/:memberId      Rolle ändern {role}              super
-//   POST   /v1/reports                          Meldung speichern                 jede Rolle (member: nur als sich selbst)
+//   PATCH  /v1/teams/:id/members/:memberId      Rolle/MacWorker ändern              super
+//   POST   /v1/reports                          Meldung speichern                 MacWorker (nur als sich selbst)
 //   GET    /v1/teams/:id/reports                Meldungen lesen                   jede Rolle: alle
 //   GET    /v1/teams/:id/members/:mid/history   Verlauf (?days=7, max 30)         jede Rolle: jeder
 //
@@ -145,13 +129,40 @@ function writeMembers(teamId, members) {
   }
 }
 
+// Device reporting is a separate, owner-managed capability, not an access role.
+// Missing flags retain the legacy member default during an upgrade.
+function isMacWorker(member) {
+  return typeof member.macWorker === "boolean" ? member.macWorker : member.role === "member";
+}
+
+function ownerIdentity(teamId, strict = false) {
+  let settings = {};
+  try {
+    settings = JSON.parse(fs.readFileSync(path.join(teamDir(teamId), "owner.json"), "utf8"));
+    if (!settings || typeof settings.macWorker !== "boolean") throw new Error("ungültige Inhabereinstellungen");
+  } catch (error) {
+    if (strict && error.code !== "ENOENT") throw error;
+  }
+  return { id: "team-owner", name: "Teaminhaber", role: "super", macWorker: settings.macWorker === true };
+}
+
+function reportingMembers(teamId) {
+  return [ownerIdentity(teamId), ...readMembers(teamId)].filter(isMacWorker);
+}
+
+function publicMember(member, includeToken = false) {
+  return { id: member.id, name: member.name, role: member.role,
+    macWorker: isMacWorker(member), createdAt: member.createdAt || null,
+    ...(includeToken && member.token ? { token: member.token } : {}) };
+}
+
 /// Wer ruft an? -> { role: "super"|"admin"|"member"|"guest", member? } oder null
 function identify(req, teamId) {
   const token = bearerToken(req);
   if (!token) return null;
   const id = String(teamId || "").toUpperCase();
   if (tokenMatches(token, superTokens.get(id)) || tokenMatches(token, superTokens.get(""))) {
-    return { role: "super" };
+    return { role: "super", member: ownerIdentity(id) };
   }
   for (const member of readMembers(id)) {
     if (tokenMatches(token, member.token)) {
@@ -369,10 +380,9 @@ function readReports(teamId) {
   return reports;
 }
 
-// Only current ordinary members participate as Macs. Hub telemetry needs an
-// exact enrollment binding; stale, owner, admin and guest identities stay out.
+// Only enabled MacWorkers participate. Access roles remain independent.
 function visibleFleet(teamId, who) {
-  const members = readMembers(teamId).filter((member) => member.role === "member");
+  const members = reportingMembers(teamId);
   const memberIds = new Set(members.map((member) => member.id));
   const enrolledWorkers = new Map(members.filter((member) => member.enrollment).map((member) => [member.enrollment.workerId, member]));
   const snapshot = fleet.snapshot(teamId);
@@ -419,7 +429,7 @@ const server = http.createServer((req, res) => {
 
       const who = identify(req, report.teamId);
       if (!who) return send(res, 401, { error: "Token fehlt oder passt nicht zum Team" });
-      if (who.role !== "member") return send(res, 403, { error: "Nur Mitglieder melden einen eigenen Mac und Kontingente" });
+      if (!isMacWorker(who.member)) return send(res, 403, { error: "MacWorker ist für diesen Zugang nicht aktiviert" });
 
       // Mitglieder melden immer unter ihrem eingetragenen Namen —
       // niemand kann unter fremdem Namen melden.
@@ -498,7 +508,7 @@ const server = http.createServer((req, res) => {
     });
   }
   if (req.method === "POST" && (rest === "/heartbeat" || rest === "/queue")) {
-    if (rest === "/heartbeat" && who.role !== "member") return send(res, 403, { error: "Nur Mitglieder registrieren einen Worker-Mac" });
+    if (rest === "/heartbeat" && !isMacWorker(who.member)) return send(res, 403, { error: "MacWorker ist für diesen Zugang nicht aktiviert" });
     if (rest === "/queue" && !["admin", "super"].includes(who.role)) return send(res, 403, { error: "nur Admin oder Team-Inhaber darf die Queue aktualisieren" });
     return readBody(req, (error, raw) => {
       if (error) return send(res, 413, { error: "Fleet-Meldung zu groß" });
@@ -507,7 +517,7 @@ const server = http.createServer((req, res) => {
       // A buffered request must not resurrect a member deleted while reading.
       const who = identify(req, teamId);
       if (!who) return send(res, 401, { error: "Mitgliedszugang ist nicht mehr gültig" });
-      if (rest === "/heartbeat" && who.role !== "member") return send(res, 403, { error: "Nur Mitglieder melden Macs" });
+      if (rest === "/heartbeat" && !isMacWorker(who.member)) return send(res, 403, { error: "MacWorker ist für diesen Zugang nicht aktiviert" });
       if (rest === "/queue" && !["admin", "super"].includes(who.role)) return send(res, 403, { error: "Keine Berechtigung zum Queue-Abgleich" });
       if (rest === "/heartbeat" && who.member?.enrollment &&
         (String(body?.deviceId || "").toLowerCase() !== who.member.enrollment.deviceId || body?.workerId !== who.member.enrollment.workerId)) {
@@ -525,6 +535,7 @@ const server = http.createServer((req, res) => {
       role: who.role,
       name: who.member ? who.member.name : null,
       memberId: who.member ? who.member.id : null,
+      macWorker: isMacWorker(who.member),
     });
   }
 
@@ -532,7 +543,7 @@ const server = http.createServer((req, res) => {
   // Auslastung teilt, bekommt die Übersicht auch zurück; der frühere Filter
   // auf die eigene Meldung nahm Mitgliedern genau den Anreiz dafür.
   if (req.method === "GET" && rest === "/reports") {
-    const members = new Set(readMembers(teamId).filter((member) => member.role === "member").map((member) => member.id));
+    const members = new Set(reportingMembers(teamId).map((member) => member.id));
     return send(res, 200, { reports: readReports(teamId).filter((report) => members.has(report.memberId)) });
   }
 
@@ -551,6 +562,7 @@ const server = http.createServer((req, res) => {
       if (!name) return send(res, 400, { error: "name fehlt" });
       const role = body.role === undefined ? "member" : body.role;
       if (!["member", "admin", "guest"].includes(role)) return send(res, 400, { error: "Rolle muss Mitglied, Admin oder Gast sein" });
+      if (body.macWorker !== undefined && typeof body.macWorker !== "boolean") return send(res, 400, { error: "MacWorker muss ein Wahrheitswert sein" });
 
       const members = readMembers(teamId);
       if (members.length >= 200) return send(res, 400, { error: "zu viele Mitglieder" });
@@ -559,6 +571,7 @@ const server = http.createServer((req, res) => {
         id: `${slug(name)}-${crypto.randomBytes(2).toString("hex")}`,
         name,
         role,
+        macWorker: body.macWorker ?? role === "member",
         token: crypto.randomBytes(16).toString("hex"),
         createdAt: new Date().toISOString(),
       };
@@ -576,13 +589,7 @@ const server = http.createServer((req, res) => {
   // GET /v1/teams/:id/members — Liste (Super sieht Tokens, Admin nicht)
   if (req.method === "GET" && rest === "/members") {
     if (who.role === "member") return send(res, 403, { error: "keine Berechtigung" });
-    const members = readMembers(teamId).map((member) => ({
-      id: member.id,
-      name: member.name,
-      role: member.role,
-      createdAt: member.createdAt,
-      ...(who.role === "super" ? { token: member.token } : {}),
-    }));
+    const members = [ownerIdentity(teamId), ...readMembers(teamId)].map((member) => publicMember(member, who.role === "super"));
     return send(res, 200, { members });
   }
 
@@ -592,7 +599,7 @@ const server = http.createServer((req, res) => {
   const historyMatch = rest.match(/^\/members\/([a-z0-9-]{1,64})\/history$/);
   if (req.method === "GET" && historyMatch) {
     const memberId = historyMatch[1];
-    if (!readMembers(teamId).some((member) => member.id === memberId && member.role === "member")) return send(res, 404, { error: "Mitglied nicht gefunden" });
+    if (!reportingMembers(teamId).some((member) => member.id === memberId)) return send(res, 404, { error: "Mitglied nicht gefunden" });
     const days = Math.min(30, Math.max(1, Number(url.searchParams.get("days")) || 7));
     return send(res, 200, { memberId, days, samples: readHistory(teamId, memberId, days) });
   }
@@ -605,13 +612,33 @@ const server = http.createServer((req, res) => {
       if (error) return send(res, 413, { error: "zu groß" });
       let body;
       try { body = JSON.parse(raw); } catch { return send(res, 400, { error: "kein gültiges JSON" }); }
-      if (!["member", "admin", "guest"].includes(body?.role)) return send(res, 400, { error: "Rolle muss Mitglied, Admin oder Gast sein" });
+      if (!body || typeof body !== "object" || Array.isArray(body) ||
+          (body.role === undefined && body.macWorker === undefined) ||
+          (body.role !== undefined && !["member", "admin", "guest"].includes(body.role)) ||
+          (body.macWorker !== undefined && typeof body.macWorker !== "boolean")) return send(res, 400, { error: "Rolle oder MacWorker-Einstellung ist ungültig" });
+      if (memberMatch[1] === "team-owner") {
+        if (body.role !== undefined) return send(res, 409, { error: "Die Inhaberrolle bleibt erhalten" });
+        let owner;
+        try {
+          owner = ownerIdentity(teamId, true);
+          owner.macWorker = body.macWorker;
+          fs.mkdirSync(teamDir(teamId), { recursive: true, mode: 0o700 });
+          const file = path.join(teamDir(teamId), "owner.json");
+          const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+          try {
+            fs.writeFileSync(temporary, JSON.stringify({ macWorker: owner.macWorker }), { mode: 0o600, flag: "wx" });
+            fs.renameSync(temporary, file);
+          } finally { fs.rmSync(temporary, { force: true }); }
+        } catch { return send(res, 500, { error: "Inhabereinstellung konnte nicht gespeichert werden" }); }
+        fleet.notify(teamId);
+        return send(res, 200, { member: publicMember(owner) });
+      }
       let members;
       try { members = readMembers(teamId, true); } catch { return send(res, 500, { error: "Mitglieder konnten nicht gelesen werden" }); }
       const member = members.find((entry) => entry.id === memberMatch[1]);
       if (!member) return send(res, 404, { error: "Mitglied nicht gefunden" });
-      if (member.enrollment && body.role !== "member") return send(res, 409, { error: "Registrierte Worker behalten die Mitgliedsrolle; für Gäste einen separaten Zugang anlegen" });
-      member.role = body.role;
+      member.macWorker = body.macWorker ?? isMacWorker(member);
+      if (body.role !== undefined) member.role = body.role;
       try { writeMembers(teamId, members); } catch { return send(res, 500, { error: "Rolle konnte nicht gespeichert werden" }); }
       // Invalidate open dashboards immediately after a role change. Their next
       // GET re-evaluates which devices belong in the fleet, using the same token.
@@ -623,6 +650,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "DELETE" && memberMatch) {
     if (!["admin", "super"].includes(who.role)) return send(res, 403, { error: "Nur Admin oder Team-Inhaber darf Macs endgültig löschen" });
+    if (memberMatch[1] === "team-owner") return send(res, 403, { error: "Der Team-Inhaber kann nicht gelöscht werden" });
     let members;
     try { members = readMembers(teamId, true); } catch { return send(res, 500, { error: "Mitglieder konnten nicht gelesen werden" }); }
     const member = members.find((entry) => entry.id === memberMatch[1]);
