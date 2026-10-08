@@ -3,6 +3,29 @@
     <channel>
         <title>Max Monitor</title>
         <item>
+            <title>2.12</title>
+            <pubDate>Thu, 08 Oct 2026 01:11:25 GMT</pubDate>
+            <sparkle:version>2.12</sparkle:version>
+            <sparkle:shortVersionString>2.12</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <link>https://github.com/AurelianSteiner/Max-Monitor/releases/tag/v2.12</link>
+            <description><![CDATA[Max Monitor 2.12
+
+• Neue helle Dashboard-Übersicht mit Workflow-Pipeline, Aufmerksamkeit-Liste und kompakter Mac-Tabelle; für Desktop und Mobilgeräte geprüft.
+• Gastzugänge: alles ansehen und Aufgaben abhaken, ohne den eigenen Mac als Worker zu melden.
+• Eigener Mitglieder-Reiter mit Filtern für Mitglied, Admin und Gast. Inhaber können Rollen ändern und Einladungen verwalten.
+• Ein Rollenwechsel behält den bisherigen Token bei. Frühere Gast-Macs verschwinden aus der Worker-Übersicht.
+• Vollständige Einladungen mit Server-Adresse, Team-ID und persönlichem Token; produktiver R&S-Server als Vorgabe.
+
+Installation: DMG öffnen und Max Monitor in Programme ziehen. Bereits installierte Kopien erhalten 2.12 über die integrierte Update-Prüfung.
+]]></description>
+            <enclosure
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.12/Max-Monitor-2.12.dmg"
+                sparkle:edSignature="SxYnxWLoq/2uy5wnbPdXmYs8HiM27A6eolQQ76r0RfN/c84s5fSlfxzD9/3ACCKn49aVMtRB+Yv4CAK4B6rjBw=="
+                length="5751644"
+                type="application/octet-stream"/>
+        </item>
+        <item>
             <title>2.11</title>
             <pubDate>Thu, 08 Oct 2026 00:22:55 GMT</pubDate>
             <sparkle:version>2.11</sparkle:version>
