@@ -1040,7 +1040,7 @@
     $("detail-title").textContent = title;
     $("detail-body").replaceChildren(...children);
     $("detail-action-error").hidden = true;
-    $("detail-dialog").showModal();
+    if (!$("detail-dialog").open) $("detail-dialog").showModal();
   }
   function taskDetails(task) {
     const grid = node("div", "detail-grid");
@@ -1182,7 +1182,66 @@
       });
       children.push(button);
     }
+    if (snapshot?.capabilities?.canDeleteMachines && machine.memberId) {
+      const remove = node("button", "button danger", "Mac endgültig löschen…");
+      remove.addEventListener("click", () => confirmMachineDeletion(machine));
+      children.push(remove);
+    }
     openDetail(machine.name || machine.workerId || "Mac", children);
+  }
+  function confirmMachineDeletion(machine) {
+    const label = machine.workerId || machine.name || "Mac";
+    const message = node("p", "", `„${label}“ und der zugehörige Mitgliedszugang werden endgültig gelöscht. Alle Macs dieses Mitglieds sowie ihre Kontingentdaten und Verläufe werden entfernt. Automatische Worker-Meldungen stellen sie nicht wieder her. Das kann nicht rückgängig gemacht werden.`);
+    const actions = node("div", "dialog-actions");
+    const cancel = node("button", "button secondary", "Abbrechen");
+    const remove = node("button", "button danger", "Endgültig löschen");
+    cancel.addEventListener("click", () => machineDetails(machine));
+    remove.addEventListener("click", () => deleteMachine(machine, remove, cancel));
+    actions.append(cancel, remove);
+    openDetail("Mac endgültig löschen?", [message, actions]);
+    cancel.focus();
+  }
+  async function deleteMachine(machine, button, cancel) {
+    if (!credentials || !snapshot?.capabilities?.canDeleteMachines) return;
+    const connection = credentials;
+    button.disabled = true;
+    cancel.disabled = true;
+    button.textContent = "Wird gelöscht…";
+    button.setAttribute("aria-busy", "true");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(`${relayPrefix}/v1/teams/${encodeURIComponent(connection.teamId)}/members/${encodeURIComponent(machine.memberId)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${connection.token}` },
+        signal: controller.signal,
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Löschen fehlgeschlagen. Versuche es erneut.");
+      if (connection !== credentials) return;
+      stopLive();
+      generation += 1;
+      fetchController?.abort();
+      busy = false;
+      snapshot.machines = snapshot.machines.filter((entry) => entry.memberId !== machine.memberId);
+      $("detail-dialog").close();
+      render();
+      $("main").focus({ preventScroll: true });
+      await refresh();
+      startLive();
+    } catch (error) {
+      if (connection !== credentials) return;
+      $("detail-action-error").textContent = error.name === "AbortError"
+        ? "Löschen konnte nicht bestätigt werden. Aktualisiere die Ansicht und prüfe, ob der Mac noch vorhanden ist."
+        : error.message;
+      $("detail-action-error").hidden = false;
+    } finally {
+      clearTimeout(timeout);
+      button.disabled = false;
+      cancel.disabled = false;
+      button.textContent = "Endgültig löschen";
+      button.setAttribute("aria-busy", "false");
+    }
   }
   function logRows(attention) {
     if (logFilter === "attention") {

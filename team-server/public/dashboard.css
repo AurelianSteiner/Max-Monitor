@@ -291,6 +291,9 @@ h2:focus { outline: none; }
 .button.secondary:hover { background: var(--line); }
 .button.primary { background: var(--primary); color: var(--primary-ink); }
 .button.primary:hover { background: var(--primary-hover); }
+.button.danger { background: var(--bad); color: #fff; }
+.button.danger:hover { background: color-mix(in srgb, var(--bad) 85%, #000); }
+.dialog-actions { flex-wrap: wrap; }
 .text-button { padding: 0; border: 0; background: transparent; color: var(--ink-2); font-size: 12px; font-weight: 500; text-align: left; text-decoration: none; }
 .text-button:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .status-tabs { display: flex; gap: 2px; flex-wrap: wrap; padding: 3px; border-radius: 9px; background: var(--sunken); width: fit-content; }

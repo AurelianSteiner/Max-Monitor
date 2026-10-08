@@ -35,7 +35,7 @@ import OSLog
 enum TeamServerRole: String, Codable, Equatable, CaseIterable {
     /// Team owner: manages identities and invitation tokens.
     case superAdmin = "super"
-    /// Reads the team and synchronizes the queue.
+    /// Reads the team, synchronizes the queue and permanently deletes member Macs.
     case admin
     /// Participates with a reporting Mac.
     case member
@@ -54,7 +54,8 @@ enum TeamServerRole: String, Codable, Equatable, CaseIterable {
     var seesAllReports: Bool { true }
     var canManageMembers: Bool { self == .superAdmin }
     var canViewMembers: Bool { self != .member }
-    var reportsDevice: Bool { self != .guest }
+    var canDeleteMacs: Bool { self == .superAdmin || self == .admin }
+    var reportsDevice: Bool { self == .member }
 }
 
 // MARK: - Persistenz-Schlüssel
