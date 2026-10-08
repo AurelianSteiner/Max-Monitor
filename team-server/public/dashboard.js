@@ -143,6 +143,10 @@
       return {
         ...machine,
         status: age > 1800 ? "offline" : age > 900 ? "silent" : machine.status,
+        workerStatus: machine.workerLastSeenAt
+          ? Date.now() - timestamp(machine.workerLastSeenAt) > 1800000 ? "offline"
+            : Date.now() - timestamp(machine.workerLastSeenAt) > 900000 ? "silent" : machine.workerStatus
+          : machine.workerStatus,
       };
     });
   }
@@ -157,21 +161,42 @@
       Date.now() - timestamp(machine.usageUpdatedAt) > 15 * 60000
     );
   }
+  function workerIssues(machine) {
+    return (machine.workerIssues || []).slice().sort((a, b) =>
+      (a.severity === "warning") - (b.severity === "warning") ||
+      (b.stage === "claude") - (a.stage === "claude") || timestamp(b.reportedAt) - timestamp(a.reportedAt));
+  }
+  function workerIssueReason(issue) {
+    if (issue.stage === "claude" && /OAuth.*expir|expir.*OAuth/i.test(issue.message)) return "Claude-Anmeldung abgelaufen (OAuth)";
+    if (issue.stage === "claude" && /not logged in|please run \/login/i.test(issue.message)) return "Claude ist nicht angemeldet";
+    const label = { claude: "Claude", clickup_list: "ClickUp-Abfrage", finalize: "Abschluss", update: "Update" }[issue.stage] || issue.stage;
+    return `${issue.severity === "warning" ? "Worker-Warnung" : "Worker-Fehler"} · ${label}: ${issue.message}`;
+  }
   function machineAttentionReasons(machine) {
-    const reasons = [];
+    const reasons = workerIssues(machine).map(workerIssueReason);
     const limits = machine.limits || [];
     if (machine.status !== "online") {
       const source = machine.telemetrySource === "worker" ? "Worker" : "Mac";
       reasons.push(
-        machine.status === "offline"
+        !timestamp(machine.lastSeenAt)
+          ? `Keine ${source}-Meldung vorhanden`
+          : machine.status === "offline"
           ? `Seit über 30 Minuten keine ${source}-Meldung`
           : machine.status === "silent"
             ? `Seit über 15 Minuten keine ${source}-Meldung`
             : `${source}-Erreichbarkeit unbekannt`,
       );
     }
+    if (machine.workerStatus && machine.workerStatus !== "online" && machine.telemetrySource !== "worker")
+      reasons.push(machine.workerStatus === "offline"
+        ? `Newsletter-Worker meldet sich seit über 30 Minuten nicht${machine.status === "online" ? " – Mac-App ist separat erreichbar" : ""}`
+        : `Newsletter-Worker meldet sich seit über 15 Minuten nicht${machine.status === "online" ? " – Mac-App ist separat erreichbar" : ""}`);
+    if (machine.workerId && !machine.workerStatus && machine.telemetrySource !== "worker")
+      reasons.push("Worker-Betriebsstatus noch nicht gemeldet");
+    if (machine.pendingClickup > 0)
+      reasons.push(`${machine.pendingClickup} ClickUp-Statusupdates konnten noch nicht übertragen werden`);
     if (machine.usageError || machine.usageStatus === "error")
-      reasons.push("Claude-Kontingente konnten nicht geprüft werden");
+      reasons.push(`Claude-Kontingente konnten nicht geprüft werden${machine.usageError ? `: ${machine.usageError}` : ""}`);
     if (!limits.length) reasons.push(machine.monitoringAccountId
       ? "Claude-Kontingente noch nicht gemeldet" : "Monitoring-Account auf diesem Worker-Mac verbinden");
     else if (
@@ -208,6 +233,21 @@
     )
       reasons.push(`Akku niedrig: ${machine.batteryPercent} %`);
     return reasons;
+  }
+  function machineDisplayStatus(machine) {
+    if (machine.status !== "online") return machine.status || "unknown";
+    if ((machine.workerIssues || []).some(issue => issue.severity === "error")) return "failed";
+    if (machine.workerStatus && machine.workerStatus !== "online") return machine.workerStatus;
+    if ((machine.workerIssues || []).length || machine.pendingClickup > 0) return "blocked";
+    if (machine.workerId && !machine.workerStatus && machine.telemetrySource !== "worker") return "unknown";
+    return machine.status;
+  }
+  function workerFailureReason(machine) {
+    if ((machine.workerIssues || []).length) return machineAttentionReasons(machine)[0];
+    if (machine.workerStatus && machine.workerStatus !== "online") return `Worker ${statusNames[machine.workerStatus] || machine.workerStatus}`;
+    if (machine.workerId && !machine.workerStatus && machine.telemetrySource !== "worker") return "Worker-Status unbekannt";
+    if (machine.pendingClickup > 0) return `${machine.pendingClickup} ClickUp-Updates ausstehend`;
+    return null;
   }
   function attentionEntries(devices, items) {
     const entries = items
@@ -600,7 +640,7 @@
     }));
   }
   function attentionSeverity(entry) {
-    const status = entry.entity.status;
+    const status = entry.type === "machine" ? machineDisplayStatus(entry.entity) : entry.entity.status;
     if (status === "offline" || status === "failed") return 0;
     if (status === "blocked") return 1;
     if (entry.reasons.some((reason) => reason.startsWith("Claude-Limit erreicht"))) return 1;
@@ -677,14 +717,15 @@
   function sortedMachines(devices) {
     return devices.slice().sort(
       (a, b) =>
-        (a.status === "online") - (b.status === "online") ||
+        (machineDisplayStatus(a) === "online") - (machineDisplayStatus(b) === "online") ||
         String(a.name).localeCompare(String(b.name)),
     );
   }
   function renderFleet(devices) {
     const online = devices.filter((machine) => machine.status === "online").length;
-    $("fleet-summary").textContent = `${numberFormat.format(online)} von ${numberFormat.format(devices.length)} online`;
-    $("fleet-dots").replaceChildren(...sortedMachines(devices).map((machine) => node("span", `dot ${machine.status || "unknown"}`)));
+    const affected = devices.filter(machine => workerFailureReason(machine)).length;
+    $("fleet-summary").textContent = `${numberFormat.format(online)} von ${numberFormat.format(devices.length)} online${affected ? ` · ${numberFormat.format(affected)} mit Worker-Störung` : ""}`;
+    $("fleet-dots").replaceChildren(...sortedMachines(devices).map((machine) => node("span", `dot ${machineDisplayStatus(machine)}`)));
     if (!devices.length) {
       const row = node("tr");
       const cell = node("td", "empty-state", "Noch kein Mac erfasst. Verbinde Max Monitor auf jedem Mac mit diesem Team-Server.");
@@ -694,17 +735,19 @@
       return;
     }
     $("fleet-body").replaceChildren(...sortedMachines(devices).map((machine) => {
-      const row = node("tr", `fleet-row ${machine.status || "unknown"}`);
+      const displayStatus = machineDisplayStatus(machine);
+      const failure = workerFailureReason(machine);
+      const row = node("tr", `fleet-row ${displayStatus}`);
       const label = machine.workerId || machine.name || "Mac";
       const nameCell = node("td");
       const name = node("div", "fleet-name");
-      const signal = node("span", `dot ${machine.status || "unknown"}`);
-      signal.title = statusNames[machine.status] || "Unbekannt";
+      const signal = node("span", `dot ${displayStatus}`);
+      signal.title = statusNames[displayStatus] || "Unbekannt";
       const identity = node("span");
       const open = node("button", "", label);
       open.type = "button";
       open.title = label;
-      open.setAttribute("aria-label", `${label} · ${statusNames[machine.status] || "Unbekannt"} · Details`);
+      open.setAttribute("aria-label", `${label} · ${statusNames[displayStatus] || "Unbekannt"} · Details`);
       const deviceName = machine.deviceName || (machine.name !== machine.workerId ? machine.name : null);
       open.title = [label, deviceName && deviceName !== label ? `macOS: ${deviceName}` : ""].filter(Boolean).join("\n");
       identity.append(open);
@@ -713,10 +756,12 @@
       nameCell.append(name);
       const active = runningTasks(machine);
       const taskCell = node("td");
-      const current = node("span", active.length ? "fleet-task" : "fleet-task idle",
-        active.length ? active[0].title || active[0].id : machine.status === "online" ? "frei" : "—");
-      if (active.length) current.title = active.map((task) => task.title || task.id).join("\n");
+      const current = node("span", failure ? "fleet-task fleet-issue" : active.length ? "fleet-task" : "fleet-task idle",
+        failure || (active.length ? active[0].title || active[0].id : machine.status === "online" ? "frei" : "—"));
+      if (failure) current.title = machineAttentionReasons(machine).join("\n");
+      if (active.length && !failure) current.title = active.map((task) => task.title || task.id).join("\n");
       taskCell.append(current);
+      if (failure && active.length) taskCell.append(node("span", "fleet-sub", `Zuletzt: ${active[0].title || active[0].id}`));
       if (active.length > 1) taskCell.append(node("span", "fleet-sub", `+ ${active.length - 1} weitere`));
       const [battery, source] = batteryText(machine);
       const batteryCell = node("td", "fleet-battery", battery);
@@ -761,7 +806,8 @@
       return;
     }
     sortedMachines(devices).forEach((machine) => {
-      const card = node("article", `machine ${machine.status || "unknown"}`);
+      const displayStatus = machineDisplayStatus(machine);
+      const card = node("article", `machine ${displayStatus}`);
       const title = node("div", "machine-title");
       const identity = node("div", "machine-name");
       const label = machine.workerId || machine.name || "Mac";
@@ -772,8 +818,8 @@
         : deviceName ? `macOS: ${deviceName}` : "Wie in Slack");
       subtitle.title = subtitle.textContent;
       identity.append(machineName, subtitle);
-      const signal = badge(machine.status);
-      if (machine.telemetrySource === "worker")
+      const signal = badge(displayStatus);
+      if (machine.telemetrySource === "worker" && displayStatus === machine.status)
         signal.textContent = `Worker ${statusNames[machine.status]?.toLowerCase() || machine.status}`;
       title.append(identity, signal);
       const data = node("div", "machine-data");
@@ -793,6 +839,8 @@
         data.append(datum);
       }
       card.append(title, data);
+      const failure = workerFailureReason(machine);
+      if (failure) card.append(node("p", "usage-note fleet-issue", failure));
       const account = machineAccount(machine);
       const accountLabel = node("p", account ? "machine-account" : "machine-account unbound", account
         ? `Claude · ${account.name}` : "Kein Monitoring-Account verbunden");
@@ -1040,7 +1088,7 @@
     $("detail-title").textContent = title;
     $("detail-body").replaceChildren(...children);
     $("detail-action-error").hidden = true;
-    $("detail-dialog").showModal();
+    if (!$("detail-dialog").open) $("detail-dialog").showModal();
   }
   function taskDetails(task) {
     const grid = node("div", "detail-grid");
@@ -1094,6 +1142,7 @@
     grid.append(
       detailField("macOS-Gerätename", machine.deviceName || (machine.name !== machine.workerId ? machine.name : null) || "Nicht gemeldet"),
       detailField("Erreichbarkeit", statusNames[machine.status] || "Unbekannt"),
+      detailField("Betriebsstatus", statusNames[machineDisplayStatus(machine)] || "Unbekannt"),
       detailField(
         "Letzte Geräte-Meldung",
         exact(machine.receivedAt || machine.seenAt || machine.lastSeenAt),
@@ -1124,12 +1173,19 @@
       );
     if (machine.workerLastSeenAt)
       grid.append(
+        detailField("Worker-Erreichbarkeit", statusNames[machine.workerStatus] || "Unbekannt"),
         detailField(
           "Newsletter-Worker gemeldet",
           exact(machine.workerLastSeenAt),
         ),
       );
     const list = node("div");
+    for (const issue of machine.workerIssues || []) {
+      list.append(node("p", "usage-note fleet-issue", `${issue.stage}: ${issue.message}`));
+      list.append(node("p", "form-hint", `Fehler gemeldet: ${exact(issue.reportedAt)}`));
+    }
+    if ((machine.workerIssues || []).some(issue => issue.stage === "claude"))
+      list.append(node("p", "form-hint", "Claude auf diesem Mac prüfen und bei einem Anmeldefehler erneut anmelden. Die Warnung verschwindet nach dem nächsten vollständigen Abgleich, sobald der Worker seine Meldung entfernt hat."));
     (machine.limits || []).forEach((limit) => {
       const line = node("div", "usage-line");
       line.append(
@@ -1182,7 +1238,73 @@
       });
       children.push(button);
     }
+    if (snapshot?.capabilities?.canDeleteMachines && machine.memberId) {
+      const remove = node("button", "button danger", "Mac endgültig löschen…");
+      remove.addEventListener("click", () => confirmMachineDeletion(machine));
+      children.push(remove);
+    }
     openDetail(machine.name || machine.workerId || "Mac", children);
+  }
+  function confirmMachineDeletion(machine) {
+    const label = machine.workerId || machine.name || "Mac";
+    const message = node("p", "", `„${label}“ und der zugehörige Mitgliedszugang werden endgültig gelöscht. Alle Macs dieses Mitglieds sowie ihre Kontingentdaten und Verläufe werden entfernt. Automatische Worker-Meldungen stellen sie nicht wieder her. Das kann nicht rückgängig gemacht werden.`);
+    const actions = node("div", "dialog-actions");
+    const cancel = node("button", "button secondary", "Abbrechen");
+    const remove = node("button", "button danger", "Endgültig löschen");
+    cancel.addEventListener("click", () => machineDetails(machine));
+    remove.addEventListener("click", () => deleteMachine(machine, remove, cancel));
+    actions.append(cancel, remove);
+    openDetail("Mac endgültig löschen?", [message, actions]);
+    cancel.focus();
+  }
+  async function deleteMachine(machine, button, cancel) {
+    if (!credentials || !snapshot?.capabilities?.canDeleteMachines) return;
+    const connection = credentials;
+    button.disabled = true;
+    cancel.disabled = true;
+    button.textContent = "Wird gelöscht…";
+    button.setAttribute("aria-busy", "true");
+    $("detail-action-error").hidden = true;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(`${relayPrefix}/v1/teams/${encodeURIComponent(connection.teamId)}/members/${encodeURIComponent(machine.memberId)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${connection.token}` },
+        signal: controller.signal,
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Löschen fehlgeschlagen. Versuche es erneut.");
+      if (connection !== credentials) return;
+      stopLive();
+      generation += 1;
+      fetchController?.abort();
+      busy = false;
+      const removed = snapshot.machines.filter((entry) => entry.memberId === machine.memberId);
+      const devices = new Set(removed.map((entry) => entry.deviceId));
+      const workers = new Set(removed.map((entry) => entry.workerId).filter(Boolean));
+      snapshot.machines = snapshot.machines.filter((entry) => entry.memberId !== machine.memberId);
+      snapshot.events = snapshot.events.filter((entry) => entry.type.startsWith("machine_")
+        ? !devices.has(entry.deviceId || entry.entityId)
+        : entry.type.startsWith("worker_") ? !workers.has(entry.workerId || entry.entityId) : true);
+      $("detail-dialog").close();
+      render();
+      $("main").focus({ preventScroll: true });
+      await refresh();
+      startLive();
+    } catch (error) {
+      if (connection !== credentials) return;
+      $("detail-action-error").textContent = error.name === "AbortError"
+        ? "Löschen konnte nicht bestätigt werden. Aktualisiere die Ansicht und prüfe, ob der Mac noch vorhanden ist."
+        : error.message;
+      $("detail-action-error").hidden = false;
+    } finally {
+      clearTimeout(timeout);
+      button.disabled = false;
+      cancel.disabled = false;
+      button.textContent = "Endgültig löschen";
+      button.setAttribute("aria-busy", "false");
+    }
   }
   function logRows(attention) {
     if (logFilter === "attention") {
@@ -1196,8 +1318,8 @@
           kind: task ? workflow(entity.workflow) : "Mac",
           workerId: entity.workerId,
           at: task ? entity.updatedAt : entity.receivedAt || entity.lastSeenAt,
-          status: entity.status,
-          statusLabel: statusNames[entity.status] || "Unbekannt",
+          status: task ? entity.status : machineDisplayStatus(entity),
+          statusLabel: statusNames[task ? entity.status : machineDisplayStatus(entity)] || "Unbekannt",
           messages: entry.reasons,
           phase: task ? entity.phase : null,
           entity,
@@ -1218,6 +1340,9 @@
       const status = String(event.type || "").replace(/^(task|machine|worker)_/, "");
       const special = {
         registered: ["online", "Verbunden"],
+        error: ["failed", "Fehler"],
+        warning: ["blocked", "Warnung"],
+        recovered: ["online", "Warnung entfernt"],
         removed: ["unknown", "Entfernt"],
         queue_source_error: ["failed", "Gestört"],
         queue_source_recovered: ["online", "Erreichbar"],

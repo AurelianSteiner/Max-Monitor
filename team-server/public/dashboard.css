@@ -226,6 +226,7 @@ main:focus { outline: none; }
 .fleet-name small, .fleet-sub { display: block; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fleet-task { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fleet-task.idle { color: var(--muted); }
+.fleet-task.fleet-issue, .usage-note.fleet-issue { color: var(--st-failed); }
 .fleet-battery { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .fleet-battery small { font-size: 11px; color: var(--muted); }
 .meter { display: grid; grid-template-columns: minmax(0, 1fr) 34px; align-items: center; gap: 8px; }
@@ -291,6 +292,9 @@ h2:focus { outline: none; }
 .button.secondary:hover { background: var(--line); }
 .button.primary { background: var(--primary); color: var(--primary-ink); }
 .button.primary:hover { background: var(--primary-hover); }
+.button.danger { background: var(--bad); color: #fff; }
+.button.danger:hover { background: color-mix(in srgb, var(--bad) 85%, #000); }
+.dialog-actions { flex-wrap: wrap; }
 .text-button { padding: 0; border: 0; background: transparent; color: var(--ink-2); font-size: 12px; font-weight: 500; text-align: left; text-decoration: none; }
 .text-button:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .status-tabs { display: flex; gap: 2px; flex-wrap: wrap; padding: 3px; border-radius: 9px; background: var(--sunken); width: fit-content; }

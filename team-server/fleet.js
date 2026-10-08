@@ -147,8 +147,24 @@ function validateQueue(body) {
     error: diagnostic(rawSource.error, "source.error"),
     detail: diagnostic(rawSource.detail, "source.detail"),
   });
-  // A failed poll must never replace the last complete snapshot with an empty queue.
-  if (source.error) return { source };
+  let workerIssues;
+  if (body.workerIssues !== undefined) {
+    if (!Array.isArray(body.workerIssues) || body.workerIssues.length > 1000) throw new FleetError(400, "workerIssues ist ungültig");
+    workerIssues = body.workerIssues.map((raw) => {
+      object(raw, "workerIssue");
+      if (!["error", "warning"].includes(raw.severity)) throw new FleetError(400, "workerIssue.severity ist ungültig");
+      return {
+        id: string(raw.id, "workerIssue.id", 120),
+        workerId: string(raw.workerId, "workerIssue.workerId", 120),
+        stage: string(raw.stage, "workerIssue.stage", 80),
+        severity: raw.severity,
+        message: diagnostic(raw.message, "workerIssue.message") || "Worker-Fehler ohne Diagnose",
+        reportedAt: timestamp(raw.reportedAt, "workerIssue.reportedAt"),
+      };
+    });
+  }
+  // Independent worker diagnostics may update even when the task source fails.
+  if (source.error) return optionalFields({ source, workerIssues });
   if (!Array.isArray(body.tasks) || body.tasks.length > MAX_TASKS) {
     throw new FleetError(400, `tasks muss eine vollständige Liste mit höchstens ${MAX_TASKS} Einträgen sein`);
   }
@@ -212,7 +228,7 @@ function validateQueue(body) {
       });
     });
   }
-  return optionalFields({ tasks, source, observedWorkers });
+  return optionalFields({ tasks, source, observedWorkers, workerIssues });
 }
 
 function machineStatus(machine, now) {
@@ -324,7 +340,7 @@ function createFleetStore(dataDir, now = Date.now) {
     }
   }
 
-  function write(teamId, state) {
+  function write(teamId, state, notify = true) {
     const file = filePath(teamId);
     const tmp = `${file}.${crypto.randomUUID()}.tmp`;
     const data = JSON.stringify(state);
@@ -338,7 +354,7 @@ function createFleetStore(dataDir, now = Date.now) {
       throw new FleetError(500, "Fleet-Daten konnten nicht gespeichert werden");
     }
     // Notify only after the complete snapshot has been persisted successfully.
-    for (const listener of subscribers.get(teamId) || []) {
+    for (const listener of notify ? subscribers.get(teamId) || [] : []) {
       try { listener(); } catch { /* A disconnected viewer cannot fail a write. */ }
     }
   }
@@ -380,6 +396,9 @@ function createFleetStore(dataDir, now = Date.now) {
   function heartbeat(teamId, who, raw) {
     const incoming = validateHeartbeat(raw);
     const state = read(teamId);
+    if ((state.deletedDevices || []).includes(incoming.deviceId) || (state.deletedWorkers || []).includes(incoming.workerId)) {
+      throw new FleetError(410, "Dieser Mac wurde endgültig gelöscht");
+    }
     const ownerId = who.member ? who.member.id : "__team_owner__";
     const previous = state.machines.find((machine) => machine.deviceId === incoming.deviceId);
     if (previous && previous.ownerId !== ownerId) throw new FleetError(409, "deviceId gehört bereits zu einem anderen Team-Mitglied");
@@ -432,8 +451,23 @@ function createFleetStore(dataDir, now = Date.now) {
   function updateQueue(teamId, raw) {
     const incoming = validateQueue(raw);
     const state = read(teamId);
+    const deleted = new Set(state.deletedWorkers || []);
+    if (incoming.observedWorkers) incoming.observedWorkers = incoming.observedWorkers.filter((worker) => !deleted.has(worker.workerId));
+    if (incoming.workerIssues) incoming.workerIssues = incoming.workerIssues.filter((issue) => !deleted.has(issue.workerId));
     const time = now();
     refreshStatuses(state, time);
+    if (incoming.workerIssues !== undefined) {
+      const previous = new Map((state.workerIssues || []).map(issue => [`${issue.workerId}:${issue.stage}:${issue.severity}`, issue]));
+      const current = new Map(incoming.workerIssues.map(issue => [`${issue.workerId}:${issue.stage}:${issue.severity}`, issue]));
+      for (const [key, issue] of current) {
+        if (previous.get(key)?.message !== issue.message || previous.get(key)?.severity !== issue.severity)
+          event(state, issue.severity === "warning" ? "worker_warning" : "worker_error", issue.workerId, issue.workerId, `${issue.stage}: ${issue.message}`, time);
+      }
+      for (const [key, issue] of previous) {
+        if (!current.has(key)) event(state, "worker_recovered", issue.workerId, issue.workerId, `Warnung bei ${issue.stage} nicht mehr vorhanden`, time);
+      }
+      state.workerIssues = incoming.workerIssues;
+    }
     const oldSource = state.queue.source;
     if (incoming.source.error) {
       if (oldSource.error !== incoming.source.error) event(state, "queue_source_error", "queue", incoming.source.name, incoming.source.error, time);
@@ -520,6 +554,14 @@ function createFleetStore(dataDir, now = Date.now) {
       const { derivedStatus, ...visible } = worker;
       machines.push({ ...visible, name: worker.workerId, deviceId: `hub:${worker.workerId}`, telemetrySource: "worker", memberId: null, limits: [], status: machineStatus(worker, time), heartbeatAgeSeconds: Math.max(0, Math.floor((time - Date.parse(worker.lastSeenAt)) / 1000)), usageStale: true, usageStatus: "unavailable" });
     }
+    for (const issue of state.workerIssues || []) {
+      let machine = machines.find(machine => machine.workerId === issue.workerId);
+      if (!machine) {
+        machine = { workerId: issue.workerId, name: issue.workerId, deviceId: `hub:${issue.workerId}`, telemetrySource: "worker", limits: [], status: "offline", usageStale: true, usageStatus: "unavailable" };
+        machines.push(machine);
+      }
+      (machine.workerIssues ||= []).push(issue);
+    }
     return {
       schema: 1,
       generatedAt: new Date(time).toISOString(),
@@ -530,7 +572,43 @@ function createFleetStore(dataDir, now = Date.now) {
     };
   }
 
-  return { heartbeat, updateQueue, completeTask, snapshot, subscribe };
+  function assertEnrollmentAllowed(teamId, enrollment) {
+    const state = read(teamId);
+    if ((state.deletedWorkers || []).includes(enrollment.workerId) || (state.deletedDevices || []).includes(enrollment.deviceId)) {
+      throw new FleetError(410, "Dieser Mac wurde endgültig gelöscht und wird nicht automatisch neu registriert");
+    }
+  }
+
+  function removeMember(teamId, member) {
+    const state = read(teamId);
+    const owned = state.machines.filter((machine) => machine.ownerId === member.id);
+    const devices = new Set(owned.map((machine) => machine.deviceId));
+    const workers = new Set(owned.map((machine) => machine.workerId).filter(Boolean));
+    if (member.enrollment) {
+      devices.add(member.enrollment.deviceId);
+      workers.add(member.enrollment.workerId);
+    }
+    // Keep only identity deny lists, never deleted telemetry or account data.
+    state.deletedDevices = [...new Set([...(state.deletedDevices || []), ...devices])];
+    state.deletedWorkers = [...new Set([...(state.deletedWorkers || []), ...workers])];
+    state.machines = state.machines.filter((machine) => machine.ownerId !== member.id && !devices.has(machine.deviceId));
+    state.observedWorkers = (state.observedWorkers || []).filter((worker) => !workers.has(worker.workerId));
+    state.workerIssues = (state.workerIssues || []).filter((issue) => !workers.has(issue.workerId));
+    state.events = state.events.filter((entry) => entry.type.startsWith("machine_")
+      ? !devices.has(entry.deviceId || entry.entityId)
+      : entry.type.startsWith("worker_") ? !workers.has(entry.workerId || entry.entityId) : true);
+    // Notify after membership revocation so revoked streams close immediately.
+    // Queue tasks are shared work and remain available after deleting a Mac.
+    write(teamId, state, false);
+  }
+
+  function notify(teamId) {
+    for (const listener of subscribers.get(teamId) || []) {
+      try { listener(); } catch { /* Disconnected viewers cannot fail deletion. */ }
+    }
+  }
+
+  return { heartbeat, updateQueue, completeTask, snapshot, subscribe, removeMember, assertEnrollmentAllowed, notify };
 }
 
 module.exports = { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, validateHeartbeat, validateQueue };

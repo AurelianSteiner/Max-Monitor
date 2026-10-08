@@ -396,19 +396,19 @@
 "team.members.role" = "Rolle";
 "team.members.role_filter" = "Nach Rolle filtern";
 "team.members.empty" = "Keine Zugänge in dieser Rolle.";
-"team.members.roles_hint" = "Mitglieder melden ihren Mac. Admins können zusätzlich die Queue synchronisieren. Gäste sehen alles und können Aufgaben abhaken, ohne einen Mac zu melden.";
+"team.members.roles_hint" = "Nur Mitglieder erscheinen als Macs. Admins verwalten die Queue und können Macs endgültig löschen. Gäste sehen die Übersicht und können Aufgaben abhaken.";
 "team.members.guest_hint" = "Gastzugang: alle Macs, Aufgaben und Kontingente ansehen und Aufgaben abhaken. Dieser Mac wird nicht als Worker gemeldet.";
 
 /* Team — Mitgliederverwaltung (nur Inhaber) */
 "team.members.title" = "Mitglieder";
 "team.members.name_placeholder" = "Name";
 "team.members.add" = "Anlegen";
-"team.members.remove" = "Entfernen";
+"team.members.remove" = "Endgültig löschen";
 "team.members.copy_token" = "Token kopieren";
 "team.members.copy_invite" = "Einladung kopieren";
 "team.members.token_hint" = "Dieses Token bekommt %@ — es wird nur einmal angezeigt.";
-"team.members.delete_confirm_title" = "Mitglied entfernen?";
-"team.members.delete_confirm_message" = "%@ kann danach nicht mehr melden; das Token wird ungültig.";
+"team.members.delete_confirm_title" = "Mitglied endgültig löschen?";
+"team.members.delete_confirm_message" = "%@ und alle zugehörigen Macs, Kontingentdaten und Verläufe werden endgültig gelöscht. Der Zugang wird ungültig. Automatische Worker-Meldungen stellen den Mac nicht wieder her. Das kann nicht rückgängig gemacht werden.";
 
 /* Fertige Einladung — kommt in die Zwischenablage */
 "team.invite.template" = "Max Monitor – Team-Zugang\n\n1. App laden: https://github.com/AurelianSteiner/Max-Monitor/releases/latest\n2. In der App: Zahnrad → Verbindung & Worker → Server ändern\n3. Server-Adresse: %1$@\n4. Team-ID: %2$@\n5. Persönlicher Token: %3$@\n6. Verbinden\n\nClaude-Zugangsdaten bleiben auf deinem Mac.";

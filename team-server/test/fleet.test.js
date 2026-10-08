@@ -125,7 +125,7 @@ test("shared authenticated relay supports fleet without changing existing report
       assert.ok(!JSON.stringify(result.body).includes("must-not-persist"));
     }
     assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", token: second.token, body: heartbeat() })).status, 409);
-    assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", body: heartbeat() })).status, 409);
+    assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", body: heartbeat() })).status, 403);
     assert.equal((await request(`${endpoint}/heartbeat`, { method: "POST", token: second.token, body: heartbeat(deviceB, { workerId: "studio-1" }) })).status, 409);
     assert.ok(!fs.readFileSync(path.join(directory, "DEMO1234", "fleet.json"), "utf8").includes("must-not-persist"));
   });
@@ -435,5 +435,47 @@ test("bounded event log, complete snapshots and corrupt-file protection", () => 
     fs.writeFileSync(file, "broken-json");
     assert.throws(() => store.heartbeat("DEMO1234", { role: "super" }, heartbeat()), (error) => error.status === 500);
     assert.equal(fs.readFileSync(file, "utf8"), "broken-json");
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('worker failures survive heartbeat, source outages and restart, and clear only on complete warning scan', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'max-monitor-worker-failures-'));
+  let clock = Date.now();
+  let store = createFleetStore(directory, () => clock);
+  const date = () => new Date(clock).toISOString();
+  const who = { member: { id: 'worker' } };
+  const source = { name: 'ClickUp' };
+  const issue = { id: '1', workerId: 'studio-1', stage: 'claude', severity: 'error', message: 'OAuth session expired', reportedAt: date() };
+  try {
+    store.heartbeat('DEMO1234', who, heartbeat());
+    store.updateQueue('DEMO1234', { source, tasks: [task()], observedWorkers: [{ workerId: 'studio-1', name: 'Studio', lastSeenAt: date() }], workerIssues: [issue] });
+    let snap = store.snapshot('DEMO1234');
+    assert.equal(snap.machines.length, 1);
+    assert.equal(snap.machines[0].status, 'online');
+    assert.equal(snap.machines[0].workerStatus, 'online');
+    assert.equal(snap.machines[0].workerIssues[0].message, 'OAuth session expired');
+    store.heartbeat('DEMO1234', who, heartbeat());
+    store.updateQueue('DEMO1234', { source: { ...source, error: 'ClickUp unavailable' } });
+    store = createFleetStore(directory, () => clock);
+    assert.equal(store.snapshot('DEMO1234').machines[0].workerIssues.length, 1);
+    assert.equal(store.snapshot('DEMO1234').queue.tasks.length, 1);
+    const changed = { ...issue, message: 'Not logged in' };
+    store.updateQueue('DEMO1234', { source: { ...source, error: 'ClickUp unavailable' }, workerIssues: [changed] });
+    assert.equal(store.snapshot('DEMO1234').machines[0].workerIssues[0].message, 'Not logged in');
+    assert.equal(store.snapshot('DEMO1234').queue.tasks.length, 1);
+    assert.throws(() => store.updateQueue('DEMO1234', { source, tasks: [], workerIssues: [{ ...issue, severity: 'bad' }] }), /severity/);
+    assert.equal(store.snapshot('DEMO1234').machines[0].workerIssues[0].message, 'Not logged in');
+    clock += 31 * 60000;
+    store.heartbeat('DEMO1234', who, heartbeat());
+    snap = store.snapshot('DEMO1234');
+    assert.equal(snap.machines[0].status, 'online');
+    assert.equal(snap.machines[0].workerStatus, 'offline');
+    store.updateQueue('DEMO1234', { source, tasks: [task()], workerIssues: [] });
+    assert.equal(store.snapshot('DEMO1234').machines[0].workerIssues, undefined);
+    assert.ok(store.snapshot('DEMO1234').events.some(event => event.type === 'worker_recovered'));
+    store.updateQueue('DEMO1234', { source, tasks: [], workerIssues: [{ ...issue, workerId: 'only-warning-worker' }] });
+    const unknown = store.snapshot('DEMO1234').machines.find(machine => machine.workerId === 'only-warning-worker');
+    assert.equal(unknown.status, 'offline'); // A warning is never a device heartbeat.
+    assert.equal(unknown.workerIssues.length, 1);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

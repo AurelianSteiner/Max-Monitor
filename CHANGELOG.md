@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2.13
+
+- **Worker-Fehler sichtbar.** Abgelaufene OAuth-Anmeldungen, fehlende Logins und andere gemeldete Betriebsfehler erscheinen bei den Macs, unter „Braucht Aufmerksamkeit“ und im Log – auch wenn die Monitor-App noch erreichbar ist. Details zeigen den konkreten Grund und den Meldezeitpunkt. Behobene Meldungen verschwinden beim nächsten vollständigen Abgleich.
+- **Ausfälle klar erkennen.** Fehlende oder veraltete Worker-Meldungen und ausstehende ClickUp-Rückmeldungen bleiben sichtbar. Der Verbindungsstatus der App wird getrennt vom Zustand des Workers bewertet.
+- **Macs gehören zu Mitgliedern.** Nur reguläre Mitglieder erscheinen als Worker-Macs. Admins, Inhaber, Gäste und nicht zugeordnete Telemetrie werden aus der Mac-Übersicht und den Nutzungsberichten ausgeblendet.
+- **Macs dauerhaft entfernen.** Admins und Inhaber können Mitglieds-Macs nach Bestätigung endgültig löschen. Der zugehörige Zugang, alle Macs des Mitglieds, Kontingentdaten und Verläufe werden entfernt. Alte Meldungen und automatische Registrierung stellen gelöschte Macs nicht wieder her; gemeinsame Queue-Aufgaben bleiben erhalten.
+
 ## 2.12
 
 - **Alles auf einen Blick.** Die helle, kompakte Übersicht zeigt Pipeline, wichtige Meldungen und alle Macs auf einer Seite. Eine schmale Kopfleiste enthält Navigation, Live-Status, Aktualisieren und Team-Verbindung.

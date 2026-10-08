@@ -426,3 +426,31 @@ Rollen gebunden.
 Referenz für die Quellabfragen:
 [ClickUp Get Filtered Team Tasks](https://developer.clickup.com/reference/getfilteredteamtasks),
 [Slack conversations.history](https://docs.slack.dev/reference/methods/conversations.history/).
+
+## Worker-Fehler trotz erreichbarem Mac
+
+Ein frischer Geräte- oder Worker-Heartbeat bestätigt die Erreichbarkeit. Er
+bestätigt nicht, dass Claude angemeldet ist oder der Worker Aufgaben ausführen kann.
+Die Bridge liest deshalb auch die noch vorhandenen Worker-Warnungen aus Slack
+(`ai_newsletter_fehler`, Arten `system` und `update`). Sie ordnet sie über die
+exakte Worker-ID zu. Der konfigurierte Fehlerkanal wird zusätzlich gelesen;
+ohne separaten Fehlerkanal kommen die Warnungen aus dem Statuskanal.
+
+OAuth-/Anmeldefehler, andere gemeldete System- und Updatefehler erscheinen mit
+Diagnose in der Mac-Übersicht, den Details und „Braucht Aufmerksamkeit“. Ein
+Worker ohne frischen Heartbeat fällt auch bei weiterhin erreichbarer Mac-App
+auf. Ausstehende ClickUp-Statusupdates und ein unbekannter Worker-Betriebsstatus
+werden ebenfalls angezeigt. Die Warnliste zählt jeden betroffenen Mac einmal.
+
+Die API übernimmt dafür optional `workerIssues` im Queue-Snapshot:
+`{ id, workerId, stage, severity: "error" | "warning", message, reportedAt }`.
+Fehlt das Feld, bleiben die bisherigen Warnungen bestehen. Eine vollständige
+leere Liste entfernt sie. Das gilt auch bei einem ClickUp-Quellenfehler: Aufgaben
+bleiben erhalten, unabhängig erfolgreich gelesene Warnungen können aktualisiert
+werden. Ein unvollständiger Slack-Abruf darf keine Warnungen löschen.
+
+Eine Warnung bleibt sichtbar, bis der Worker seine Slack-Meldung entfernt und
+die Bridge den Kanal erneut vollständig gelesen hat. Ältere Worker können
+behobene Warnungen länger behalten; der gemeldete Zeitpunkt steht in den Details.
+Die Diagnose wird begrenzt und Zugangsdaten werden vor der Übertragung entfernt.
+Eine Warnung erzeugt niemals einen künstlichen Geräte-Heartbeat.

@@ -109,7 +109,7 @@ export function parseClaim(message) {
     state: value.state, heartbeat, ts: String(message.ts), workflow: typeof value.workflow === 'string' ? value.workflow : 'newsletter' };
 }
 
-export async function listClaims(hubFetch, channelId, { now = Date.now(), maxPages = 100, lookbackDays = 60 } = {}) {
+export async function listClaims(hubFetch, channelId, { now = Date.now(), maxPages = 100, lookbackDays = 60, onMessage = () => {} } = {}) {
   const claims = [];
   let cursor;
   for (let page = 0; page < maxPages; page += 1) {
@@ -118,12 +118,36 @@ export async function listClaims(hubFetch, channelId, { now = Date.now(), maxPag
       oldest: ((now - lookbackDays * 86400000) / 1000).toFixed(6), ...(cursor ? { cursor } : {}) })) url.searchParams.set(key, String(value));
     const result = await requestJson(hubFetch, url, 'Slack');
     if (!Array.isArray(result.messages)) throw new Error('Slack: Nachrichtenliste fehlt.');
-    for (const message of result.messages) { const claim = parseClaim(message); if (claim) claims.push(claim); }
+    for (const message of result.messages) { onMessage(message); const claim = parseClaim(message); if (claim) claims.push(claim); }
     cursor = result.response_metadata?.next_cursor;
     if (!result.has_more) return claims;
     if (typeof cursor !== 'string' || !cursor) throw new Error('Slack: Cursor fehlt; Reservierungen unvollständig.');
   }
   throw new Error('Slack: Reservierungen unvollständig; bisherige Queue bleibt erhalten.');
+}
+
+export function parseWorkerIssue(message) {
+  const text = typeof message?.text === 'string' ? message.text : '';
+  // Older workers omit metadata only for this exact system-error template.
+  const legacy = message?.bot_id && /^(?:⚠️|:warning:) AI-Newsletter-Worker auf Mac `([a-z0-9][a-z0-9._-]{0,79})`: technischer Fehler bei ([A-Za-z0-9_-]+) \(([A-Za-z0-9_-]+)\)\. Lokales Log prüfen\.$/i.exec(text);
+  const value = message?.metadata?.event_type === 'ai_newsletter_fehler' ? message.metadata.event_payload
+    : legacy ? { kind: 'system', worker: legacy[1], stage: legacy[2] } : null;
+  if (!value || !['system', 'update'].includes(value.kind) || !/^[a-z0-9][a-z0-9._-]{0,79}$/i.test(value.worker)) return null;
+  const time = Number(message.ts) * 1000;
+  if (!Number.isFinite(time) || time <= 0 || time > 8640000000000000) return null;
+  const detail = legacy ? `Technischer Fehler (${legacy[3]}). Lokales Log prüfen.`
+    : /```([\s\S]*?)```/.exec(text)?.[1] || text.split('\n')[0];
+  const warning = /^(?:⏳|:hourglass(?:_flowing_sand)?:)/.test(text) && !/abgelaufen/.test(text);
+  // Keep only the diagnosis, never commands, credentials or entire Slack messages.
+  const safe = detail.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[ENTFERNT]')
+    .replace(/\b(?:xox[abposr]-|sk-|gh[opsu]_)[A-Za-z0-9_-]+/g, '[ENTFERNT]')
+    .replace(/Bearer\s+\S+/gi, 'Bearer [ENTFERNT]')
+    .replace(/((?:api[_-]?key|token|secret|password|passwort)["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, '$1[ENTFERNT]')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const stage = displayText(value.stage || value.tool || value.kind, 80);
+  return { id: String(message.ts), workerId: value.worker, stage,
+    severity: warning ? 'warning' : 'error', message: displayText(safe, 500, `Worker-Fehler bei ${stage}`),
+    reportedAt: new Date(time).toISOString() };
 }
 
 function taskDate(value, fallback) {
@@ -275,16 +299,31 @@ export function createLocalHubFetch(hub, { localHub, transport, spawnImpl = spaw
 
 export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, now = Date.now() }) {
   validateWorkflows(workflows);
-  const [taskResult, claimResult, workerResult] = await Promise.allSettled([
+  const issues = new Map();
+  const onMessage = message => {
+    const issue = parseWorkerIssue(message);
+    if (!issue) return;
+    const key = `${issue.workerId}:${issue.stage}:${issue.severity}`;
+    if (!issues.has(key) || Date.parse(issue.reportedAt) > Date.parse(issues.get(key).reportedAt)) issues.set(key, issue);
+  };
+  const [taskResult, claimResult, workerResult, issueResult] = await Promise.allSettled([
     (async () => {
       const variants = await discoverTags(hubFetch, config.clickup.workspace_id, workflows);
       return { variants, tasks: await listTasks(hubFetch, config.clickup.workspace_id, variants) };
     })(),
-    listClaims(hubFetch, config.slack.channel_id, { now }),
+    listClaims(hubFetch, config.slack.channel_id, { now, onMessage }),
     Promise.resolve().then(() => fleetReader(config.hub, fleetDirectory ? { fleetDirectory } : {})),
+    config.fehler?.enabled && config.fehler.channel_id !== config.slack.channel_id
+      ? listClaims(hubFetch, config.fehler.channel_id, { now, onMessage }) : Promise.resolve(),
   ]);
-  if (taskResult.status === 'rejected') throw taskResult.reason;
-  if (claimResult.status === 'rejected') throw claimResult.reason;
+  // Clear resolved notices only after every configured warning channel was read completely.
+  const workerIssues = claimResult.status === 'fulfilled' && issueResult.status === 'fulfilled' ? [...issues.values()] : undefined;
+  if (taskResult.status === 'rejected' || claimResult.status === 'rejected' || issueResult.status === 'rejected') {
+    const error = [taskResult, claimResult, issueResult].find(result => result.status === 'rejected').reason;
+    return { ...(workerIssues === undefined ? {} : { workerIssues }), source: {
+      name: SOURCE_NAME, error: displayText(error.message, 300, 'Quellenabfrage fehlgeschlagen.'),
+    } };
+  }
   const { variants, tasks } = taskResult.value;
   const claims = claimResult.value;
   const observedWorkers = workerResult.status === 'fulfilled' ? workerResult.value : undefined;
@@ -292,7 +331,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
     ? 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.' : undefined;
   const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl });
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
-  return { tasks: queue, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
+  return { tasks: queue, workerIssues, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
     name: SOURCE_NAME, lastSuccessAt: new Date(now).toISOString(),
     detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${claims.length} Reservierungen${fleetDetail ? ` · ${fleetDetail}` : ''}`,
   } };
@@ -325,8 +364,8 @@ export async function syncOnce({ collect, publish, cachedSource, save }) {
     return { ok: false, snapshot };
   }
   await publish(snapshot);
-  if (save) await save(snapshot);
-  return { ok: true, snapshot };
+  if (save && !snapshot.source.error) await save(snapshot);
+  return { ok: !snapshot.source.error, snapshot };
 }
 
 export function argumentsFrom(argv, env) {
