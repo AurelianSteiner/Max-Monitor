@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2.12
+
+- **Alles auf einen Blick.** Die Übersicht passt ohne Scrollen ins Fenster: Pipeline, „Braucht Aufmerksamkeit" und alle Macs stehen auf einer Seite. Das große Banner und die Erklärtexte entfallen; eine schmale Kopfleiste trägt Navigation, Live-Status, Aktualisieren und Team-Verbindung.
+- **Pipeline-Diagramm wie in ClickUp.** Pro Workflow (Pre-Gen, Upload) zeigt ein Balkendiagramm, wie viele Aufgaben markiert sind, warten, laufen, blockiert oder fertig sind. Ein Klick auf einen Balken öffnet genau diese Aufgaben in der Queue; die Queue hat dafür einen eigenen Filter „Fertig".
+- **Wer arbeitet woran.** Die Mac-Liste zeigt pro Mac Status, aktuelle Aufgabe, Akku, 5-Stunden- und Wochenlimit sowie die letzte Meldung in einer Zeile. Die wichtigsten Hinweise stehen sortiert nach Dringlichkeit daneben und öffnen direkt die Details.
+- **Neues, helles Erscheinungsbild.** Dashboard und Fenster bleiben hell, auch wenn macOS im Dunkelmodus läuft. Farben und Formen folgen dem App-Symbol; Mac-Karten, Queue und Log sind aufgeräumter und zeigen weniger doppelte Angaben.
+
 ## 2.11
 
 - **Blockierte Aufgaben abhaken.** Blockierte und fehlgeschlagene Aufgaben lassen sich in Queue, Queue-Log und Aufgabendetails manuell als erledigt markieren. Die Erledigung wird für das ganze Team gespeichert und entfernt den Eintrag aus Offen, Blockiert und Braucht Aufmerksamkeit.
