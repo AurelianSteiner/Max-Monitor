@@ -6,6 +6,9 @@ const DEVICE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 function controlForWorker(workerId, members, machines, deviceId = null) {
   if (!WORKER_ID.test(workerId)) throw new Error("Ungültige Worker-ID");
   if (deviceId !== null && !DEVICE_ID.test(deviceId)) throw new Error("Ungültige Geräte-ID");
+  // A worker-reported link only names a Mac in the dashboard (fleet.js linkWorker);
+  // admission keeps using the identities the app or enrollment reported itself.
+  machines = machines.map(machine => machine.workerIdSource === "worker" ? { ...machine, workerId: undefined } : machine);
   const bound = machines.filter(machine => machine.workerId === workerId && machine.telemetrySource !== "worker");
   const device = deviceId && machines.find(machine => machine.deviceId === deviceId && machine.telemetrySource !== "worker");
   if ((deviceId && bound.length && bound.some(machine => machine.deviceId !== deviceId)) ||

@@ -308,6 +308,20 @@ function publicMachineEvent(entry, machines) {
   return workerId ? { ...entry, title: workerId } : entry;
 }
 
+// A worker reads the app's random device UUID on its own Mac and sends it with
+// every admission check. That exact binding names an app without Worker ID in
+// the dashboard. It is display only: worker-control ignores workerIdSource "worker",
+// and an app's own Worker ID always wins.
+function linkedWorkers(state) {
+  const explicit = new Set(state.machines.map((machine) => machine.workerId).filter(Boolean));
+  return new Map((state.workerLinks || []).filter((link) => !explicit.has(link.workerId)).map((link) => [link.deviceId, link.workerId]));
+}
+
+function withLinkedWorker(machine, links) {
+  const workerId = !machine.workerId && links.get(machine.deviceId);
+  return workerId ? { ...machine, workerId, workerIdSource: "worker" } : machine;
+}
+
 // A completion belongs to one blocking state, not every future attempt of a task.
 function taskVersion(task) {
   return crypto.createHash("sha256").update(JSON.stringify([
@@ -388,10 +402,12 @@ function createFleetStore(dataDir, now = Date.now) {
   function refreshStatuses(state, time) {
     let changed = false;
     const workers = new Map((state.observedWorkers || []).map((worker) => [worker.workerId, worker]));
+    const links = linkedWorkers(state);
     for (const machine of state.machines) {
-      const { status } = machineLiveness(machine, workers.get(machine.workerId), time);
+      const effective = withLinkedWorker(machine, links);
+      const { status } = machineLiveness(machine, workers.get(effective.workerId), time);
       if (machine.derivedStatus !== status) {
-        event(state, `machine_${status}`, machine.deviceId, machine.name, status === "online" ? "Mac meldet sich wieder" : status === "silent" ? "Seit über 15 Minuten kein Heartbeat" : "Seit über 30 Minuten kein Heartbeat", time, machine);
+        event(state, `machine_${status}`, machine.deviceId, machine.name, status === "online" ? "Mac meldet sich wieder" : status === "silent" ? "Seit über 15 Minuten kein Heartbeat" : "Seit über 30 Minuten kein Heartbeat", time, effective);
         machine.derivedStatus = status;
         changed = true;
       }
@@ -558,7 +574,9 @@ function createFleetStore(dataDir, now = Date.now) {
     const successTime = Date.parse(source.lastSuccessAt || "");
     const stale = !Number.isFinite(successTime) || time - successTime > SILENT_AFTER_MS || successTime > time + 5 * 60 * 1000;
     const workers = new Map((state.observedWorkers || []).map((worker) => [worker.workerId, worker]));
-    const machines = state.machines.map((machine) => {
+    const links = linkedWorkers(state);
+    const machines = state.machines.map((stored) => {
+      const machine = withLinkedWorker(stored, links);
       const worker = workers.get(machine.workerId);
       if (worker) workers.delete(machine.workerId);
       return { ...publicMachine(machine, time),
@@ -597,6 +615,24 @@ function createFleetStore(dataDir, now = Date.now) {
     };
   }
 
+  // Called after an owner-authenticated admission check with the worker's own report.
+  function linkWorker(teamId, workerId, deviceId) {
+    const state = read(teamId);
+    if ((state.deletedWorkers || []).includes(workerId)) return false;
+    const current = state.workerLinks || [];
+    const links = current.filter((link) => link.workerId !== workerId && link.deviceId !== deviceId);
+    const device = state.machines.find((machine) => machine.deviceId === deviceId);
+    if (device && !device.workerId && !state.machines.some((machine) => machine.workerId === workerId)) {
+      links.push(current.find((link) => link.workerId === workerId && link.deviceId === deviceId) ||
+        { workerId, deviceId, linkedAt: new Date(now()).toISOString() });
+    }
+    // Unchanged links keep their stored objects: no write, no dashboard reload.
+    if (links.length === current.length && links.every((link) => current.includes(link))) return false;
+    state.workerLinks = links;
+    write(teamId, state);
+    return true;
+  }
+
   function assertEnrollmentAllowed(teamId, enrollment) {
     const state = read(teamId);
     if ((state.deletedWorkers || []).includes(enrollment.workerId) || (state.deletedDevices || []).includes(enrollment.deviceId)) {
@@ -621,6 +657,8 @@ function createFleetStore(dataDir, now = Date.now) {
     state.deletedWorkers = [...new Set([...(state.deletedWorkers || []), ...workers])];
     state.machines = state.machines.filter((machine) => machine.ownerId !== member.id && !devices.has(machine.deviceId));
     state.observedWorkers = (state.observedWorkers || []).filter((worker) => !workers.has(worker.workerId));
+    // A worker-reported link only named this Mac; it is not one of its own identities.
+    state.workerLinks = (state.workerLinks || []).filter((link) => !devices.has(link.deviceId) && !workers.has(link.workerId));
     state.workerIssues = (state.workerIssues || []).filter((issue) => !workers.has(issue.workerId));
     state.events = state.events.filter((entry) => entry.type.startsWith("machine_")
       ? !devices.has(entry.deviceId || entry.entityId)
@@ -636,7 +674,7 @@ function createFleetStore(dataDir, now = Date.now) {
     }
   }
 
-  return { heartbeat, updateQueue, completeTask, snapshot, subscribe, removeMember, assertEnrollmentAllowed, notify };
+  return { heartbeat, updateQueue, completeTask, snapshot, subscribe, removeMember, assertEnrollmentAllowed, linkWorker, notify };
 }
 
 module.exports = { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, validateHeartbeat, validateQueue };

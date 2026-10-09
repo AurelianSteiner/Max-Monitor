@@ -13,16 +13,26 @@ export const SOURCE_NAME = 'ClickUp · AI Newsletter Creation';
 const STATUSES = new Set(['queued', 'running', 'blocked', 'completed', 'failed']);
 const CLAIM_STATES = new Set(['claiming', 'running', 'final', 'released', 'withdrawn']);
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+// AI Newsletter Creation src/jobs.js and src/pre-gen.js: three job kinds, each with
+// its own ClickUp tags and Slack claim event. A job ID is <ClickUp-ID>,
+// <ClickUp-ID>-klaviyo or <ClickUp-ID>-uebersetzung-<language>.
+const CLAIM_EVENTS = { ai_newsletter_claim: 'newsletter', ai_klaviyo_upload_claim: 'klaviyo', ai_translation_claim: 'translation' };
+const TRANSLATION_LANGUAGES = ['en', 'it', 'fr', 'se', 'sp'];
 
 export const DEFAULT_WORKFLOWS = [
   { id: 'newsletter', triggerTags: ['pre gen.'], claimWorkflow: 'newsletter', stateTags: {
     queued: ['pre gen · wartet'], running: ['pre gen · läuft'],
     blocked: ['pre gen · blockiert'], completed: ['pre gen · fertig'],
   } },
-  { id: 'upload', triggerTags: ['upload', 'klaviyo upload'], stateTags: {
-    queued: ['upload · wartet'], running: ['upload · läuft'],
-    blocked: ['upload · blockiert'], completed: ['upload · fertig'], failed: ['upload · fehlgeschlagen'],
+  { id: 'upload', triggerTags: ['klaviyo upload'], claimWorkflow: 'klaviyo', stateTags: {
+    queued: ['klaviyo upload · wartet'], running: ['klaviyo upload · läuft'],
+    blocked: ['klaviyo upload · blockiert'], completed: ['klaviyo upload · fertig'],
   } },
+  // One job per language; its start tag stays until "· fertig" or "· blockiert".
+  ...TRANSLATION_LANGUAGES.map(language => ({ id: `translation-${language}`, queueWorkflow: 'translation', titleSuffix: language.toUpperCase(),
+    triggerTags: [`${language} translation`, `${language} translations`], claimWorkflow: `translation-${language}`, stateTags: {
+      blocked: [`${language} translation · blockiert`], completed: [`${language} translation · fertig`],
+    } })),
 ];
 
 export function normalizeTag(value) {
@@ -40,6 +50,8 @@ export function validateWorkflows(value) {
   for (const workflow of value) {
     if (!workflow || !/^[a-z][a-z0-9-]{0,39}$/.test(workflow.id) || ids.has(workflow.id)) throw new Error('Workflow-IDs müssen eindeutig und gültig sein.');
     ids.add(workflow.id);
+    if (workflow.queueWorkflow !== undefined && !/^[a-z][a-z0-9-]{0,39}$/.test(workflow.queueWorkflow)) throw new Error(`Queue-Workflow ungültig: ${workflow.id}.`);
+    if (workflow.titleSuffix !== undefined && (typeof workflow.titleSuffix !== 'string' || !/^[\p{L}\p{N} ]{1,20}$/u.test(workflow.titleSuffix))) throw new Error(`Titelzusatz ungültig: ${workflow.id}.`);
     if (!Array.isArray(workflow.triggerTags) || !workflow.triggerTags.length) throw new Error(`Start-Tags fehlen: ${workflow.id}.`);
     for (const [status, tags] of Object.entries(workflow.stateTags ?? {})) {
       if (!STATUSES.has(status) || !Array.isArray(tags)) throw new Error(`Status-Tags ungültig: ${workflow.id}.`);
@@ -81,32 +93,39 @@ export async function discoverTags(hubFetch, workspaceId, workflows) {
 
 export async function listTasks(hubFetch, workspaceId, variants, { maxPages = 200, pageSize = 100 } = {}) {
   const tasks = new Map();
-  for (const tag of variants) {
-    let complete = false;
-    for (let page = 0; page < maxPages; page += 1) {
-      const url = new URL(`https://api.clickup.com/api/v2/team/${encodeURIComponent(workspaceId)}/task`);
-      for (const [key, value] of Object.entries({ page, 'tags[]': tag, subtasks: true, include_closed: false })) url.searchParams.set(key, String(value));
-      const result = await requestJson(hubFetch, url, 'ClickUp');
-      if (!Array.isArray(result.tasks)) throw new Error('ClickUp: Aufgabenliste fehlt.');
-      for (const task of result.tasks) {
-        if (!task || typeof task.id !== 'string' || !task.id || !Array.isArray(task.tags)) throw new Error('ClickUp: ungültige Aufgabe.');
-        tasks.set(task.id, task);
-      }
-      if (result.last_page === true || result.tasks.length < pageSize) { complete = true; break; }
+  if (!variants.length) return [];
+  // ClickUp joins several tags[] with OR (also relied on by the worker). One
+  // paginated query keeps the minute cadence within the shared Hub token's limit.
+  for (let page = 0; page < maxPages; page += 1) {
+    const url = new URL(`https://api.clickup.com/api/v2/team/${encodeURIComponent(workspaceId)}/task`);
+    for (const [key, value] of Object.entries({ page, subtasks: true, include_closed: false })) url.searchParams.set(key, String(value));
+    for (const tag of variants) url.searchParams.append('tags[]', tag);
+    const result = await requestJson(hubFetch, url, 'ClickUp');
+    if (!Array.isArray(result.tasks)) throw new Error('ClickUp: Aufgabenliste fehlt.');
+    for (const task of result.tasks) {
+      if (!task || typeof task.id !== 'string' || !task.id || !Array.isArray(task.tags)) throw new Error('ClickUp: ungültige Aufgabe.');
+      tasks.set(task.id, task);
     }
-    if (!complete) throw new Error('ClickUp: Aufgabenliste unvollständig; bisherige Queue bleibt erhalten.');
+    if (result.last_page === true || result.tasks.length < pageSize) return [...tasks.values()];
   }
-  return [...tasks.values()];
+  throw new Error('ClickUp: Aufgabenliste unvollständig; bisherige Queue bleibt erhalten.');
 }
 
 export function parseClaim(message) {
-  if (message?.metadata?.event_type !== 'ai_newsletter_claim') return null;
+  const kind = CLAIM_EVENTS[message?.metadata?.event_type];
+  if (!kind) return null;
   const value = message.metadata.event_payload;
   if (!value?.task_id || !value.worker || !value.run_id || !CLAIM_STATES.has(value.state)) return null;
   const heartbeat = Number(value.heartbeat) || Number(message.ts);
   if (!Number.isFinite(heartbeat) || heartbeat <= 0) return null;
-  return { taskId: String(value.task_id), runId: String(value.run_id), workerId: String(value.worker),
-    state: value.state, heartbeat, ts: String(message.ts), workflow: typeof value.workflow === 'string' ? value.workflow : 'newsletter' };
+  // Like the worker: event type and job ID must agree, or the claim belongs to no task.
+  const jobId = String(value.task_id);
+  const translation = /^(.+)-uebersetzung-(en|it|fr|se|sp)$/.exec(jobId);
+  const upload = /^(.+)-klaviyo$/.exec(jobId);
+  if (kind !== (translation ? 'translation' : upload ? 'klaviyo' : 'newsletter')) return null;
+  return { taskId: translation?.[1] ?? upload?.[1] ?? jobId, runId: String(value.run_id), workerId: String(value.worker),
+    state: value.state, heartbeat, ts: String(message.ts),
+    workflow: typeof value.workflow === 'string' ? value.workflow : translation ? `translation-${translation[2]}` : kind };
 }
 
 export async function listClaims(hubFetch, channelId, { now = Date.now(), maxPages = 100, lookbackDays = 60, onMessage = () => {} } = {}) {
@@ -210,7 +229,9 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         const candidate = new URL(task.url);
         if (candidate.protocol === 'https:' && !candidate.username && !candidate.password && String(task.url).length <= 2000) url = candidate.href;
       } catch { /* Use the canonical ClickUp task link. */ }
-      rows.push({ id: `clickup:${workflow.id}:${task.id}`, title: displayText(task.name, 300, task.id), url, workflow: workflow.id, status,
+      const name = displayText(task.name, 300, task.id);
+      const title = workflow.titleSuffix ? `${displayText(name, 300 - workflow.titleSuffix.length - 3)} · ${workflow.titleSuffix}` : name;
+      rows.push({ id: `clickup:${workflow.id}:${task.id}`, title, url, workflow: workflow.queueWorkflow ?? workflow.id, status,
         sourceStatus: displayText(typeof task.status === 'string' ? task.status : task.status?.status, 120),
         company: task.folder?.hidden ? undefined : displayText(task.folder?.name, 200),
         figmaUrl: taskFigmaLink(task) || ((workflow.claimWorkflow ?? workflow.id) === 'newsletter' ? figmaLink(figmaBoardUrl) : undefined),

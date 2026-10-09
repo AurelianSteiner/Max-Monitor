@@ -24,23 +24,25 @@ test('tag discovery uses actual spelling from all spaces and recognizes punctuat
   const variants = await discoverTags(async target => {
     const url = new URL(target); called.push(url.pathname);
     if (url.pathname.endsWith('/space')) return response({ spaces: [{ id: 'one' }, { id: 'two' }] });
-    return response({ tags: url.pathname.includes('/one/') ? [{ name: 'Pre-Gen.' }, { name: 'unrelated' }] : [{ name: 'PRE GEN · LÄUFT' }, { name: 'Upload' }] });
+    return response({ tags: url.pathname.includes('/one/') ? [{ name: 'Pre-Gen.' }, { name: 'unrelated' }, { name: 'Upload' }] : [{ name: 'PRE GEN · LÄUFT' }, { name: 'Klaviyo Upload' }] });
   }, '24553341', DEFAULT_WORKFLOWS);
-  assert.deepEqual(variants, ['Pre-Gen.', 'PRE GEN · LÄUFT', 'Upload']);
+  assert.deepEqual(variants, ['Pre-Gen.', 'PRE GEN · LÄUFT', 'Klaviyo Upload']);
   assert.equal(called.length, 3);
   assert.equal(normalizeTag(' Pre-Gen. '), normalizeTag('pre gen.'));
 });
 
-test('ClickUp pagination deduplicates across tags and refuses a truncated list', async () => {
+test('ClickUp reads every tag in one paginated OR query, deduplicates and refuses a truncated list', async () => {
   const calls = [];
   const fetcher = async target => {
-    const url = new URL(target); const page = Number(url.searchParams.get('page')); calls.push([url.searchParams.get('tags[]'), page]);
+    const url = new URL(target); const page = Number(url.searchParams.get('page')); calls.push([url.searchParams.getAll('tags[]'), page]);
     assert.equal(url.searchParams.get('include_closed'), 'false'); assert.equal(url.searchParams.get('subtasks'), 'true');
-    return response(page === 0 ? { tasks: [task('a'), task('b')] } : { tasks: [task('c')], last_page: true });
+    return response(page === 0 ? { tasks: [task('a'), task('b')] } : { tasks: [task('b'), task('c')], last_page: true });
   };
   const tasks = await listTasks(fetcher, '24553341', ['pre gen.', 'pre gen · läuft'], { pageSize: 2 });
   assert.deepEqual(tasks.map(value => value.id), ['a', 'b', 'c']);
-  assert.deepEqual(calls, [['pre gen.', 0], ['pre gen.', 1], ['pre gen · läuft', 0], ['pre gen · läuft', 1]]);
+  // ClickUp joins several tags[] with OR; one query keeps the shared Hub token far below its rate limit.
+  assert.deepEqual(calls, [[['pre gen.', 'pre gen · läuft'], 0], [['pre gen.', 'pre gen · läuft'], 1]]);
+  assert.deepEqual(await listTasks(async () => { throw new Error('no tags, no request'); }, '24553341', []), []);
   await assert.rejects(() => listTasks(fetcher, '24553341', ['pre gen.'], { pageSize: 2, maxPages: 1 }), /unvollständig/);
 });
 
@@ -60,7 +62,7 @@ test('Slack metadata pagination reads every page and fails without continuation 
 test('queue separates workflows and makes stale claims visible without inventing progress', () => {
   const claims = [parseClaim(claimMessage()), parseClaim(claimMessage('running', { task_id: 'stale', heartbeat: now / 1000 - 1900 }))];
   const queue = buildQueue([
-    task('a', ['pre gen.', 'upload']), task('stale'), task('blocked', ['pre gen · blockiert']),
+    task('a', ['pre gen.', 'klaviyo upload']), task('stale'), task('blocked', ['pre gen · blockiert']),
     task('done', ['pre gen · fertig']), task('ignored', ['unrelated']),
   ], claims, DEFAULT_WORKFLOWS, { now });
   assert.equal(queue.length, 5);
@@ -81,6 +83,64 @@ test('released claims do not mark a queued task running; explicit completed tag 
   ], DEFAULT_WORKFLOWS, { now });
   assert.equal(queue[0].status, 'queued'); assert.equal(queue[0].workerId, undefined);
   assert.equal(queue[1].status, 'completed');
+});
+
+const jobClaim = (event, jobId, worker, state = 'running', ts = '1791373200.002') => ({ ts, metadata: {
+  event_type: event, event_payload: { v: 1, task_id: jobId, run_id: `run-${jobId}`, worker, state, heartbeat: now / 1000 - 30 },
+} });
+
+test('a Klaviyo upload accepted by a Mac stays visible with its exact worker', () => {
+  // 09.10.2026: macworker-5-schwarz swapped "klaviyo upload" for "klaviyo upload · läuft"
+  // and reserved 12451cu4xnc-klaviyo; the monitor lost the task completely.
+  const claim = parseClaim(jobClaim('ai_klaviyo_upload_claim', '12451cu4xnc-klaviyo', 'macworker-5-schwarz'));
+  assert.deepEqual([claim.taskId, claim.workflow, claim.workerId], ['12451cu4xnc', 'klaviyo', 'macworker-5-schwarz']);
+  const queue = buildQueue([
+    task('12451cu4xnc', ['drogi', 'klaviyo upload · läuft']), task('waiting', ['klaviyo upload · wartet']),
+    task('stopped', ['klaviyo upload · blockiert']), task('done', ['klaviyo upload · fertig']), task('new', ['klaviyo upload']),
+  ], [claim], DEFAULT_WORKFLOWS, { now });
+  const row = queue.find(item => item.id === 'clickup:upload:12451cu4xnc');
+  assert.deepEqual([row.workflow, row.status, row.workerId, row.phase], ['upload', 'running', 'macworker-5-schwarz', 'In Bearbeitung']);
+  assert.deepEqual(['waiting', 'stopped', 'done', 'new'].map(id => queue.find(item => item.id === `clickup:upload:${id}`).status),
+    ['queued', 'blocked', 'completed', 'queued']);
+  assert.equal(queue.some(item => item.workflow === 'newsletter'), false, 'an upload is not a Pre-Gen task');
+});
+
+test('translations appear per language with their own reservation', () => {
+  const claims = [
+    parseClaim(jobClaim('ai_translation_claim', 't-uebersetzung-en', 'macbook-1')),
+    parseClaim(jobClaim('ai_translation_claim', 't-uebersetzung-fr', 'macbook-2', 'claiming', '1791373200.003')),
+  ];
+  assert.deepEqual([claims[0].taskId, claims[0].workflow], ['t', 'translation-en']);
+  const queue = buildQueue([task('t', ['pre gen · fertig', 'EN Translation', 'fr translation', 'it translation · fertig', 'sp translation · blockiert'])],
+    claims, DEFAULT_WORKFLOWS, { now });
+  const byId = Object.fromEntries(queue.map(item => [item.id, item]));
+  assert.deepEqual(Object.keys(byId).sort(), ['clickup:newsletter:t', 'clickup:translation-en:t', 'clickup:translation-fr:t',
+    'clickup:translation-it:t', 'clickup:translation-sp:t']);
+  const en = byId['clickup:translation-en:t'];
+  assert.deepEqual([en.workflow, en.title, en.status, en.workerId, en.phase], ['translation', 'Aufgabe t · EN', 'running', 'macbook-1', 'In Bearbeitung']);
+  const fr = byId['clickup:translation-fr:t'];
+  assert.deepEqual([fr.status, fr.workerId, fr.phase], ['queued', 'macbook-2', 'Reserviert']);
+  assert.equal(byId['clickup:translation-it:t'].status, 'completed');
+  assert.equal(byId['clickup:translation-sp:t'].status, 'blocked');
+  assert.equal(byId['clickup:newsletter:t'].workerId, undefined, 'a translation claim never assigns the newsletter');
+});
+
+test('a claim counts only when its event type matches the worker job ID', () => {
+  assert.equal(parseClaim(jobClaim('ai_newsletter_claim', 'x-klaviyo', 'mac')), null);
+  assert.equal(parseClaim(jobClaim('ai_klaviyo_upload_claim', 'x', 'mac')), null);
+  assert.equal(parseClaim(jobClaim('ai_translation_claim', 'x-uebersetzung-de', 'mac')), null);
+  assert.equal(parseClaim(jobClaim('ai_translation_claim', 'x-klaviyo', 'mac')), null);
+  assert.equal(parseClaim(jobClaim('ai_newsletter_claim', 'x', 'mac')).workflow, 'newsletter');
+});
+
+test('tag discovery finds every tag the worker sets', async () => {
+  const workerTags = ['pre gen.', 'pre gen · wartet', 'pre gen · läuft', 'pre gen · fertig', 'pre gen · blockiert',
+    'klaviyo upload', 'klaviyo upload · wartet', 'klaviyo upload · läuft', 'klaviyo upload · fertig', 'klaviyo upload · blockiert',
+    ...['en', 'it', 'fr', 'se', 'sp'].flatMap(lang => [`${lang} translation`, `${lang} translation · fertig`, `${lang} translation · blockiert`])];
+  const variants = await discoverTags(async target => new URL(target).pathname.endsWith('/space')
+    ? response({ spaces: [{ id: 'one' }] }) : response({ tags: [...workerTags, 'de translation', 'unrelated'].map(name => ({ name })) }),
+  '24553341', DEFAULT_WORKFLOWS);
+  assert.deepEqual(variants, workerTags);
 });
 
 test('legitimate multiline ClickUp display text is flattened and bounded without changing identity', () => {
@@ -112,7 +172,7 @@ test('queue carries the ClickUp customer and prefers the generated Figma link', 
 
 test('Figma fallback uses the configured creation board and optional bad links cannot break the queue', () => {
   const board = 'https://www.figma.com/design/creation';
-  const raw = { ...task('both', ['pre gen.', 'upload']), custom_fields: [
+  const raw = { ...task('both', ['pre gen.', 'klaviyo upload']), custom_fields: [
     { id: 'ef2ba681-7e9d-40a3-b79a-dda5cd402015', value: 'https://figma.com.evil.example/design/wrong' },
   ] };
   const rows = buildQueue([raw], [], DEFAULT_WORKFLOWS, { now, figmaBoardUrl: board });

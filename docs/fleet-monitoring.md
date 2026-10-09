@@ -63,6 +63,17 @@ und in den Details sichtbar; die Suche findet beide. Eine Umbenennung in macOS �
 Bei einem Mac ohne Worker-ID wird dessen gemeldeter Gerätename angezeigt und die
 fehlende Zuordnung ausdrücklich kenntlich gemacht. Namen werden nie anhand eines
 ähnlichen Hostnamens oder einer IP-Adresse automatisch anderen Macs zugeordnet.
+
+Ausnahme mit Nachweis: Der Newsletter-Worker liest auf seinem eigenen Mac die
+zufällige Geräte-UUID der App (`fleetDeviceId`) und sendet sie bei jeder
+Freigabeprüfung (etwa jede Minute) mit. Hat genau diese App keine eigene Worker-ID
+und trägt kein anderer Mac die Worker-ID, zeigt das Relay den Mac unter der
+Worker-ID an, samt seiner angenommenen Aufgaben und dem Worker-Status; die Details
+nennen die Quelle „vom Newsletter-Worker auf diesem Mac gemeldet“. Die
+Zuordnung dient nur der Anzeige: Die Freigabe neuer Aufgaben nutzt weiter nur die
+Identitäten, die App und Registrierung selbst gemeldet haben. Eine in der App
+eingetragene Worker-ID hat immer Vorrang; meldet der Worker eine andere App, wandert
+die Zuordnung mit.
 Historische Aufgaben behalten den damals zuständigen Worker, auch nach einer
 Neuzuweisung oder Freigabe.
 
@@ -281,15 +292,19 @@ Standardmäßig werden diese Workflows erkannt:
 
 | Workflow | Start-Tags | Status-Tags |
 | --- | --- | --- |
-| `newsletter` | `pre gen.` | `pre gen · wartet`, `pre gen · läuft`, `pre gen · blockiert`, `pre gen · fertig` |
-| `upload` | `upload`, `klaviyo upload` | `upload · wartet`, `upload · läuft`, `upload · blockiert`, `upload · fertig`, `upload · fehlgeschlagen` |
+| `newsletter` (Pre-Gen) | `pre gen.` | `pre gen · wartet`, `pre gen · läuft`, `pre gen · blockiert`, `pre gen · fertig` |
+| `upload` (Klaviyo-Upload) | `klaviyo upload` | `klaviyo upload · wartet`, `klaviyo upload · läuft`, `klaviyo upload · blockiert`, `klaviyo upload · fertig` |
+| `translation-en` … `translation-sp` (Übersetzung) | `en translation` (auch `en translations`), ebenso `it`, `fr`, `se`, `sp` | `<sprache> translation · blockiert`, `<sprache> translation · fertig` |
 
+Die Tags entsprechen genau denen des Newsletter-Workers (`AI Newsletter Creation`,
+`src/pre-gen.js`). Übersetzungen erscheinen je Sprache als eigene Zeile mit dem
+Workflow `translation` und dem Sprachkürzel am Titel, z. B. „Graco Aktion · EN“.
 Groß-/Kleinschreibung, Leerzeichen und Satzzeichen werden beim Abgleich
 normalisiert; ClickUp-Abfragen verwenden trotzdem die genaue vorhandene
-Schreibweise. Die Upload-Tags sind Monitor-Konventionen und können an den
-tatsächlichen Upload-Worker angepasst werden. Die Bridge führt keine Uploads aus.
-Der vorhandene Newsletter-Worker implementiert derzeit Creation und Slicing;
-ein Upload-Worker muss seinen eigenen Prozess und Statusnachweis liefern.
+Schreibweise. Alle Tags werden in **einer** seitenweisen ClickUp-Abfrage gelesen
+(mehrere `tags[]` verknüpft ClickUp mit ODER); das hält den minütlichen Abgleich
+deutlich unter dem Limit des gemeinsamen Hub-Schlüssels. Die Bridge führt selbst
+keine Uploads oder Übersetzungen aus.
 
 Weitere Workflows kommen über eine JSON-Datei hinzu:
 
@@ -309,12 +324,12 @@ Weitere Workflows kommen über eine JSON-Datei hinzu:
   {
     "id": "upload",
     "triggerTags": ["klaviyo upload"],
+    "claimWorkflow": "klaviyo",
     "stateTags": {
-      "queued": ["upload · wartet"],
-      "running": ["upload · läuft"],
-      "blocked": ["upload · blockiert"],
-      "completed": ["upload · fertig"],
-      "failed": ["upload · fehlgeschlagen"]
+      "queued": ["klaviyo upload · wartet"],
+      "running": ["klaviyo upload · läuft"],
+      "blocked": ["klaviyo upload · blockiert"],
+      "completed": ["klaviyo upload · fertig"]
     }
   },
   {
@@ -334,10 +349,15 @@ Workflow-Tags erzeugt je Workflow eine Zeile, beispielsweise
 `clickup:newsletter:86abc123` und `clickup:upload:86abc123`.
 
 Worker-Zuordnungen stammen aus den Slack-Metadaten im bestehenden Kanal
-`#ai-pre-gen-status`, nicht aus dem Nachrichtentext. Das Event
-`ai_newsletter_claim` enthält `task_id`, `run_id`, `worker`, `state` und den
-Herzschlag in Unix-Sekunden. Ohne `workflow` gilt es als `newsletter`; künftige
-Workflows können diese Metadaten mit ihrem eigenen Workflow-Namen liefern.
+`#ai-pre-gen-status`, nicht aus dem Nachrichtentext. Die Events enthalten
+`task_id`, `run_id`, `worker`, `state` und den Herzschlag in Unix-Sekunden. Je
+Auftragsart gibt es ein eigenes Event mit eigener Auftragskennung:
+`ai_newsletter_claim` (`<ClickUp-ID>`, Workflow `newsletter`),
+`ai_klaviyo_upload_claim` (`<ClickUp-ID>-klaviyo`, `claimWorkflow` `klaviyo`) und
+`ai_translation_claim` (`<ClickUp-ID>-uebersetzung-<sprache>`, `translation-<sprache>`).
+Passen Event und Kennung nicht zusammen, wird die Reservierung wie im Worker
+ignoriert. Eine frische Reservierung im Zustand `claiming` erscheint als
+„Reserviert“ und zählt beim Mac bereits als angenommene Aufgabe.
 Aktive Reservierungen werden nach der im Worker konfigurierten Stale-Frist
 (Standard 30 Minuten) als blockiert angezeigt. Ein konkreter Prozentfortschritt
 wird nur bei einem belegten Abschluss als 100 % angezeigt.

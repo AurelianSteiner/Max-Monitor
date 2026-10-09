@@ -58,7 +58,8 @@
     "pre-gen": "Pre-Gen",
     pregen: "Pre-Gen",
     newsletter: "Pre-Gen",
-    upload: "Upload",
+    upload: "Klaviyo-Upload",
+    translation: "Übersetzung",
   };
   // Pipeline stages mirror the ClickUp tags: the trigger tag alone means
   // "markiert"; a state tag or a worker reservation moves a task to "wartet".
@@ -598,7 +599,8 @@
       if (!groups.has(name)) groups.set(name, { value: task.workflow || "", tasks: [] });
       groups.get(name).tasks.push(task);
     }
-    const order = (name) => (name === "Pre-Gen" ? 0 : name === "Upload" ? 1 : 2);
+    const flowOrder = ["Pre-Gen", "Klaviyo-Upload", "Übersetzung"];
+    const order = (name) => (flowOrder.includes(name) ? flowOrder.indexOf(name) : flowOrder.length);
     const flows = [...groups.entries()].sort(([a], [b]) => order(a) - order(b) || a.localeCompare(b));
     const open = items.filter(isOpen).length;
     const done = items.length - open;
@@ -698,9 +700,12 @@
     if (!account || !Array.isArray(machine.limits)) return null;
     return machine.limits.find((item) => item.accountId === account.accountId && item.kind === kind) || null;
   }
-  function runningTasks(machine) {
+  // Everything this Mac accepted: running work first, then its fresh reservations
+  // (the bridge only assigns a queued task to a worker while its claim is live).
+  function activeTasks(machine) {
     return machine.workerId
-      ? tasks().filter((task) => task.workerId === machine.workerId && task.status === "running")
+      ? tasks().filter((task) => task.workerId === machine.workerId && ["running", "queued"].includes(task.status))
+        .sort((a, b) => (a.status !== "running") - (b.status !== "running"))
       : [];
   }
   function batteryText(machine) {
@@ -761,7 +766,7 @@
       if (!machine.workerId) identity.append(node("small", "", "ohne Worker-ID"));
       name.append(signal, identity);
       nameCell.append(name);
-      const active = runningTasks(machine);
+      const active = activeTasks(machine);
       const taskCell = node("td");
       const current = node("span", failure ? "fleet-task fleet-issue" : active.length ? "fleet-task" : "fleet-task idle",
         failure || (active.length ? active[0].title || active[0].id : machine.status === "online" ? "frei" : "—"));
@@ -769,6 +774,7 @@
       if (active.length && !failure) current.title = active.map((task) => task.title || task.id).join("\n");
       taskCell.append(current);
       if (failure && active.length) taskCell.append(node("span", "fleet-sub", `Zuletzt: ${active[0].title || active[0].id}`));
+      else if (active[0]?.status === "queued") taskCell.append(node("span", "fleet-sub", "reserviert · startet gleich"));
       if (active.length > 1) taskCell.append(node("span", "fleet-sub", `+ ${active.length - 1} weitere`));
       const [battery, source] = batteryText(machine);
       const batteryCell = node("td", "fleet-battery", battery);
@@ -832,7 +838,7 @@
       title.append(identity, signal);
       const data = node("div", "machine-data");
       const [battery, source] = batteryText(machine);
-      const active = runningTasks(machine);
+      const active = activeTasks(machine);
       const seenAt = machine.lastSeenAt || machine.receivedAt || machine.seenAt;
       for (const [name, value, hint, tooltip] of [
         ["Akku", battery, source === "Akku" ? "" : source],
@@ -878,7 +884,8 @@
         card.append(node("p", "usage-note",
           `Newsletter-Worker: ${statusNames[machine.workerStatus] || machine.workerStatus} · ${relative(machine.workerLastSeenAt)}`));
       const bottom = node("div", "machine-bottom");
-      const current = node("span", "machine-current", active.length ? active[0].title || active[0].id : "Keine laufende Aufgabe");
+      const current = node("span", "machine-current", active.length
+        ? `${active[0].status === "queued" ? "Reserviert: " : ""}${active[0].title || active[0].id}` : "Keine laufende Aufgabe");
       current.title = current.textContent;
       const detail = node("button", "text-button", "Details ↗");
       detail.setAttribute("aria-label", `Details für ${label}`);
@@ -1144,6 +1151,14 @@
     if (canComplete(task)) children.push(completionButton(task, true));
     openDetail(task.title || task.id, children);
   }
+  // One line per accepted task: ClickUp titles often contain " · " themselves.
+  function workingOn(machine) {
+    const field = detailField("Arbeitet an", "Keiner Aufgabe", true);
+    const active = activeTasks(machine);
+    if (active.length) field.querySelector("strong").replaceChildren(...active.map((task) =>
+      node("span", "detail-line", `${task.status === "queued" ? "Reserviert: " : ""}${task.title || task.id}`)));
+    return field;
+  }
   function machineDetails(machine) {
     const account = (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
     const grid = node("div", "detail-grid");
@@ -1157,9 +1172,12 @@
       ),
       detailField(
         "Mac in Slack",
-        machine.workerId || "Noch nicht mit einer Worker-ID verbunden",
+        machine.workerIdSource === "worker"
+          ? `${machine.workerId} · vom Newsletter-Worker auf diesem Mac gemeldet`
+          : machine.workerId || "Noch nicht mit einer Worker-ID verbunden",
         true,
       ),
+      workingOn(machine),
       detailField(
         "Version",
         machine.appVersion || machine.workerVersion || "Unbekannt",

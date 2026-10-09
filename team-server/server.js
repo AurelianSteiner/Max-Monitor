@@ -501,7 +501,11 @@ const server = http.createServer((req, res) => {
     try {
       const members = [ownerIdentity(teamId, true), ...readMembers(teamId, true)];
       res.setHeader("Cache-Control", "no-store");
-      return send(res, 200, controlForWorker(controlMatch[1], members, fleet.snapshot(teamId).machines, deviceId));
+      const result = controlForWorker(controlMatch[1], members, fleet.snapshot(teamId).machines, deviceId);
+      // The worker read this app UUID on its own Mac: name an app without Worker ID
+      // after it, so its accepted tasks show on the right Mac. Never fails admission.
+      if (deviceId) try { fleet.linkWorker(teamId, controlMatch[1], deviceId); } catch { /* display only */ }
+      return send(res, 200, result);
     } catch { return send(res, 503, { error: "Worker-Freigabe konnte nicht geprüft werden" }); }
   }
 
