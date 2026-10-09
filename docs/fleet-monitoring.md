@@ -130,8 +130,10 @@ Nachrichten mit `external_id` `clickup:<Aufgabe>:<master|mail-N>`, davon die
 Ergebnisse mit `metadata.attemptId` = `run_id` der Slack-Reservierung. Pro Mail
 wird das neueste Render mit dem vorhandenen `sharp` auf 600 px Breite als JPEG
 verkleinert, einmal per `PUT /v1/teams/:id/fleet/previews/<sha256>` an das Relay
-geschickt und im Snapshot nur als Verweis (`previews`) geführt. Im Detaildialog
-zeigt „Entwurf ansehen“ die Mail in echter Breite, bei Flows mit Mail-Auswahl;
+geschickt und im Snapshot nur als Verweis (`previews`) geführt. Hat eine Aufgabe
+Entwürfe, steht unter ihrem Namen „· 14 Entwürfe“; ein Klick auf den Namen öffnet
+die Mail in echter Breite, bei Flows mit Mail-Auswahl (ClickUp und Figma bleiben
+rechts in den Aktionen);
 ein neues Render ersetzt sie beim nächsten Abgleich, ohne Auswahl oder
 Scrollposition zu verlieren. Nach dem Abschluss bleibt der letzte Entwurf bis zu
 sieben Tage sichtbar; Aufgaben, die vor dieser Funktion fertig waren, bekommen

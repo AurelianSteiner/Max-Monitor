@@ -343,7 +343,9 @@ select {
 .queue-table td:last-child { overflow: visible; text-overflow: clip; }
 .queue-table tbody tr:hover td { background: var(--hover); }
 .task-title { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); text-decoration: none; }
-a.task-title:hover { text-decoration: underline; text-underline-offset: 3px; }
+a.task-title:hover, button.task-title:hover { text-decoration: underline; text-underline-offset: 3px; }
+button.task-title { max-width: 100%; padding: 0; border: 0; background: none; font: inherit; font-weight: 500; text-align: left; cursor: pointer; }
+.task-drafts { color: var(--ink-2); font-weight: 500; }
 .task-company { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-id { display: none; }
 .workflow-name { display: inline-block; max-width: 100%; padding: 2px 7px; border-radius: 5px; background: var(--sunken); color: var(--ink-2); font-size: 11px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -461,7 +463,6 @@ dialog.wide { max-width: 1060px; }
 .draft-sheet[data-state="error"] { aspect-ratio: auto !important; min-height: 140px; background: transparent; box-shadow: none; }
 .draft-sheet[data-state="error"] .draft-state { color: var(--bad); }
 .draft-state .button { background: var(--surface); box-shadow: var(--shadow); color: var(--ink); }
-.task-links .draft-link { display: inline-flex; align-items: center; min-height: 22px; white-space: nowrap; color: var(--ink); }
 
 /* ── Responsive ──────────────────────────────────────────── */
 @media (max-width: 1099px) {
@@ -513,13 +514,15 @@ dialog.wide { max-width: 1060px; }
   .queue-table tbody tr:last-child { border-bottom: 0; }
   .queue-table td { border: 0; padding: 0; display: inline-block; vertical-align: middle; max-width: 100%; }
   .queue-table tbody tr:hover td { background: transparent; }
-  .queue-table td:first-child { display: block; margin-bottom: 8px; }
+  /* Padding-free cell: let the name's focus ring show instead of clipping it. */
+  .queue-table td:first-child { display: block; margin-bottom: 8px; overflow: visible; }
+  button.task-title { min-height: 28px; }
   .queue-table td:nth-child(2), .queue-table td:nth-child(3) { margin-right: 10px; }
   .queue-table td:nth-child(4) { display: block; margin-top: 8px; }
   .queue-table td:nth-child(5) { display: none; }
   .queue-table td:last-child { display: block; margin-top: 6px; }
   .task-links { flex-direction: row; gap: 12px; }
-  .task-links a, .task-links .draft-link { min-height: 44px; padding: 0 4px; }
+  .task-links a { min-height: 44px; padding: 0 4px; }
   .queue-table .icon-button { width: 44px; height: 44px; }
   .task-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .phase { display: inline; margin-left: 8px; }

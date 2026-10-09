@@ -1029,21 +1029,29 @@
       const row = node("tr");
       const titleCell = node("td");
       const url = safeLink(task.url);
+      const drafts = task.previews?.length || 0;
+      // With drafts the name opens them; ClickUp and Figma stay in the actions.
       const title = node(
-        url ? "a" : "span",
+        drafts ? "button" : url ? "a" : "span",
         "task-title",
         task.title || task.id,
       );
       title.title = task.title || task.id;
-      if (url) {
+      if (drafts) {
+        title.type = "button";
+        title.setAttribute("aria-label", `Entwürfe ansehen: ${task.title || task.id}`);
+        title.addEventListener("click", () => taskDetails(task));
+      } else if (url) {
         title.href = url;
         title.target = "_blank";
         title.rel = "noopener noreferrer";
       }
       titleCell.append(title);
-      if (task.company) {
-        const company = node("span", "task-company", task.company);
-        company.title = task.company;
+      if (task.company || drafts) {
+        const company = node("span", "task-company", task.company || "");
+        company.title = task.company || "";
+        if (drafts) company.append(node("span", "task-drafts",
+          `${task.company ? " · " : ""}${drafts === 1 ? "Entwurf" : `${drafts} Entwürfe`}`));
         titleCell.append(company);
       }
       titleCell.append(node("span", "task-id", task.id));
@@ -1085,14 +1093,6 @@
         link.rel = "noopener noreferrer";
         link.setAttribute("aria-label", `${label === "Figma" ? "Figma-Board" : "ClickUp"} öffnen: ${task.title || task.id}`);
         links.append(link);
-      }
-      if (task.previews?.length) {
-        const count = task.previews.length;
-        const draft = node("button", "text-button draft-link", count > 1 ? `Entwurf · ${count} Mails` : "Entwurf ansehen");
-        draft.type = "button";
-        draft.setAttribute("aria-label", `Entwurf ansehen: ${task.title || task.id}`);
-        draft.addEventListener("click", () => taskDetails(task));
-        links.prepend(draft);
       }
       const detail = node("button", "icon-button", "⋯");
       detail.setAttribute("aria-label", `Details zu ${task.title || task.id}`);
