@@ -38,7 +38,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES } = require("./fleet");
+const { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, MAX_PREVIEW_BYTES } = require("./fleet");
 const { EnrollmentError, enrollWorkerMember, validateEnrollment } = require("./enrollment");
 const { controlForWorker, WORKER_ID, DEVICE_ID } = require("./worker-control");
 
@@ -187,7 +187,7 @@ function validReport(report) {
   return null;
 }
 
-function readBody(req, callback, maxBytes = MAX_BODY_BYTES) {
+function readBody(req, callback, maxBytes = MAX_BODY_BYTES, binary = false) {
   let size = 0;
   const chunks = [];
   let finished = false;
@@ -205,7 +205,10 @@ function readBody(req, callback, maxBytes = MAX_BODY_BYTES) {
     }
     chunks.push(chunk);
   });
-  req.on("end", () => finish(null, Buffer.concat(chunks).toString("utf8")));
+  req.on("end", () => {
+    const body = Buffer.concat(chunks);
+    finish(null, binary ? body : body.toString("utf8"));
+  });
   req.on("error", (error) => finish(error, null));
 }
 
@@ -278,7 +281,7 @@ function serveFleetAsset(req, res, pathname) {
       "cache-control": "no-store",
       "x-content-type-options": "nosniff",
       "referrer-policy": "no-referrer",
-      "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     });
     res.end(data);
   } catch {
@@ -516,6 +519,36 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "GET" && rest === "/fleet") {
     return fleetResult(res, () => visibleFleet(teamId, who));
+  }
+  // Newsletter render previews: whoever sees the queue may see its pictures.
+  // Bearer auth only, so the dashboard downloads them and shows a blob URL.
+  const previewMatch = rest.match(/^\/fleet\/previews\/([a-f0-9]{64})$/);
+  if (req.method === "GET" && previewMatch) {
+    let file;
+    try { file = fleet.previewFile(teamId, previewMatch[1]); } catch { file = null; }
+    if (!file) return send(res, 404, { error: "Vorschau nicht gefunden" });
+    let data;
+    try { data = fs.readFileSync(file); } catch { return send(res, 404, { error: "Vorschau nicht gefunden" }); }
+    res.writeHead(200, {
+      "Content-Type": "image/jpeg",
+      "Content-Length": data.length,
+      // Content addressed: an ID never changes its picture.
+      "Cache-Control": "private, max-age=604800, immutable",
+      "X-Content-Type-Options": "nosniff",
+    });
+    return res.end(data);
+  }
+  if (req.method === "PUT" && previewMatch) {
+    if (!["admin", "super"].includes(who.role)) return send(res, 403, { error: "nur Admin oder Team-Inhaber darf Vorschauen hochladen" });
+    if (String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase() !== "image/jpeg") {
+      return send(res, 415, { error: "Vorschau muss als image/jpeg gesendet werden" });
+    }
+    return readBody(req, (error, body) => {
+      if (error) return send(res, 413, { error: "Vorschau zu groß" });
+      const who = identify(req, teamId);
+      if (!who || !["admin", "super"].includes(who.role)) return send(res, 403, { error: "Keine Berechtigung zum Vorschau-Upload" });
+      return fleetResult(res, () => ({ ok: true, ...fleet.savePreview(teamId, previewMatch[1], body) }));
+    }, MAX_PREVIEW_BYTES, true);
   }
   // Every team member can resolve an attention item; source synchronization
   // remains restricted to the queue bridge/admin.

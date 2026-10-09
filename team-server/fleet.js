@@ -13,6 +13,12 @@ const MAX_QUEUE_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_STATE_BYTES = 16 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TASK_STATUSES = new Set(["queued", "running", "blocked", "completed", "failed"]);
+// Newsletter renders are stored next to fleet.json under their own SHA-256.
+// The snapshot carries only small references, never image data.
+const PREVIEW_ID = /^[a-f0-9]{64}$/;
+const MAX_PREVIEWS_PER_TASK = 24;
+const MAX_PREVIEW_BYTES = 2.5 * 1024 * 1024;
+const PREVIEW_ORPHAN_GRACE_MS = 60 * 60 * 1000;
 
 class FleetError extends Error {
   constructor(status, message) {
@@ -138,6 +144,29 @@ function validateHeartbeat(body) {
   });
 }
 
+function integer(value, field, min, max) {
+  if (!Number.isInteger(value) || value < min || value > max) throw new FleetError(400, `${field} ist ungültig`);
+  return value;
+}
+
+function previewList(value) {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_PREVIEWS_PER_TASK) throw new FleetError(400, "task.previews ist ungültig");
+  return value.map((raw) => {
+    object(raw, "preview");
+    if (typeof raw.id !== "string" || !PREVIEW_ID.test(raw.id)) throw new FleetError(400, "preview.id ist ungültig");
+    return optionalFields({
+      id: raw.id,
+      title: string(raw.title, "preview.title", 200),
+      subject: string(raw.subject, "preview.subject", 300, true),
+      renderedAt: timestamp(raw.renderedAt, "preview.renderedAt"),
+      render: integer(raw.render, "preview.render", 1, 10000),
+      width: integer(raw.width, "preview.width", 1, 10000),
+      height: integer(raw.height, "preview.height", 1, 100000),
+    });
+  });
+}
+
 function validateQueue(body) {
   object(body, "queue");
   const rawSource = object(body.source, "source");
@@ -204,7 +233,11 @@ function validateQueue(body) {
       sourceStatus: string(raw.sourceStatus, "task.sourceStatus", 120, true),
       workerId: string(raw.workerId, "task.workerId", 120, true),
       phase: string(raw.phase, "task.phase", 160, true),
+      // The worker's live step changes every few minutes; unlike phase it is
+      // neither a log event nor part of the completion version.
+      step: string(raw.step, "task.step", 160, true),
       progress: percent(raw.progress, "task.progress", true),
+      previews: previewList(raw.previews),
       updatedAt: timestamp(raw.updatedAt, "task.updatedAt", true),
     });
   });
@@ -386,6 +419,56 @@ function createFleetStore(dataDir, now = Date.now) {
     }
   }
 
+  function previewPath(teamId, id) {
+    if (typeof id !== "string" || !PREVIEW_ID.test(id)) throw new FleetError(400, "Vorschau-ID ist ungültig");
+    return path.join(path.dirname(filePath(teamId)), "previews", `${id}.jpg`);
+  }
+
+  // Idempotent upload by the queue bridge. The ID is the image's own hash, so
+  // a stored file can never be replaced by different content.
+  function savePreview(teamId, id, buffer) {
+    const file = previewPath(teamId, id);
+    if (!Buffer.isBuffer(buffer) || !buffer.length || buffer.length > MAX_PREVIEW_BYTES) throw new FleetError(413, "Vorschau ist zu groß");
+    if (buffer[0] !== 0xff || buffer[1] !== 0xd8 || buffer[2] !== 0xff) throw new FleetError(415, "Vorschau muss ein JPEG sein");
+    if (crypto.createHash("sha256").update(buffer).digest("hex") !== id) throw new FleetError(400, "Vorschau passt nicht zu ihrer ID");
+    const time = new Date(now());
+    try {
+      if (!fs.existsSync(file)) {
+        fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+        const tmp = `${file}.${crypto.randomUUID()}.tmp`;
+        fs.writeFileSync(tmp, buffer, { mode: 0o600 });
+        fs.renameSync(tmp, file);
+      }
+      // A repeated upload restarts the grace period before its snapshot arrives.
+      fs.utimesSync(file, time, time);
+    } catch {
+      throw new FleetError(500, "Vorschau konnte nicht gespeichert werden");
+    }
+    return { id, bytes: buffer.length };
+  }
+
+  function previewFile(teamId, id) {
+    const file = previewPath(teamId, id);
+    return fs.existsSync(file) ? file : null;
+  }
+
+  // Uploads precede the snapshot that references them; only older orphans go.
+  function prunePreviews(teamId, state) {
+    const directory = path.join(path.dirname(filePath(teamId)), "previews");
+    const used = new Set(state.queue.tasks.flatMap((task) => (task.previews || []).map((entry) => entry.id)));
+    let names;
+    try { names = fs.readdirSync(directory); } catch { return; }
+    const time = now();
+    for (const name of names) {
+      const id = /^([a-f0-9]{64})\.jpg$/.exec(name)?.[1];
+      if (id && used.has(id)) continue;
+      const file = path.join(directory, name);
+      try {
+        if (time - fs.statSync(file).mtimeMs > PREVIEW_ORPHAN_GRACE_MS) fs.rmSync(file, { force: true });
+      } catch { /* Pruning is best effort and never fails a queue update. */ }
+    }
+  }
+
   function event(state, type, entityId, title, message, time, context = null) {
     state.events.push({
       id: crypto.randomUUID(), type, entityId,
@@ -508,6 +591,12 @@ function createFleetStore(dataDir, now = Date.now) {
       if (oldSource.error !== incoming.source.error) event(state, "queue_source_error", "queue", incoming.source.name, incoming.source.error, time);
       state.queue.source = { ...oldSource, name: incoming.source.name, error: incoming.source.error, receivedAt: new Date(time).toISOString(), ...(incoming.source.detail ? { detail: incoming.source.detail } : {}) };
     } else {
+      // Never publish a reference whose image did not arrive.
+      for (const task of incoming.tasks) {
+        if (!task.previews) continue;
+        task.previews = task.previews.filter((entry) => fs.existsSync(previewPath(teamId, entry.id)));
+        if (!task.previews.length) delete task.previews;
+      }
       const oldTasks = new Map(state.queue.tasks.map((task) => [task.id, task]));
       const incomingIds = new Set(incoming.tasks.map((task) => task.id));
       for (const task of incoming.tasks) {
@@ -540,6 +629,7 @@ function createFleetStore(dataDir, now = Date.now) {
       }
     }
     write(teamId, state);
+    if (!incoming.source.error) prunePreviews(teamId, state);
     return { taskCount: state.queue.tasks.length, source: state.queue.source };
   }
 
@@ -674,7 +764,7 @@ function createFleetStore(dataDir, now = Date.now) {
     }
   }
 
-  return { heartbeat, updateQueue, completeTask, snapshot, subscribe, removeMember, assertEnrollmentAllowed, linkWorker, notify };
+  return { heartbeat, updateQueue, completeTask, snapshot, subscribe, removeMember, assertEnrollmentAllowed, linkWorker, notify, savePreview, previewFile };
 }
 
-module.exports = { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, validateHeartbeat, validateQueue };
+module.exports = { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, MAX_PREVIEW_BYTES, validateHeartbeat, validateQueue };

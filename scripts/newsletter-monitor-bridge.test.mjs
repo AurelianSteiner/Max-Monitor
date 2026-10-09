@@ -10,6 +10,7 @@ import {
   DEFAULT_WORKFLOWS, normalizeTag, validateWorkflows, discoverTags, listTasks,
   parseClaim, listClaims, parseWorkerIssue, buildQueue, parseObservedWorkers, readHubFleet,
   collectSnapshot, relayEndpoint, publishSnapshot, syncOnce, runSyncLoop,
+  parseRunStatus, readRenders, createRenderPreviews, uploadPreview,
 } from './newsletter-monitor-bridge.mjs';
 
 const now = Date.parse('2026-10-07T12:00:00Z');
@@ -393,4 +394,159 @@ test('a newer token-expiry warning cannot hide an existing Claude outage', async
       ? response({ ok: true, messages: [warning, issueMessage()], has_more: false }) : response({ spaces: [] }), fleetReader: async () => [] });
   assert.equal(snapshot.workerIssues.length, 2);
   assert.ok(snapshot.workerIssues.some(issue => issue.severity === 'error' && /OAuth/.test(issue.message)));
+});
+
+test('the worker status reply becomes live progress, final and foreign texts do not', () => {
+  assert.deepEqual(parseRunStatus(':hourglass_flowing_sand: 50 % · Bau der Mail\n_Stand 17:31 · wird alle 5 min aktualisiert_'), { percent: 50, step: 'Bau der Mail' });
+  assert.deepEqual(parseRunStatus('⏳ 32 % · Konzept: kreative Richtung &amp; Bauplan\n_Stand 17:29_'), { percent: 32, step: 'Konzept: kreative Richtung & Bauplan' });
+  assert.deepEqual(parseRunStatus('⏸️ 70 % · Prüfung (Art Director) · pausiert: Internet weg\n_Stand 17:40_'), { percent: 70, step: 'Prüfung (Art Director) · pausiert: Internet weg' });
+  assert.deepEqual(parseRunStatus(':double_vertical_bar: 85 % · Figma-Export · pausiert: Claude-API weg'), { percent: 85, step: 'Figma-Export · pausiert: Claude-API weg' });
+  for (const text of [':white_check_mark: 100 % · fertig · 6 Slices', '*Für PM / Kunde*\n• Briefing', ':hourglass: 101 % · zu viel', '', undefined]) assert.equal(parseRunStatus(text), null);
+});
+
+const statusReply = (text, overrides = {}) => ({ ts: '1791373500.002', thread_ts: '1791373200.001', bot_id: 'B1', text, ...overrides });
+const runningSource = ({ replies = () => [statusReply(':hourglass_flowing_sand: 50 % · Bau der Mail\n_Stand_')], claims = [claimMessage()], tasks = [task('a', ['pre gen · läuft'])] } = {}) => {
+  const calls = [];
+  const hubFetch = async target => {
+    const url = new URL(target);
+    if (url.pathname.endsWith('conversations.replies')) {
+      calls.push(url.searchParams.get('ts'));
+      const messages = replies(url);
+      return messages instanceof Error ? (() => { throw messages; })() : response({ ok: true, messages: [{ ts: url.searchParams.get('ts') }, ...messages] });
+    }
+    if (url.hostname === 'slack.com') return response({ ok: true, messages: claims, has_more: false });
+    if (url.pathname.endsWith('/space')) return response({ spaces: [{ id: 'space' }] });
+    if (url.pathname.endsWith('/tag')) return response({ tags: [{ name: 'pre gen.' }, { name: 'pre gen · läuft' }, { name: 'pre gen · fertig' }] });
+    return response({ tasks, last_page: true });
+  };
+  return { calls, hubFetch, config: { clickup: { workspace_id: 'test' }, slack: { channel_id: 'status' }, hub: {} } };
+};
+
+test('a running task shows the worker step and percent from its claim thread without new log phases', async () => {
+  const source = runningSource();
+  const snapshot = await collectSnapshot({ now, ...source, fleetReader: async () => [] });
+  const row = snapshot.tasks[0];
+  assert.deepEqual([row.status, row.phase, row.progress, row.step], ['running', 'In Bearbeitung', 50, 'Bau der Mail']);
+  assert.deepEqual(source.calls, ['1791373200.001']);
+  assert.equal(Object.hasOwn(row, 'run'), false);
+
+  // A human reply or a failed thread read never invents progress or fails the queue.
+  for (const replies of [() => [statusReply('⏳ 90 % · Fake', { bot_id: undefined })], () => new Error('rate limited')]) {
+    const quiet = await collectSnapshot({ now, ...runningSource({ replies }), fleetReader: async () => [] });
+    assert.deepEqual([quiet.tasks[0].status, quiet.tasks[0].progress, quiet.tasks[0].step], ['running', undefined, undefined]);
+    assert.equal(quiet.source.error, undefined);
+  }
+  // Only running tasks are read: a stale claim is blocked and costs no Slack request.
+  const stale = runningSource({ claims: [claimMessage('running', { heartbeat: now / 1000 - 3600 })] });
+  assert.equal((await collectSnapshot({ now, ...stale, fleetReader: async () => [] })).tasks[0].status, 'blocked');
+  assert.deepEqual(stale.calls, []);
+});
+
+async function renderDatabase() {
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE messages (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, external_id TEXT, title TEXT NOT NULL, created_at TEXT NOT NULL);
+    CREATE TABLE deliverables (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, message_id TEXT NOT NULL, version INTEGER NOT NULL,
+      content TEXT NOT NULL, metadata TEXT NOT NULL, created_at TEXT NOT NULL);`);
+  const message = db.prepare('INSERT INTO messages VALUES (?, ?, ?, ?, ?)');
+  message.run('m1', 'tisso', 'clickup:a:mail-1', 'TISSO Reise – Mail 01', '2026-10-07T10:00:00Z');
+  message.run('m2', 'tisso', 'clickup:a:mail-2', 'TISSO Reise – Mail 02', '2026-10-07T10:00:05Z');
+  message.run('m3', 'tisso', 'clickup:ab:master', 'Andere Aufgabe', '2026-10-07T10:00:06Z');
+  let version = 0;
+  const deliverable = (messageId, created, { run = 'run-1', render = `${'1'.repeat(8)}-1111-4111-8111-${String(version + 1).padStart(12, '0')}.png`, sha = `sha-${version + 1}` } = {}) =>
+    db.prepare('INSERT INTO deliverables VALUES (?, ?, ?, ?, ?, ?, ?)').run(`d${++version}`, 'tisso', messageId, version,
+      JSON.stringify({ subject: `Betreff ${messageId}`, html: '<p>x</p>', ...(render ? { render: { id: render, sha256: sha } } : {}) }),
+      JSON.stringify({ attemptId: run }), created);
+  deliverable('m1', '2026-10-07T11:00:00Z', { render: null });
+  deliverable('m1', '2026-10-07T11:00:04Z');
+  deliverable('m1', '2026-10-07T11:20:00Z', { render: null });
+  deliverable('m1', '2026-10-07T11:20:04Z');
+  deliverable('m2', '2026-10-07T11:10:00Z');
+  deliverable('m1', '2026-10-07T09:00:00Z', { run: 'old-run' });
+  deliverable('m3', '2026-10-07T11:30:00Z');
+  return db;
+}
+
+test('RS Hub renders of the current attempt are found per mail, newest first render counted', async () => {
+  const db = await renderDatabase();
+  const renders = readRenders(db, [{ taskId: 'a', runId: 'run-1' }, { taskId: 'missing', runId: 'run-9' }]);
+  assert.deepEqual([...renders.keys()], ['run-1']);
+  assert.deepEqual(renders.get('run-1').map(mail => [mail.title, mail.render, mail.sha256, mail.renderedAt, mail.subject]), [
+    ['TISSO Reise – Mail 01', 2, 'sha-4', '2026-10-07T11:20:04Z', 'Betreff m1'],
+    ['TISSO Reise – Mail 02', 1, 'sha-5', '2026-10-07T11:10:00Z', 'Betreff m2'],
+  ]);
+  assert.equal(readRenders(db, [{ taskId: 'a', runId: 'old-run' }]).get('old-run').length, 1);
+});
+
+test('each new render is resized and uploaded once; a failed upload keeps the previous picture', async () => {
+  const db = await renderDatabase();
+  const uploads = []; const reads = []; let failUpload = false;
+  const previews = createRenderPreviews({ localHub: '/opt/rs-hub', openDatabase: () => ({ prepare: sql => db.prepare(sql), close() {} }),
+    readFile: async file => { reads.push(file); return Buffer.from(file); },
+    resize: async buffer => ({ data: Buffer.concat([Buffer.from('jpeg:'), buffer]), width: 600, height: 4000 }),
+    upload: async (id, data) => { if (failUpload) throw new Error('relay down'); uploads.push([id, data.length]); } });
+  const first = (await previews([{ taskId: 'a', runId: 'run-1' }])).get('run-1');
+  assert.equal(first.length, 2);
+  assert.match(first[0].id, /^[a-f0-9]{64}$/);
+  assert.deepEqual(Object.keys(first[0]).sort(), ['height', 'id', 'render', 'renderedAt', 'subject', 'title', 'width']);
+  assert.equal(reads[0], '/opt/rs-hub/data/customer-intelligence/assets/tisso/11111111-1111-4111-8111-000000000004.png');
+  assert.equal(uploads.length, 2);
+  await previews([{ taskId: 'a', runId: 'run-1' }]);
+  assert.equal(uploads.length, 2);
+
+  db.prepare('INSERT INTO deliverables VALUES (?, ?, ?, ?, ?, ?, ?)').run('d99', 'tisso', 'm1', 99,
+    JSON.stringify({ subject: 'Neu', render: { id: '11111111-1111-4111-8111-000000000099.png', sha256: 'sha-99' } }), JSON.stringify({ attemptId: 'run-1' }), '2026-10-07T11:40:00Z');
+  failUpload = true;
+  const kept = (await previews([{ taskId: 'a', runId: 'run-1' }])).get('run-1');
+  assert.deepEqual(kept.map(mail => mail.id), first.map(mail => mail.id));
+  failUpload = false;
+  const updated = (await previews([{ taskId: 'a', runId: 'run-1' }])).get('run-1');
+  assert.notEqual(updated[0].id, first[0].id);
+  assert.deepEqual([updated[0].render, updated[0].subject], [3, 'Neu']);
+  assert.equal(uploads.length, 3);
+
+  // Paths come from the Hub database; anything unexpected is never read.
+  db.prepare('INSERT INTO deliverables VALUES (?, ?, ?, ?, ?, ?, ?)').run('d100', 'tisso', 'm2', 100,
+    JSON.stringify({ render: { id: '../../../etc/passwd', sha256: 'sha-100' } }), JSON.stringify({ attemptId: 'run-1' }), '2026-10-07T11:50:00Z');
+  reads.length = 0;
+  await previews([{ taskId: 'a', runId: 'run-1' }]);
+  assert.deepEqual(reads, []);
+});
+
+test('pictures follow the attempt, stay after completion and are never backfilled for old tasks', async () => {
+  const picture = (renderedAt = '2026-10-07T11:20:04Z') => ({ id: 'f'.repeat(64), title: 'Mail', renderedAt, render: 1, width: 600, height: 4000 });
+  const asked = [];
+  const previews = async attempts => { asked.push(...attempts.map(item => item.runId)); return new Map([['run-1', [picture()]]]); };
+  const collect = (tags, claims, previousTasks) => collectSnapshot({ now, ...runningSource({ tasks: [task('a', tags)], claims }), fleetReader: async () => [], previews, previousTasks });
+
+  const running = await collect(['pre gen · läuft'], [claimMessage()]);
+  assert.deepEqual(running.tasks[0].previews, [picture()]);
+  assert.deepEqual(asked, ['run-1']);
+
+  const done = [claimMessage('final')];
+  asked.length = 0;
+  const finished = await collect(['pre gen · fertig'], done, running.tasks);
+  assert.deepEqual([finished.tasks[0].status, finished.tasks[0].previews], ['completed', [picture()]]);
+  assert.deepEqual(asked, ['run-1']);
+
+  asked.length = 0;
+  const kept = await collect(['pre gen · fertig'], done, finished.tasks);
+  assert.deepEqual([kept.tasks[0].previews, asked], [[picture()], []]);
+  const expired = await collect(['pre gen · fertig'], done, [{ ...finished.tasks[0], previews: [picture('2026-09-29T11:00:00Z')] }]);
+  assert.equal(expired.tasks[0].previews, undefined);
+  assert.equal((await collect(['pre gen · fertig'], done)).tasks[0].previews, undefined);
+  assert.deepEqual(asked, []);
+
+  // A broken Hub read keeps the last pictures instead of failing the queue.
+  const failing = await collectSnapshot({ now, ...runningSource(), fleetReader: async () => [], previousTasks: running.tasks, previews: async () => { throw new Error('database locked'); } });
+  assert.deepEqual([failing.source.error, failing.tasks[0].previews], [undefined, [picture()]]);
+});
+
+test('preview uploads go to the relay with the token in the header only', async () => {
+  const calls = [];
+  await uploadPreview('a'.repeat(64), Buffer.from('jpeg'), { relayUrl: 'https://api.example.test/max-monitor', teamId: 'DEMO1234', token: 'secret',
+    fetchImpl: async (url, options) => { calls.push([String(url), options]); return { ok: true }; } });
+  assert.equal(calls[0][0], `https://api.example.test/max-monitor/v1/teams/DEMO1234/fleet/previews/${'a'.repeat(64)}`);
+  assert.deepEqual([calls[0][1].method, calls[0][1].redirect, calls[0][1].headers.Authorization, calls[0][1].headers['Content-Type']], ['PUT', 'error', 'Bearer secret', 'image/jpeg']);
+  await assert.rejects(uploadPreview('a'.repeat(64), Buffer.from('jpeg'), { relayUrl: 'https://api.example.test', teamId: 'DEMO1234', token: 'secret', fetchImpl: async () => ({ ok: false, status: 413 }) }), /413/);
 });

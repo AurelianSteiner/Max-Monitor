@@ -23,6 +23,9 @@
   let streamConnected = false;
   let liveRefreshTimer = null;
   let refreshQueued = false;
+  // Render previews need the bearer token: downloaded once, shown as blob URLs.
+  const previewImages = new Map();
+  let openTask = null;
   const params = new URLSearchParams(location.search);
   let view = params.get("view") || "overview";
   let logFilter = params.get("log") === "attention" ? "attention" : "all";
@@ -583,6 +586,7 @@
     }
     renderQueue(items);
     renderEvents(attention);
+    refreshOpenTask();
   }
   function openQueue(status, workflowValue = "") {
     workerFilter = "";
@@ -910,7 +914,7 @@
         if (workflowFilter && task.workflow !== workflowFilter) return false;
         return (
           !needle ||
-          [task.title, task.id, task.company, task.workerId, workerNames.get(task.workerId), task.url, task.phase, ...(task.tags || [])]
+          [task.title, task.id, task.company, task.workerId, workerNames.get(task.workerId), task.url, task.phase, task.step, ...(task.tags || [])]
             .filter(Boolean).join(" ").toLocaleLowerCase().includes(needle)
         );
       })
@@ -1062,7 +1066,8 @@
         assignment.append(track, node("span", "", `${task.progress} %`));
       }
       assigned.append(assignment);
-      if (task.phase) assigned.append(node("span", "phase", task.phase));
+      // The worker's live step replaces the generic "In Bearbeitung".
+      if (task.step || task.phase) assigned.append(node("span", "phase", task.step || task.phase));
       const updated = node("td");
       const time = node("time", "row-time", relative(task.updatedAt));
       time.title = exact(task.updatedAt);
@@ -1080,6 +1085,14 @@
         link.rel = "noopener noreferrer";
         link.setAttribute("aria-label", `${label === "Figma" ? "Figma-Board" : "ClickUp"} öffnen: ${task.title || task.id}`);
         links.append(link);
+      }
+      if (task.previews?.length) {
+        const count = task.previews.length;
+        const draft = node("button", "text-button draft-link", count > 1 ? `Entwurf · ${count} Mails` : "Entwurf ansehen");
+        draft.type = "button";
+        draft.setAttribute("aria-label", `Entwurf ansehen: ${task.title || task.id}`);
+        draft.addEventListener("click", () => taskDetails(task));
+        links.prepend(draft);
       }
       const detail = node("button", "icon-button", "⋯");
       detail.setAttribute("aria-label", `Details zu ${task.title || task.id}`);
@@ -1099,13 +1112,153 @@
     );
     return item;
   }
-  function openDetail(title, children) {
+  function openDetail(title, children, wide = false) {
+    openTask = null;
     $("detail-title").textContent = title;
     $("detail-body").replaceChildren(...children);
+    $("detail-dialog").classList.toggle("wide", wide);
     $("detail-action-error").hidden = true;
     if (!$("detail-dialog").open) $("detail-dialog").showModal();
   }
-  function taskDetails(task) {
+  function previewImage(id) {
+    if (!previewImages.has(id)) {
+      const connection = credentials;
+      const request = fetch(
+        `${relayPrefix}/v1/teams/${encodeURIComponent(connection.teamId)}/fleet/previews/${id}`,
+        { headers: { Authorization: `Bearer ${connection.token}` } },
+      )
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.blob();
+        })
+        .then((blob) => URL.createObjectURL(blob));
+      request.catch(() => previewImages.delete(id));
+      previewImages.set(id, request);
+      // Bounded memory: forget the oldest downloaded pictures.
+      for (const [oldId, old] of previewImages) {
+        if (previewImages.size <= 40) break;
+        previewImages.delete(oldId);
+        old.then((url) => URL.revokeObjectURL(url), () => {});
+      }
+    }
+    return previewImages.get(id);
+  }
+  function clearPreviews() {
+    for (const request of previewImages.values()) request.then((url) => URL.revokeObjectURL(url), () => {});
+    previewImages.clear();
+  }
+  // Flow mails share the task name ("TISSO Reise – Mail 01"); show what differs.
+  function mailNames(previews) {
+    const parts = previews.map((entry) => String(entry.title || "").split(" – "));
+    const shared = parts.length > 1 && parts.every((part) => part.length > 1 && part.slice(0, -1).join(" – ") === parts[0].slice(0, -1).join(" – "));
+    return parts.map((part, index) => (shared ? part.at(-1) : previews[index].title) || `Mail ${index + 1}`);
+  }
+  function taskSignature(task) {
+    return JSON.stringify([task.status, task.progress, task.step, task.phase, task.workerId, task.completion,
+      (task.previews || []).map((entry) => [entry.id, entry.render])]);
+  }
+  function draftSection(task, keep) {
+    const previews = task.previews;
+    const names = mailNames(previews);
+    const index = Math.max(0, previews.findIndex((entry) => entry.title === keep.mail));
+    const entry = previews[index];
+    const section = node("section", "draft");
+    section.setAttribute("aria-labelledby", "draft-heading");
+    const head = node("div", "draft-head");
+    const label = node("div", "draft-label");
+    const heading = node("h3", "", task.status === "completed" ? "Letzter Entwurf" : "Aktueller Entwurf");
+    heading.id = "draft-heading";
+    const meta = node("span", "draft-meta", `${entry.render}. Render · ${relative(entry.renderedAt)}`);
+    meta.title = `Gerendert ${exact(entry.renderedAt)}`;
+    label.append(heading, meta);
+    head.append(label);
+    const show = (next) => {
+      const focusKey = document.activeElement?.dataset?.focusKey || "mail";
+      openTask.mail = previews[next].title;
+      section.replaceWith(draftSection(task, { mail: previews[next].title }));
+      const target = $("detail-body").querySelector(`[data-focus-key="${focusKey}"]`);
+      (target && !target.disabled ? target : $("detail-body").querySelector('[data-focus-key="mail"]'))?.focus();
+    };
+    if (previews.length > 1) {
+      const nav = node("div", "draft-nav");
+      const back = node("button", "icon-button", "‹");
+      back.type = "button";
+      back.dataset.focusKey = "back";
+      back.setAttribute("aria-label", "Vorherige Mail");
+      back.disabled = index === 0;
+      back.addEventListener("click", () => show(index - 1));
+      const select = node("select", "draft-select");
+      select.dataset.focusKey = "mail";
+      select.setAttribute("aria-label", `Mail auswählen, ${index + 1} von ${previews.length}`);
+      names.forEach((name, position) => {
+        const option = node("option", "", `${name} · ${position + 1}/${previews.length}`);
+        option.value = String(position);
+        option.selected = position === index;
+        select.append(option);
+      });
+      select.addEventListener("change", () => show(Number(select.value)));
+      const next = node("button", "icon-button", "›");
+      next.type = "button";
+      next.dataset.focusKey = "next";
+      next.setAttribute("aria-label", "Nächste Mail");
+      next.disabled = index === previews.length - 1;
+      next.addEventListener("click", () => show(index + 1));
+      nav.append(back, select, next);
+      head.append(nav);
+    }
+    section.append(head);
+    if (entry.subject) {
+      const subject = node("p", "draft-subject");
+      subject.append(node("span", "datum-label", "Betreff"), node("span", "", entry.subject));
+      section.append(subject);
+    }
+    const well = node("div", "draft-well");
+    well.tabIndex = 0;
+    well.dataset.focusKey = "well";
+    well.setAttribute("role", "region");
+    well.setAttribute("aria-label", `Entwurf ${names[index]}, scrollbar`);
+    const sheet = node("div", "draft-sheet");
+    sheet.style.maxWidth = `${entry.width}px`;
+    sheet.style.aspectRatio = `${entry.width} / ${entry.height}`;
+    const state = node("span", "draft-state", "Entwurf wird geladen …");
+    sheet.append(state);
+    well.append(sheet);
+    section.append(well);
+    const load = () => {
+      state.replaceChildren("Entwurf wird geladen …");
+      sheet.dataset.state = "loading";
+      previewImage(entry.id).then((url) => {
+        const image = node("img");
+        image.alt = `Entwurf: ${entry.title}`;
+        image.width = entry.width;
+        image.height = entry.height;
+        image.src = url;
+        image.decoding = "async";
+        sheet.replaceChildren(image);
+        sheet.dataset.state = "ready";
+      }, () => {
+        const retry = node("button", "button secondary", "Erneut laden");
+        retry.type = "button";
+        retry.addEventListener("click", load);
+        state.replaceChildren(node("span", "", "Entwurf konnte nicht geladen werden."), retry);
+        sheet.dataset.state = "error";
+      });
+    };
+    load();
+    if (keep.scrollTop) requestAnimationFrame(() => { well.scrollTop = keep.scrollTop; });
+    return section;
+  }
+  // A new render or step while the dialog is open replaces it in place,
+  // keeping the selected mail, scroll position and focused control.
+  function refreshOpenTask() {
+    if (!openTask || !$("detail-dialog").open) return;
+    const task = tasks().find((entry) => entry.id === openTask.id);
+    if (!task || taskSignature(task) === openTask.signature) return;
+    const focusKey = document.activeElement?.dataset?.focusKey;
+    taskDetails(task, { mail: openTask.mail, scrollTop: $("detail-body").querySelector(".draft-well")?.scrollTop });
+    if (focusKey) $("detail-body").querySelector(`[data-focus-key="${focusKey}"]`)?.focus({ preventScroll: true });
+  }
+  function taskDetails(task, keep = {}) {
     const grid = node("div", "detail-grid");
     grid.append(
       detailField("Unternehmen", task.company || "Nicht hinterlegt"),
@@ -1120,7 +1273,7 @@
       ),
       detailField(
         "Letzter Schritt",
-        task.phase || "Noch kein Schritt gemeldet",
+        task.step || task.phase || "Noch kein Schritt gemeldet",
         true,
       ),
       detailField("ClickUp-Status", task.sourceStatus || "Unbekannt"),
@@ -1149,7 +1302,17 @@
     }
     if (task.completion === "manual") grid.append(detailField("Abgehakt", exact(task.completedAt)));
     if (canComplete(task)) children.push(completionButton(task, true));
-    openDetail(task.title || task.id, children);
+    if (!task.previews?.length) {
+      openDetail(task.title || task.id, children);
+    } else {
+      // With a draft the dialog becomes a split inspector: facts | the mail itself.
+      const facts = node("div", "inspector-facts");
+      facts.append(...children);
+      const inspector = node("div", "task-inspector");
+      inspector.append(facts, draftSection(task, keep));
+      openDetail(task.title || task.id, [inspector], true);
+    }
+    openTask = { id: task.id, mail: keep.mail ?? task.previews?.[0]?.title, signature: taskSignature(task) };
   }
   // One line per accepted task: ClickUp titles often contain " · " themselves.
   function workingOn(machine) {
@@ -1633,6 +1796,7 @@
     .forEach((button) =>
       button.addEventListener("click", () => button.closest("dialog").close()),
     );
+  $("detail-dialog").addEventListener("close", () => { openTask = null; });
   $("connection-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     stopLive();
@@ -1644,6 +1808,7 @@
       token: $("team-token").value.trim(),
     };
     snapshot = null;
+    clearPreviews();
     const success = await refresh();
     $("team-token").value = "";
     if (success) {
@@ -1660,6 +1825,8 @@
     busy = false;
     credentials = null;
     snapshot = null;
+    clearPreviews();
+    $("detail-dialog").close();
     $("team-token").value = "";
     $("disconnect").hidden = true;
     $("refresh").disabled = false;

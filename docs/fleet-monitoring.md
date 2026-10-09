@@ -114,6 +114,31 @@ werden keine direkten ClickUp-Webhooks vorausgesetzt. Die Quellenlaufzeit und
 Verfügbarkeit bestimmen die tatsächliche Verzögerung. Geräte- und
 Account-Heartbeats laufen unabhängig davon im Minuten-Takt.
 
+## Fortschritt und Entwurf laufender Newsletter
+
+Für jede laufende Aufgabe liest die Brücke die Status-Antwort des Workers im
+Slack-Thread seiner Reservierung (`⏳ 50 % · Bau der Mail`, vom Worker alle fünf
+Minuten bearbeitet). Prozent und Schritt erscheinen im Fortschrittsbalken und als
+„Letzter Schritt“. Der Schritt steht im eigenen Feld `step`; anders als `phase`
+erzeugt er keinen Log-Eintrag und ändert die Abhak-Version nicht. Ohne lesbare
+Status-Antwort bleibt die Aufgabe einfach „In Bearbeitung“.
+
+Jeder Bau einer Mail (`build.py --kunde`) speichert das tatsächliche Render im RS
+Hub, auch das erste vor dem Art Director. Die Brücke auf dem Hub liest diese
+Renders schreibgeschützt aus `/opt/rs-hub/data/customer-intelligence.sqlite`:
+Nachrichten mit `external_id` `clickup:<Aufgabe>:<master|mail-N>`, davon die
+Ergebnisse mit `metadata.attemptId` = `run_id` der Slack-Reservierung. Pro Mail
+wird das neueste Render mit dem vorhandenen `sharp` auf 600 px Breite als JPEG
+verkleinert, einmal per `PUT /v1/teams/:id/fleet/previews/<sha256>` an das Relay
+geschickt und im Snapshot nur als Verweis (`previews`) geführt. Im Detaildialog
+zeigt „Entwurf ansehen“ die Mail in echter Breite, bei Flows mit Mail-Auswahl;
+ein neues Render ersetzt sie beim nächsten Abgleich, ohne Auswahl oder
+Scrollposition zu verlieren. Nach dem Abschluss bleibt der letzte Entwurf bis zu
+sieben Tage sichtbar; Aufgaben, die vor dieser Funktion fertig waren, bekommen
+keine nachträglichen Bilder. Das Relay löscht Bilder, die keine Aufgabe mehr
+verwendet, nach einer Stunde. Eine Mac-Brücke ohne `--local-hub` liefert keine
+Entwürfe.
+
 ## Automatische Einrichtung neuer Worker
 
 Der neue-Mac-Startbefehl von **AI Newsletter Creation** klont auch Max-Monitor,
@@ -424,6 +449,19 @@ Snapshot besteht aus:
       "sourceStatus": "in arbeit",
       "workerId": "newsletter-mac-1",
       "phase": "In Bearbeitung",
+      "progress": 50,
+      "step": "Bau der Mail",
+      "previews": [
+        {
+          "id": "<SHA-256 des hochgeladenen JPEG>",
+          "title": "Newsletter erstellen – Mail 01",
+          "subject": "Betreff der Mail",
+          "renderedAt": "2026-10-07T11:58:00Z",
+          "render": 1,
+          "width": 600,
+          "height": 4800
+        }
+      ],
       "updatedAt": "2026-10-07T12:00:00Z",
       "tags": ["pre gen · läuft"]
     }
@@ -445,6 +483,12 @@ Snapshot besteht aus:
   }
 }
 ```
+
+Ein Verweis in `previews` wird nur übernommen, wenn das Bild vorher per
+`PUT /v1/teams/:id/fleet/previews/<sha256>` (Admin/Super, `image/jpeg`, höchstens
+2,5 MB, ID = SHA-256 des Inhalts) gespeichert wurde. `GET` auf denselben Pfad
+liefert es jedem, der die Queue lesen darf; das Dashboard lädt es mit dem
+Bearer-Token und zeigt es als `blob:`-Bild.
 
 Quellenfehler werden als `{ "source": { "name": "…", "error": "…" } }` gesendet,
 optional mit dem letzten bestätigten `lastSuccessAt`. Kein `tasks`-Feld in diesem

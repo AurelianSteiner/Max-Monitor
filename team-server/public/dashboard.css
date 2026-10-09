@@ -426,6 +426,43 @@ dialog .form-hint { font-size: 12px; margin: 10px 0; }
 #detail-body > .button { margin-top: 16px; margin-right: 8px; }
 #detail-body > div > .usage-line { font-size: 12px; margin-top: 10px; }
 
+/* ── Draft inspector: facts beside the rendered mail ─────── */
+dialog.wide { max-width: 1060px; }
+.task-inspector { display: grid; grid-template-columns: minmax(250px, 300px) minmax(0, 1fr); gap: 28px; align-items: start; }
+.inspector-facts { min-width: 0; }
+.inspector-facts > p:first-child { font-family: var(--mono); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.inspector-facts > .button { margin-top: 16px; margin-right: 8px; }
+.inspector-facts .detail-grid { grid-template-columns: 1fr 1fr; gap: 14px 16px; }
+.inspector-facts .detail-grid .wide { grid-column: 1/-1; }
+.draft { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.draft-head { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; min-height: 34px; }
+.draft-label { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.draft-label h3 { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.draft-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.draft-nav { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.draft-nav .icon-button:disabled { opacity: .35; pointer-events: none; }
+.draft-select { max-width: 240px; font-variant-numeric: tabular-nums; }
+.draft-subject { display: flex; gap: 8px; align-items: baseline; margin: 0; font-size: 13px; min-width: 0; }
+.draft-subject .datum-label { display: inline; margin: 0; flex-shrink: 0; }
+.draft-subject span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The mail at its real 600 px width, scrolled inside a recessed well. */
+.draft-well {
+  max-height: min(66vh, 760px); overflow: auto; padding: 16px; border-radius: var(--radius);
+  background: var(--sunken); overscroll-behavior: contain; scrollbar-gutter: stable;
+}
+.draft-well:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.draft-sheet { position: relative; width: 100%; margin: 0 auto; background: #fff; box-shadow: var(--shadow); }
+.draft-sheet img { display: block; width: 100%; height: auto; }
+.draft-state {
+  position: absolute; inset: 32px 16px auto; display: flex; flex-direction: column; align-items: center; gap: 12px;
+  font-size: 12px; color: var(--muted); text-align: center;
+}
+/* Loading keeps the final size (no jump); a failed download collapses to its message. */
+.draft-sheet[data-state="error"] { aspect-ratio: auto !important; min-height: 140px; background: transparent; box-shadow: none; }
+.draft-sheet[data-state="error"] .draft-state { color: var(--bad); }
+.draft-state .button { background: var(--surface); box-shadow: var(--shadow); color: var(--ink); }
+.task-links .draft-link { display: inline-flex; align-items: center; min-height: 22px; white-space: nowrap; color: var(--ink); }
+
 /* ── Responsive ──────────────────────────────────────────── */
 @media (max-width: 1099px) {
   .overview { grid-template-columns: minmax(0, 1fr); grid-template-areas: "pipeline" "attention" "fleet"; }
@@ -482,7 +519,7 @@ dialog .form-hint { font-size: 12px; margin: 10px 0; }
   .queue-table td:nth-child(5) { display: none; }
   .queue-table td:last-child { display: block; margin-top: 6px; }
   .task-links { flex-direction: row; gap: 12px; }
-  .task-links a { min-height: 44px; padding: 0 4px; }
+  .task-links a, .task-links .draft-link { min-height: 44px; padding: 0 4px; }
   .queue-table .icon-button { width: 44px; height: 44px; }
   .task-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .phase { display: inline; margin-left: 8px; }
@@ -512,6 +549,15 @@ dialog .form-hint { font-size: 12px; margin: 10px 0; }
   .dialog-heading .icon-button { width: 44px; height: 44px; }
   .detail-grid { grid-template-columns: 1fr; }
   .detail-grid .wide { grid-column: auto; }
+}
+@media (max-width: 899px) {
+  /* The draft is why the dialog was opened: it comes first on narrow screens. */
+  .task-inspector { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .task-inspector .draft { order: -1; }
+  .draft-nav { width: 100%; }
+  .draft-select { max-width: none; flex: 1; }
+  .draft-nav .icon-button { width: 44px; height: 44px; flex-shrink: 0; }
+  .draft-well { max-height: 60vh; padding: 10px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }

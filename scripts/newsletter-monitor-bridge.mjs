@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Read-only source adapter. The only write target is the configured Max Monitor relay.
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,6 +19,13 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 // <ClickUp-ID>-klaviyo or <ClickUp-ID>-uebersetzung-<language>.
 const CLAIM_EVENTS = { ai_newsletter_claim: 'newsletter', ai_klaviyo_upload_claim: 'klaviyo', ai_translation_claim: 'translation' };
 const TRANSLATION_LANGUAGES = ['en', 'it', 'fr', 'se', 'sp'];
+// Render previews: one picture per mail, small enough to read like the real mail
+// (600 px = 1x of a 1200 px render) and below the relay's upload limit.
+const PREVIEW_WIDTH = 600;
+const MAX_PREVIEW_UPLOAD_BYTES = 2 * 1024 * 1024;
+const MAX_PREVIEWS_PER_TASK = 24;
+const PREVIEWS_PER_CYCLE = 40;
+const PREVIEW_RETENTION_MS = 7 * 86400000;
 
 export const DEFAULT_WORKFLOWS = [
   { id: 'newsletter', triggerTags: ['pre gen.'], claimWorkflow: 'newsletter', stateTags: {
@@ -236,10 +244,148 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         company: task.folder?.hidden ? undefined : displayText(task.folder?.name, 200),
         figmaUrl: taskFigmaLink(task) || ((workflow.claimWorkflow ?? workflow.id) === 'newsletter' ? figmaLink(figmaBoardUrl) : undefined),
         workerId: claim?.workerId, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
-        updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30) });
+        updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30),
+        // Internal only: addRunDetails reads progress and renders of this attempt, then removes it.
+        run: claim ? { id: claim.runId, ts: claim.ts, taskId: task.id } : undefined });
     }
   }
   return rows.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// AI Newsletter Creation src/slack-notifier.js statusText(): the worker posts one
+// reply in the claim thread and edits it every 5 minutes, e.g.
+// ":hourglass_flowing_sand: 50 % · Bau der Mail\n_Stand 17:31 · …_" (paused: ⏸️ … · pausiert: …).
+export function parseRunStatus(text) {
+  const line = String(text ?? '').split('\n')[0];
+  const match = /^(?:⏳|⏸️?|:hourglass(?:_flowing_sand)?:|:double_vertical_bar:|:pause_button:)\s*(\d{1,3})\s*%\s*·\s*(.+)$/u.exec(line);
+  if (!match || Number(match[1]) > 100) return null;
+  const step = displayText(match[2].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 160);
+  return step ? { percent: Number(match[1]), step } : null;
+}
+
+export async function readRunStatuses(hubFetch, channelId, threads, { concurrency = 4 } = {}) {
+  const pending = [...new Set(threads)];
+  const statuses = new Map();
+  await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, async () => {
+    while (pending.length) {
+      const ts = pending.shift();
+      try {
+        const url = new URL('https://slack.com/api/conversations.replies');
+        for (const [key, value] of Object.entries({ channel: channelId, ts, limit: 50 })) url.searchParams.set(key, String(value));
+        const result = await requestJson(hubFetch, url, 'Slack');
+        // Only the worker's own bot reply counts, never a person writing in the thread.
+        const found = (Array.isArray(result.messages) ? result.messages : [])
+          .filter(message => message?.ts !== ts && message?.bot_id).map(message => parseRunStatus(message.text)).filter(Boolean);
+        if (found.length) statuses.set(ts, found.at(-1));
+      } catch { /* Progress is optional: the task simply stays "In Bearbeitung". */ }
+    }
+  }));
+  return statuses;
+}
+
+const RENDER_ASSET = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.(?:png|jpg|gif|webp)$/;
+const CUSTOMER_ID = /^[a-z0-9_-]{1,64}$/i;
+
+// RS Hub customer intelligence (RS-Hub lib/customer-intelligence/schema.js):
+// build.py --kunde stores every actual render, including the first one before the
+// Art Director, as a deliverable of the mail's message. A task's messages carry
+// external_id "clickup:<task>:<master|mail-N>", each render metadata.attemptId = run_id.
+export function readRenders(db, attempts) {
+  const messages = db.prepare('SELECT customer_id, id, title FROM messages WHERE external_id >= ? AND external_id < ? ORDER BY created_at, external_id');
+  const renders = db.prepare(`SELECT created_at, json_extract(content, '$.render.id') AS render_id, json_extract(content, '$.render.sha256') AS sha256,
+    json_extract(content, '$.subject') AS subject FROM deliverables WHERE customer_id = ? AND message_id = ?
+    AND json_extract(metadata, '$.attemptId') = ? AND json_extract(content, '$.render.id') IS NOT NULL ORDER BY created_at, version`);
+  const result = new Map();
+  for (const { taskId, runId } of attempts) {
+    const mails = [];
+    for (const message of messages.all(`clickup:${taskId}:`, `clickup:${taskId};`)) {
+      const rows = renders.all(message.customer_id, message.id, runId);
+      const latest = rows.at(-1);
+      if (!latest) continue;
+      mails.push({ key: message.id, customerId: message.customer_id, renderId: latest.render_id, sha256: String(latest.sha256 || latest.render_id),
+        title: displayText(message.title, 200, 'Mail'), subject: displayText(latest.subject, 300), renderedAt: latest.created_at, render: rows.length });
+    }
+    if (mails.length) result.set(runId, mails.slice(0, MAX_PREVIEWS_PER_TASK));
+  }
+  return result;
+}
+
+export async function resizeRender(sharp, buffer) {
+  // Smaller fallbacks keep very tall mails below the relay's upload limit.
+  for (const [width, quality] of [[PREVIEW_WIDTH, 74], [PREVIEW_WIDTH, 60], [480, 60]]) {
+    const { data, info } = await sharp(buffer, { limitInputPixels: 33554432, failOn: 'error' }).timeout({ seconds: 20 })
+      .resize({ width, withoutEnlargement: true }).flatten({ background: '#ffffff' })
+      .jpeg({ quality, mozjpeg: true }).toBuffer({ resolveWithObject: true });
+    if (data.length <= MAX_PREVIEW_UPLOAD_BYTES) return { data, width: info.width, height: info.height };
+  }
+  throw new Error('Vorschau bleibt über dem Upload-Limit.');
+}
+
+// Runs on the Hub only (read-only access to the local RS Hub). Each render is
+// resized and uploaded once; a failure keeps showing that mail's previous picture.
+export function createRenderPreviews({ localHub, upload, openDatabase, resize, readFile = fs.readFile, perCycle = PREVIEWS_PER_CYCLE }) {
+  const databaseFile = path.join(localHub, 'data', 'customer-intelligence.sqlite');
+  const assets = path.join(localHub, 'data', 'customer-intelligence', 'assets');
+  let made = new Map();
+  let shown = new Map();
+  return async attempts => {
+    const db = openDatabase(databaseFile);
+    let renders;
+    try { renders = readRenders(db, attempts); } finally { db.close(); }
+    const nextMade = new Map();
+    const nextShown = new Map();
+    const result = new Map();
+    let budget = perCycle;
+    for (const [runId, mails] of renders) {
+      const list = [];
+      for (const mail of mails) {
+        let image = made.get(mail.sha256);
+        if (!image && budget > 0 && CUSTOMER_ID.test(mail.customerId) && RENDER_ASSET.test(mail.renderId || '')) {
+          budget -= 1;
+          try {
+            const { data, width, height } = await resize(await readFile(path.join(assets, mail.customerId, mail.renderId)));
+            const id = crypto.createHash('sha256').update(data).digest('hex');
+            await upload(id, data);
+            image = { id, width, height };
+          } catch { /* Retried next cycle; meanwhile the previous picture stays. */ }
+        }
+        const key = `${runId}:${mail.key}`;
+        const entry = image ? { id: image.id, title: mail.title, ...(mail.subject ? { subject: mail.subject } : {}),
+          renderedAt: new Date(mail.renderedAt).toISOString(), render: mail.render, width: image.width, height: image.height } : shown.get(key);
+        if (image) nextMade.set(mail.sha256, image);
+        if (entry) { nextShown.set(key, entry); list.push(entry); }
+      }
+      if (list.length) result.set(runId, list);
+    }
+    made = nextMade;
+    shown = nextShown;
+    return result;
+  };
+}
+
+// Live step from Slack for running work; render previews for newsletter attempts.
+// Pictures stay after completion (refreshed once at the transition) and are never
+// backfilled for tasks that finished before this monitor saw them run.
+export async function addRunDetails(rows, { hubFetch, channelId, previews, previousTasks = [], now = Date.now() }) {
+  const previous = new Map((Array.isArray(previousTasks) ? previousTasks : []).map(row => [row?.id, row]));
+  const running = rows.filter(row => row.status === 'running' && row.run);
+  const attempts = rows.filter(row => row.run && row.workflow === 'newsletter' && (['running', 'blocked'].includes(row.status)
+    || (row.status === 'completed' && ['running', 'blocked'].includes(previous.get(row.id)?.status))));
+  const [statuses, rendered] = await Promise.all([
+    running.length ? readRunStatuses(hubFetch, channelId, running.map(row => row.run.ts)) : new Map(),
+    previews && attempts.length ? previews(attempts.map(row => ({ taskId: row.run.taskId, runId: row.run.id }))).catch(() => null) : new Map(),
+  ]);
+  for (const row of rows) {
+    const status = row.status === 'running' && statuses.get(row.run?.ts);
+    if (status) { row.progress = status.percent; row.step = status.step; }
+    const old = previous.get(row.id);
+    const list = attempts.includes(row) ? (rendered ? rendered.get(row.run.id) : old?.previews)
+      : row.status === 'completed' && old?.status === 'completed' ? old.previews : undefined;
+    const kept = Array.isArray(list) ? list.filter(entry => now - Date.parse(entry?.renderedAt) <= PREVIEW_RETENTION_MS) : [];
+    if (kept.length) row.previews = kept;
+    delete row.run;
+  }
+  return rows;
 }
 
 export function parseObservedWorkers(values) {
@@ -318,7 +464,7 @@ export function createLocalHubFetch(hub, { localHub, transport, spawnImpl = spaw
   };
 }
 
-export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, now = Date.now() }) {
+export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, now = Date.now() }) {
   validateWorkflows(workflows);
   const issues = new Map();
   const onMessage = message => {
@@ -352,6 +498,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
     ? 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.' : undefined;
   const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl });
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
+  await addRunDetails(queue, { hubFetch, channelId: config.slack.channel_id, previews, previousTasks, now });
   return { tasks: queue, workerIssues, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
     name: SOURCE_NAME, lastSuccessAt: new Date(now).toISOString(),
     detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${claims.length} Reservierungen${fleetDetail ? ` · ${fleetDetail}` : ''}`,
@@ -372,6 +519,17 @@ export async function publishSnapshot(snapshot, { relayUrl, teamId, token, fetch
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(snapshot), signal: AbortSignal.timeout(30000) });
   if (!response.ok) throw new Error(`Relay: HTTP ${response.status}; Snapshot wurde nicht bestätigt.`);
+}
+
+// Content-addressed and idempotent: the relay stores the JPEG under its SHA-256.
+export async function uploadPreview(id, data, { relayUrl, teamId, token, fetchImpl = fetch }) {
+  if (!/^[a-f0-9]{64}$/.test(id)) throw new Error('Vorschau-ID ungültig.');
+  if (typeof token !== 'string' || !token.trim()) throw new Error('MONITOR_BRIDGE_TOKEN fehlt.');
+  const url = relayEndpoint(relayUrl, teamId);
+  url.pathname = url.pathname.replace(/\/queue$/, `/fleet/previews/${id}`);
+  const response = await fetchImpl(url, { method: 'PUT', redirect: 'error',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/jpeg' }, body: data, signal: AbortSignal.timeout(30000) });
+  if (!response.ok) throw new Error(`Relay: Vorschau HTTP ${response.status}.`);
 }
 
 export async function syncOnce({ collect, publish, cachedSource, save }) {
@@ -456,6 +614,13 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const hubFetch = options.localHub ? createLocalHubFetch(config.hub, { localHub: options.localHub, transport }) : transport.createHubFetch(config.hub);
   let cached;
   try { cached = JSON.parse(await fs.readFile(options.cacheFile, 'utf8')); } catch { /* Fresh installation. */ }
+  // Render previews need the Hub's own database and sharp; a Mac bridge has neither.
+  let sharp;
+  const hubRequire = options.localHub ? createRequire(path.join(options.localHub, 'package.json')) : undefined;
+  const previews = options.localHub ? createRenderPreviews({ localHub: options.localHub,
+    openDatabase: file => new (require('node:sqlite').DatabaseSync)(file, { readOnly: true }),
+    resize: buffer => resizeRender(sharp ??= hubRequire('sharp'), buffer),
+    upload: options.dryRun ? async () => {} : (id, data) => uploadPreview(id, data, options) }) : undefined;
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
@@ -463,7 +628,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     await runSyncLoop(async () => {
       try {
         const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
-          ...(options.localHub ? { fleetReader: readLocalHubFleet } : {}) }), cachedSource: cached?.source,
+          previews, previousTasks: cached?.tasks, ...(options.localHub ? { fleetReader: readLocalHubFleet } : {}) }), cachedSource: cached?.source,
           publish: snapshot => options.dryRun ? console.log(JSON.stringify(snapshot, null, 2)) : publishSnapshot(snapshot, options),
           save: options.dryRun ? undefined : async snapshot => {
             await fs.mkdir(path.dirname(options.cacheFile), { recursive: true, mode: 0o700 });
