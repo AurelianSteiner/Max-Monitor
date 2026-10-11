@@ -87,6 +87,26 @@ struct ValidatedTeamEnrollment {
     }
 }
 
+/// Verifies an existing team connection without admitting or re-enrolling a worker.
+struct StoredTeamConnection {
+    let serverURL: String
+    let teamId: String
+    let token: String
+    let memberId: String?
+    let workerId: String?
+    let deviceId: String
+
+    func validated() throws -> ValidatedTeamEnrollment {
+        try TeamEnrollmentRequest(serverURL: serverURL, teamId: teamId, token: token,
+            memberId: memberId.flatMap { $0.isEmpty ? nil : $0 } ?? "monitor-maintenance",
+            workerId: workerId.flatMap { $0.isEmpty ? nil : $0 } ?? "monitor-maintenance",
+            deviceId: deviceId, launchAtLogin: false).validated()
+    }
+
+    func acceptsIdentity(memberId actual: String) -> Bool {
+        !actual.isEmpty && (memberId == nil || memberId?.isEmpty == true || memberId == actual)
+    }
+}
 enum TeamEnrollmentValidationError: Error, CustomStringConvertible {
     case invalidServerURL, invalidTeamId, invalidToken, invalidWorkerId, invalidMemberId, invalidDeviceId
     case deviceMismatch, existingConnection, existingWorker

@@ -310,7 +310,14 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   }
   let initialStatus = null;
   if (app && !app.legacy) {
-    try { initialStatus = await appStatus(app, true, runner); } catch { initialStatus = await appStatus(app, false, runner); }
+    try { initialStatus = await appStatus(app, true, runner); } catch {
+      try { initialStatus = await appStatus(app, false, runner); } catch (error) {
+        if (!options.updateOnly) throw error;
+        // An older/broken status CLI is inspected with the new binary before replacement.
+        app = {...app,legacy:true};
+      }
+    }
+    if (initialStatus) {
     if (!options.updateOnly && initialStatus.configured && initialStatus.role && initialStatus.role !== 'member')
       throw new Error('Dieser Monitor nutzt bereits einen Inhaber- oder Admin-Zugang. Bestehende Verbindung zuerst in der App prüfen.');
     if (options.check) {
@@ -319,10 +326,11 @@ export async function setup(options, { runner = run, workerReader = readWorker,
       return {schema:1,mode:'check',...startupSummary(initialStatus, options.launchAtLogin, null)};
     }
     // Never take over an existing owner/personal connection or another worker.
-    if (initialStatus.configured && !initialStatus.workerId)
+    if (!options.updateOnly && initialStatus.configured && !initialStatus.workerId)
       throw new Error('Dieser Monitor hat noch keine Worker-Kennung – vorhandenen Zugang prüfen.');
-    if (initialStatus.configured && initialStatus.workerId !== worker.workerId)
+    if (initialStatus.configured && (initialStatus.workerId || !options.updateOnly) && initialStatus.workerId !== worker.workerId)
       throw new Error('Dieser Monitor gehört bereits zu einer anderen Einrichtung. Verbindung zuerst in der App prüfen.');
+    }
   } else if (options.check) throw new Error('Die neue Max-Monitor-Version ist noch nicht installiert.');
   if (options.updateOnly && (!app || (!app.legacy && !initialStatus?.configured)))
     throw new Error('Kein eingerichteter Monitor vorhanden – zuerst die Worker-Einrichtung ausführen.');
@@ -363,12 +371,12 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   if (options.updateOnly && app?.legacy) {
     // Read preserved preferences/keychain with the new CLI before changing the old app.
     initialStatus = await appStatus(built, false, runner);
-    if (initialStatus.configured && !initialStatus.workerId)
+    if (!options.updateOnly && initialStatus.configured && !initialStatus.workerId)
       throw new Error('Dieser Monitor hat noch keine Worker-Kennung – vorhandenen Zugang prüfen.');
-    if (initialStatus.configured && initialStatus.workerId !== worker.workerId)
+    if (initialStatus.configured && (initialStatus.workerId || !options.updateOnly) && initialStatus.workerId !== worker.workerId)
       throw new Error('Bestehender älterer Monitor-Zugang nicht vollständig bestätigt – App bleibt erhalten.');
     initialStatus = await appStatus(built, true, runner);
-    if (initialStatus.configured !== true || initialStatus.workerId !== worker.workerId ||
+    if (initialStatus.configured !== true || (initialStatus.workerId && initialStatus.workerId !== worker.workerId) ||
         initialStatus.verified !== true || initialStatus.fleetAvailable !== true)
       throw new Error('Bestehender älterer Monitor-Zugang nicht vollständig bestätigt – App bleibt erhalten.');
   }
@@ -382,7 +390,7 @@ export async function setup(options, { runner = run, workerReader = readWorker,
     // An older app had no status command; inspect its preserved preferences only after upgrading.
     if (!options.updateOnly && identity.configured && identity.role && identity.role !== 'member')
       throw new Error('Dieser Monitor nutzt bereits einen Inhaber- oder Admin-Zugang. Bestehende Verbindung zuerst in der App prüfen.');
-    if (identity.configured && identity.workerId !== worker.workerId)
+    if (identity.configured && (identity.workerId || !options.updateOnly) && identity.workerId !== worker.workerId)
       throw new Error('Dieser Monitor gehört bereits zu einer anderen Einrichtung. Verbindung zuerst in der App prüfen.');
     if (!/^[0-9a-f-]{36}$/i.test(identity.deviceId)) throw new Error('Keine gültige Mac-Kennung verfügbar.');
     let verified;

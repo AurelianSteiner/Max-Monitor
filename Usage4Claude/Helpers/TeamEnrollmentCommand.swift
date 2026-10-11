@@ -127,19 +127,19 @@ private static func verifyStoredConnection() -> Int32 {
         let defaults = UserDefaults.standard
         guard let serverURL = defaults.string(forKey: TeamServerDefaultsKeys.serverURL),
               let teamId = defaults.string(forKey: TeamServerDefaultsKeys.teamId),
-              let memberId = defaults.string(forKey: TeamServerDefaultsKeys.memberId),
-              let workerId = FleetSettings.workerId,
               let token = KeychainManager.shared.loadTeamServerToken() else {
             result["health"] = "notConfigured"
             emit(result)
             return 65
         }
         do {
-            let enrollment = try TeamEnrollmentRequest(serverURL: serverURL, teamId: teamId, token: token,
-                memberId: memberId, workerId: workerId, deviceId: FleetSettings.deviceId(),
-                launchAtLogin: false).validated()
+            let connection = StoredTeamConnection(serverURL: serverURL, teamId: teamId, token: token,
+                memberId: defaults.string(forKey: TeamServerDefaultsKeys.memberId),
+                workerId: FleetSettings.workerId, deviceId: FleetSettings.deviceId())
+            let enrollment = try connection.validated()
             let identity = try identify(enrollment)
-            guard (identity.macWorker ?? (identity.role == "member")), identity.memberId == memberId else {
+            // A read-only/disabled Mac still needs app updates. Task admission remains server-owned.
+            guard connection.acceptsIdentity(memberId: identity.memberId) else {
                 throw EnrollmentCommandError.validationFailed
             }
             let fleet = try relayData(enrollment, path: "fleet", maximumBytes: 16 * 1024 * 1024)

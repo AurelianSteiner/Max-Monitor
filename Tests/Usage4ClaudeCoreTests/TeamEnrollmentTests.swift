@@ -86,6 +86,21 @@ final class TeamEnrollmentTests: XCTestCase {
             workerId: "macbook-5", role: "member"))
     }
 
+    func testMaintenanceVerifiesLegacyConnectionWithoutReenrollingOrChangingItsIdentity() throws {
+        for cachedMember in [nil, ""] as [String?] {
+            let connection = StoredTeamConnection(serverURL: "https://relay.example", teamId: "TEAM1234",
+                token: "opaque-member-token", memberId: cachedMember, workerId: nil, deviceId: deviceId)
+            XCTAssertNoThrow(try connection.validated())
+            XCTAssertTrue(connection.acceptsIdentity(memberId: "existing-owner"))
+            XCTAssertFalse(connection.acceptsIdentity(memberId: ""))
+            XCTAssertNil(connection.workerId)
+        }
+        let known = StoredTeamConnection(serverURL: "https://relay.example", teamId: "TEAM1234",
+            token: "opaque-member-token", memberId: "existing-viewer", workerId: "macbook-5", deviceId: deviceId)
+        XCTAssertTrue(known.acceptsIdentity(memberId: "existing-viewer"))
+        XCTAssertFalse(known.acceptsIdentity(memberId: "different-member"))
+    }
+
     func testValidationErrorsDoNotEchoTheInputCredential() {
         let secret = "a-sensitive-secret\n"
         do {

@@ -161,8 +161,11 @@ test('a legacy app without a matching verified configuration is left intact', as
   assert.equal(await f.marker(),'previous app');
   assert.ok(!f.calls.some(c => c.command === '/usr/bin/ditto'));
   f.state.status.workerId = null;
-  await assert.rejects(setup({...f.options,updateOnly:true},f.dependencies), /keine Worker-Kennung/);
-  assert.equal(await f.marker(),'previous app');
+  const result = await setup({...f.options,updateOnly:true},f.dependencies);
+  assert.equal(result.verified,true);
+  assert.equal(f.state.status.workerId,null);
+  assert.equal(await f.marker(),'new app');
+  assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll'));
 });
 
 test('only helper, relay and documentation changes can reuse a verified native app', async () => {
@@ -187,6 +190,25 @@ test('a helper update keeps the verified app running and records the checked sou
   const receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
   assert.equal(receipt.sourceRevision,REVISION); assert.equal(receipt.binarySourceRevision,before);
   assert.ok(!f.calls.some(c => c.command === '/bin/bash' || c.command === '/usr/bin/ditto'));
+});
+
+test('update-only verifies an old failing status CLI through the new binary before replacement', async t => {
+  const f = await fixture(t, {previous:true,configured:true});
+  f.state.status.workerId = null;
+  f.state.status.memberId = null;
+  f.state.status.role = 'super';
+  const before = {...f.state.status};
+  const runner = f.dependencies.runner;
+  f.dependencies.runner = async (command,args,...rest) => {
+    if (args[0] === '--enrollment-status' && command.startsWith(f.options.appPath) && await f.marker() === 'previous app')
+      throw new Error('old status command failed');
+    return runner(command,args,...rest);
+  };
+  const result = await setup({...f.options,updateOnly:true},f.dependencies);
+  assert.equal(result.verified,true);
+  assert.deepEqual(f.state.status,before);
+  assert.equal(await f.marker(),'new app');
+  assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll'));
 });
 
 test('update-only preserves an owner identity without enrollment', async t => {
