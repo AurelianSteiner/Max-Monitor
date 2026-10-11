@@ -359,15 +359,76 @@ export async function workerArtifactBundle(revision, runner = run, {
   return bundle;
 }
 
+async function updateExistingMonitor(options, {worker, app, revision, release, releaseCurrent,
+  receipt, receiptPath, runner, appReader, artifactReader, log, pause}) {
+  if (!app) throw new Error('Kein eingerichteter Monitor vorhanden – zuerst die Worker-Einrichtung ausführen.');
+  // Background maintenance must never launch the credential-reading native CLI.
+  // The running GUI owns Keychain access and reports its authenticated heartbeat.
+  const before = await storedMonitorPreferences(options.bundleId,runner);
+  if (!before.configured || (before.workerId && before.workerId !== worker.workerId))
+    throw new Error('Bestehender älterer Monitor-Zugang nicht vollständig bestätigt – App bleibt erhalten.');
+  const recorded = receipt?.binarySourceRevision || receipt?.sourceRevision;
+  const sameCode = receipt?.sourceRevision === revision || await nativeCodeUnchanged(recorded,revision,runner);
+  const sameVersion = !releaseCurrent || app.version === release.version;
+  const writeReceipt = async (binarySourceRevision, installed) => {
+    await fs.mkdir(path.dirname(receiptPath),{recursive:true,mode:0o700});
+    const safe = {schema:1,sourceRevision:revision,binarySourceRevision,appVersion:app.version,
+      appPath:options.appPath,workerId:worker.workerId,deviceId:before.deviceId,
+      serverURL:before.serverURL,teamId:before.teamId,checkedAt:new Date().toISOString(),
+      installedAt:installed ? new Date().toISOString() : receipt?.installedAt};
+    const temporary = receiptPath + '.tmp';
+    await fs.writeFile(temporary,JSON.stringify(safe,null,2)+'\n',{mode:0o600});
+    await fs.rename(temporary,receiptPath);
+  };
+  if (!options.appBundle && sameCode && sameVersion) {
+    await runner('/usr/bin/codesign',['--verify','--deep','--strict',options.appPath],{label:'App-Signatur prüfen'});
+    if (options.open) await openMonitorApp(options.appPath,options.bundleId,runner,pause);
+    await writeReceipt(recorded,false);
+    log('Max Monitor ist aktuell; Geräteberichte laufen über die laufende App.');
+    return {schema:1,mode:'existing',...before};
+  }
+  let bundle = options.appBundle;
+  const artifact = !bundle ? await artifactReader(revision,runner) : null;
+  bundle ||= artifact;
+  if (!bundle) {
+    log('Max Monitor: aktuelle App aus dem Repo bauen.');
+    await runner('/bin/bash',[path.join(ROOT,'scripts','build_without_xcode.sh')],{
+      cwd:ROOT,env:{...process.env,U4C_PRODUCT_NAME:'Max Monitor',U4C_BUNDLE_ID:options.bundleId,U4C_APPCAST_URL:''},
+      timeout:15*60000,inherit:true,label:'Max Monitor bauen'});
+    bundle = path.join(ROOT,'build','no-xcode','Max Monitor.app');
+  }
+  const built = await appReader(bundle,runner,options.bundleId);
+  if (!built) throw new Error('App-Version: Die aktuelle Monitor-App ist ungültig.');
+  if (artifact && releaseCurrent && built.version !== release.version)
+    throw new Error('App-Version: Die Monitor-Release-Version stimmt nicht.');
+  const original = await runningMonitorApps(options.bundleId,runner);
+  let install;
+  try {
+    await stopMonitorApps(options.bundleId,runner,pause,original);
+    install = await installBundle(bundle,options.appPath,runner);
+    app = await appReader(options.appPath,runner,options.bundleId);
+    if (!app || app.version !== built.version) throw new Error('App-Version: Installierte Monitor-App stimmt nicht.');
+    const after = await storedMonitorPreferences(options.bundleId,runner);
+    if (['deviceId','serverURL','teamId','workerId','memberId','role'].some(key => after[key] !== before[key]))
+      throw new Error('Bestehender älterer Monitor-Zugang nach dem Update nicht vollständig bestätigt.');
+    if (options.open) await openMonitorApp(options.appPath,options.bundleId,runner,pause);
+    await writeReceipt(artifact && releaseCurrent ? release.sourceRevision : revision,true);
+    await install.finish().catch(()=>{});
+    log('Max Monitor aktualisiert; Geräteberichte laufen über die laufende App.');
+    return {schema:1,mode:'installed',...after};
+  } catch (error) {
+    if (install) await stopMonitorApps(options.bundleId,runner,pause);
+    await install?.rollback();
+    await restoreMonitorApps(original,options.bundleId,runner);
+    throw error;
+  }
+}
+
 export async function setup(options, { runner = run, workerReader = readWorker,
   appReader = appInformation, artifactReader = workerArtifactBundle, manifestReader = workerArtifactManifest,
   platform = process.platform, log = console.log, pause = delay,
   receiptPath = path.join(os.homedir(), 'Library', 'Application Support',
     options.bundleId && options.bundleId !== BUNDLE_ID ? options.bundleId : 'Max Monitor', 'Worker Setup', 'installation.json') } = {}) {
-  if (options.updateOnly) {
-    log('Automatische CLI-Verbindungsprüfungen sind pausiert; der laufende Monitor meldet weiter.');
-    return {schema:1,mode:'paused'};
-  }
   if (platform !== 'darwin' && !options.dryRun) throw new Error('Max Monitor benötigt macOS.');
   const worker = await workerReader(options);
   if (options.dryRun) return {schema:1,mode:'dry-run',workerId:worker.workerId,
@@ -388,6 +449,8 @@ export async function setup(options, { runner = run, workerReader = readWorker,
       if (found) { options = {...options, appPath:candidate}; app = found; break; }
     }
   }
+  if (options.updateOnly) return updateExistingMonitor(options,{worker,app,revision,release,releaseCurrent,
+    receipt,receiptPath,runner,appReader,artifactReader,log,pause});
   let initialStatus = null;
   if (app && !app.legacy) {
     try { initialStatus = await appStatus(app, true, runner); } catch {

@@ -141,7 +141,7 @@ test('background monitor reads the exact registered worker profile instead of as
   }
 });
 
-test('update-only preserves legacy preferences and verifies credentials at the installed path', async t => {
+test('background upgrades and minute checks preserve preferences without any Keychain CLI', async t => {
   const f = await fixture(t, {previous:true, configured:true});
   f.state.status.role = 'super'; f.state.status.memberId = 'team-owner';
   const read = f.dependencies.appReader;
@@ -155,10 +155,14 @@ test('update-only preserves legacy preferences and verifies credentials at the i
   const copy = f.calls.findIndex(c => c.command === '/usr/bin/ditto');
   const status = f.calls.findIndex(c => c.args[0] === '--enrollment-status');
   const preferences = f.calls.findIndex(c => c.command === '/usr/bin/defaults');
-  assert.ok(preferences >= 0 && preferences < copy && status > copy);
-  assert.equal(f.calls[status].timeout, 180000);
-  assert.equal(f.calls[status].command, path.join(f.options.appPath,'Contents/MacOS/Usage4Claude'));
-  assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll'));
+  assert.ok(preferences >= 0 && preferences < copy);
+  assert.equal(status,-1);
+  assert.equal(result.verified,undefined);
+  const copies = f.calls.filter(c => c.command === '/usr/bin/ditto').length;
+  const repeated = await setup({...f.options,appBundle:null,updateOnly:true},f.dependencies);
+  assert.equal(repeated.mode,'existing');
+  assert.equal(f.calls.filter(c => c.command === '/usr/bin/ditto').length,copies);
+  assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll' || c.args[0] === '--enrollment-status'));
 });
 
 test('a legacy app without a matching verified configuration is left intact', async t => {
@@ -173,7 +177,7 @@ test('a legacy app without a matching verified configuration is left intact', as
   assert.ok(!f.calls.some(c => c.command === '/usr/bin/ditto'));
   f.state.status.workerId = null;
   const result = await setup({...f.options,updateOnly:true},f.dependencies);
-  assert.equal(result.verified,true);
+  assert.equal(result.verified,undefined);
   assert.equal(f.state.status.workerId,null);
   assert.equal(await f.marker(),'new app');
   assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll'));
@@ -261,7 +265,7 @@ test('a helper update keeps the verified app running and records the checked sou
   assert.ok(!f.calls.some(c => c.command === '/bin/bash' || c.command === '/usr/bin/ditto'));
 });
 
-test('update-only repairs an old failing status CLI while preserving its settings', async t => {
+test('update-only never invokes an old failing status CLI and preserves its settings', async t => {
   const f = await fixture(t, {previous:true,configured:true});
   f.state.status.workerId = null;
   f.state.status.memberId = null;
@@ -274,8 +278,9 @@ test('update-only repairs an old failing status CLI while preserving its setting
     return runner(command,args,...rest);
   };
   const result = await setup({...f.options,updateOnly:true},f.dependencies);
-  assert.equal(result.verified,true);
+  assert.equal(result.verified,undefined);
   assert.deepEqual(f.state.status,before);
+  assert.ok(!f.calls.some(c => c.args[0] === '--enrollment-status'));
   assert.equal(await f.marker(),'new app');
   assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll'));
 });
@@ -293,12 +298,17 @@ test('update-only preserves an owner identity without enrollment', async t => {
   assert.equal(f.state.runningApps.length, 1);
 });
 
-test('update-only refuses an unconfigured monitor and rolls back failed verification', async t => {
+test('update-only refuses an unconfigured monitor and rolls back changed preferences', async t => {
   const empty = await fixture(t);
   await assert.rejects(setup({ ...empty.options, updateOnly: true }, empty.dependencies), /Kein eingerichteter Monitor/);
   assert.ok(!empty.calls.some(call => call.command === '/usr/bin/ditto'));
   const f = await fixture(t, { previous: true, configured: true });
-  f.state.fleetFailure = true;
+  const runner = f.dependencies.runner;
+  f.dependencies.runner = async (command,args,...rest) => {
+    if (command === '/usr/bin/defaults' && args.at(-1) === 'teamServerMemberId' && await f.marker() === 'new app')
+      return 'different-member\n';
+    return runner(command,args,...rest);
+  };
   await assert.rejects(setup({ ...f.options, updateOnly: true }, f.dependencies), /nicht vollständig bestätigt/);
   assert.equal(await f.marker(), 'previous app');
   assert.ok(!f.calls.some(call => call.args[0] === '--enroll'));
