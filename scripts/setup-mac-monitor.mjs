@@ -318,6 +318,8 @@ export async function setup(options, { runner = run, workerReader = readWorker,
       return {schema:1,mode:'check',...startupSummary(initialStatus, options.launchAtLogin, null)};
     }
     // Never take over an existing owner/personal connection or another worker.
+    if (initialStatus.configured && !initialStatus.workerId)
+      throw new Error('Dieser Monitor hat noch keine Worker-Kennung – vorhandenen Zugang prüfen.');
     if (initialStatus.configured && initialStatus.workerId !== worker.workerId)
       throw new Error('Dieser Monitor gehört bereits zu einer anderen Einrichtung. Verbindung zuerst in der App prüfen.');
   } else if (options.check) throw new Error('Die neue Max-Monitor-Version ist noch nicht installiert.');
@@ -359,6 +361,11 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   if (!built) throw new Error('Die App unterstützt die automatische Worker-Einrichtung noch nicht.');
   if (options.updateOnly && app?.legacy) {
     // Read preserved preferences/keychain with the new CLI before changing the old app.
+    initialStatus = await appStatus(built, false, runner);
+    if (initialStatus.configured && !initialStatus.workerId)
+      throw new Error('Dieser Monitor hat noch keine Worker-Kennung – vorhandenen Zugang prüfen.');
+    if (initialStatus.configured && initialStatus.workerId !== worker.workerId)
+      throw new Error('Bestehender älterer Monitor-Zugang nicht vollständig bestätigt – App bleibt erhalten.');
     initialStatus = await appStatus(built, true, runner);
     if (initialStatus.configured !== true || initialStatus.workerId !== worker.workerId ||
         initialStatus.verified !== true || initialStatus.fleetAvailable !== true)

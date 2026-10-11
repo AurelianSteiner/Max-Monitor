@@ -143,6 +143,9 @@ test('a legacy app without a matching verified configuration is left intact', as
   await assert.rejects(setup({...f.options,updateOnly:true},f.dependencies), /älterer Monitor-Zugang/);
   assert.equal(await f.marker(),'previous app');
   assert.ok(!f.calls.some(c => c.command === '/usr/bin/ditto'));
+  f.state.status.workerId = null;
+  await assert.rejects(setup({...f.options,updateOnly:true},f.dependencies), /keine Worker-Kennung/);
+  assert.equal(await f.marker(),'previous app');
 });
 
 test('only helper, relay and documentation changes can reuse a verified native app', async () => {
