@@ -373,7 +373,7 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   // Background maintenance must never launch the credential-reading native CLI.
   // The running GUI owns Keychain access and reports its authenticated heartbeat.
   const before = await storedMonitorPreferences(options.bundleId,runner);
-  if (!before.configured || (before.workerId && before.workerId !== worker.workerId))
+  if (!before.configured)
     throw new Error('Bestehender älterer Monitor-Zugang nicht vollständig bestätigt – App bleibt erhalten.');
   const recorded = receipt?.binarySourceRevision || receipt?.sourceRevision;
   const sameCode = receipt?.sourceRevision === revision || await nativeCodeUnchanged(recorded,revision,runner);
@@ -381,7 +381,7 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   const writeReceipt = async (binarySourceRevision, installed) => {
     await fs.mkdir(path.dirname(receiptPath),{recursive:true,mode:0o700});
     const safe = {schema:1,maintenanceVersion:1,sourceRevision:revision,binarySourceRevision,appVersion:app.version,
-      appPath:options.appPath,workerId:worker.workerId,deviceId:before.deviceId,
+      appPath:options.appPath,workerId:before.workerId || worker.workerId,deviceId:before.deviceId,
       serverURL:before.serverURL,teamId:before.teamId,checkedAt:new Date().toISOString(),
       installedAt:installed ? new Date().toISOString() : receipt?.installedAt};
     const temporary = receiptPath + '.tmp';

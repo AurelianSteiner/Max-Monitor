@@ -165,16 +165,18 @@ test('background upgrades and minute checks preserve preferences without any Key
   assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll' || c.args[0] === '--enrollment-status'));
 });
 
-test('a legacy app without a matching verified configuration is left intact', async t => {
+test('background code upgrades preserve a separate native worker binding without enrollment', async t => {
   const f = await fixture(t,{previous:true,configured:true});
   const read = f.dependencies.appReader;
   f.dependencies.appReader = async (appPath,...args) => {
     const app = await read(appPath,...args); return app && appPath === f.options.appPath ? {...app,legacy:true} : app;
   };
   f.state.status.workerId = 'another-mac';
-  await assert.rejects(setup({...f.options,updateOnly:true},f.dependencies), /älterer Monitor-Zugang/);
-  assert.equal(await f.marker(),'previous app');
-  assert.ok(!f.calls.some(c => c.command === '/usr/bin/ditto'));
+  const initial = {...f.state.status};
+  const other = await setup({...f.options,updateOnly:true},f.dependencies);
+  assert.equal(other.workerId,'another-mac');
+  assert.deepEqual(f.state.status,initial);
+  assert.equal(await f.marker(),'new app');
   f.state.status.workerId = null;
   const result = await setup({...f.options,updateOnly:true},f.dependencies);
   assert.equal(result.verified,undefined);
