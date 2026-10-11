@@ -92,6 +92,11 @@ test("MacWorker is independent of access roles and survives reconnects", async (
     assert.equal((await call("/members/team-owner", "DELETE")).status, 403);
     assert.equal((await call("/members/team-owner", "PATCH", { role: "guest" })).status, 409);
     assert.equal((await call("/members/team-owner", "PATCH", { macWorker: false }, admin.token)).status, 403);
+    // The enrolled Mac row still governs visibility after owner takeover.
+    await call(`/members/${previous.id}`, "PATCH", { macWorker: false });
+    assert.ok(!(await call("/fleet")).body.machines.some(mac => mac.workerId === "owner-main"));
+    await call(`/members/${previous.id}`, "PATCH", { macWorker: true });
+    assert.ok((await call("/fleet")).body.machines.some(mac => mac.workerId === "owner-main"));
     // Removing the superseded member must not tombstone the owner's resumed Mac.
     assert.equal((await call(`/members/${previous.id}`, "DELETE")).status, 200);
     assert.equal((await call("/heartbeat", "POST", heartbeat(4, "owner-main"))).status, 200);

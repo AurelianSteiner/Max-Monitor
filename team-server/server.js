@@ -386,11 +386,18 @@ function readReports(teamId) {
 
 // Only enabled MacWorkers participate. Access roles remain independent.
 function visibleFleet(teamId, who) {
-  const members = reportingMembers(teamId);
+  const identities = [ownerIdentity(teamId), ...readMembers(teamId)];
+  const members = identities.filter(isMacWorker);
   const memberIds = new Set(members.map((member) => member.id));
   const enrolledWorkers = new Map(members.filter((member) => member.enrollment).map((member) => [member.enrollment.workerId, member]));
+  // A Mac can report as the owner or another enabled identity. Its own enrolled
+  // row still controls visibility, just as it controls admission to new work.
+  const disabledEnrollments = identities.filter((member) => member.enrollment && !isMacWorker(member)).map((member) => member.enrollment);
+  const disabledWorkers = new Set(disabledEnrollments.map((enrollment) => enrollment.workerId).filter(Boolean));
+  const disabledDevices = new Set(disabledEnrollments.map((enrollment) => enrollment.deviceId).filter(Boolean));
   const snapshot = fleet.snapshot(teamId);
   const machines = snapshot.machines.flatMap((machine) => {
+    if (disabledWorkers.has(machine.workerId) || disabledDevices.has(machine.deviceId)) return [];
     if (machine.telemetrySource !== "worker") return memberIds.has(machine.memberId) ? [machine] : [];
     const member = enrolledWorkers.get(machine.workerId);
     return member ? [{ ...machine, memberId: member.id }] : [];
