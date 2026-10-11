@@ -218,7 +218,7 @@ export async function stopMonitorApps(bundleId, runner = run, pause = delay, kno
     if (!(await runningMonitorApps(bundleId, runner)).length) return original;
     await pause(250);
   }
-  throw new Error('Monitor ist noch geöffnet. App schließen und Setup erneut ausführen.');
+  throw new Error('Laufende Monitor-App lässt sich nicht schließen. App schließen und Setup erneut ausführen.');
 }
 
 export async function openMonitorApp(appPath, bundleId, runner = run, pause = delay) {
@@ -234,7 +234,7 @@ export async function openMonitorApp(appPath, bundleId, runner = run, pause = de
     if (launched.length === 1 && isIntended(launched[0])) return launched[0];
     await pause(250);
   }
-  throw new Error('Die neu installierte Monitor-App läuft noch nicht. App öffnen und Setup erneut prüfen.');
+  throw new Error('Laufende Monitor-App: Die neu installierte App läuft noch nicht. App öffnen und Setup erneut prüfen.');
 }
 
 async function restoreMonitorApps(original, bundleId, runner) {
@@ -303,18 +303,18 @@ export async function storedMonitorPreferences(bundleId, runner = run) {
 export async function workerArtifactManifest(manifestPath = path.join(ROOT,'releases','worker-native.json')) {
   let manifest;
   try { manifest = JSON.parse(await fs.readFile(manifestPath,'utf8')); }
-  catch (error) { if (error.code === 'ENOENT') return null; throw new Error('Monitor-Release ist ungültig.'); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw new Error('App-Version: Monitor-Release ist ungültig.'); }
   if (manifest.schema !== 1 || !/^\d+\.\d+(?:\.\d+)?$/.test(manifest.version || '') ||
       !/^[a-f0-9]{40}$/.test(manifest.sourceRevision || '') ||
       !/^[a-f0-9]{64}$/.test(manifest.sha256 || '') ||
       manifest.tag !== 'worker-native-' + manifest.sourceRevision.slice(0,12) ||
-      manifest.asset !== 'Max-Monitor-worker.zip') throw new Error('Monitor-Release ist ungültig.');
+      manifest.asset !== 'Max-Monitor-worker.zip') throw new Error('App-Version: Monitor-Release ist ungültig.');
   return manifest;
 }
 
 async function artifactMatchesSource(manifest, revision, runner) {
   if (await nativeCodeUnchanged(manifest.sourceRevision,revision,runner)) return true;
-  await runner('git',['-C',ROOT,'fetch','--quiet','origin',manifest.sourceRevision],{label:'Monitor-Release-Stand prüfen'});
+  await runner('git',['-C',ROOT,'fetch','--quiet','origin',manifest.sourceRevision],{label:'Repo-Update: Monitor-Release-Stand prüfen'});
   return nativeCodeUnchanged(manifest.sourceRevision,revision,runner);
 }
 
@@ -333,16 +333,16 @@ export async function workerArtifactBundle(revision, runner = run, {
     const staging = await fs.mkdtemp(path.join(cacheRoot,'download-'));
     try {
       await runner('gh',['release','download',manifest.tag,'--repo','AurelianSteiner/Max-Monitor',
-        '--pattern',manifest.asset,'--dir',staging],{label:'Monitor-Release laden',timeout:180000});
+        '--pattern',manifest.asset,'--dir',staging],{label:'Repo-Download: Monitor-Release laden',timeout:180000});
       const archive = path.join(staging,manifest.asset);
       const size = (await fs.stat(archive)).size;
       if (size > 64*1024*1024 || createHash('sha256').update(await fs.readFile(archive)).digest('hex') !== manifest.sha256)
-        throw new Error('Monitor-Release-Prüfsumme stimmt nicht.');
+        throw new Error('App-Signatur: Monitor-Release-Prüfsumme stimmt nicht.');
       await fs.rename(staging,cache);
     } finally { await fs.rm(staging,{recursive:true,force:true}); }
   }
   if (createHash('sha256').update(await fs.readFile(zip)).digest('hex') !== manifest.sha256)
-    throw new Error('Monitor-Release-Prüfsumme stimmt nicht.');
+    throw new Error('App-Signatur: Monitor-Release-Prüfsumme stimmt nicht.');
   // Materialize the verified archive again; a changed extracted cache is never trusted.
   await fs.rm(bundle,{recursive:true,force:true});
   await runner('/usr/bin/ditto',['-x','-k',zip,cache],{label:'Monitor-Release entpacken'});
@@ -353,7 +353,7 @@ export async function workerArtifactBundle(revision, runner = run, {
   const local = identities.match(/\b([A-F0-9]{40}) "Claude Max Monitor Signing"/i);
   if (local) {
     await runner('/usr/bin/codesign',['--force','--deep','--sign',local[1],'--timestamp=none',
-      '--preserve-metadata=entitlements,flags,runtime',bundle],{label:'App mit vorhandener Mac-Signatur versehen'});
+      '--preserve-metadata=entitlements,flags,runtime',bundle],{label:'App-Signatur mit vorhandener Mac-Identität versehen'});
     await runner('/usr/bin/codesign',['--verify','--deep','--strict',bundle],{label:'App-Signatur prüfen'});
   }
   return bundle;
@@ -447,7 +447,7 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   }
   const built = await appReader(bundle, runner, options.bundleId);
   if (!built) throw new Error('Die App unterstützt die automatische Worker-Einrichtung noch nicht.');
-  if (artifact && built.version !== release.version) throw new Error('Die Monitor-Release-Version stimmt nicht.');
+  if (artifact && built.version !== release.version) throw new Error('App-Version: Die Monitor-Release-Version stimmt nicht.');
   if (options.updateOnly && app?.legacy) {
     // Only non-secret preferences are read before replacement. Source-path binaries
     // have a different Keychain access context from the registered installed app.
@@ -475,7 +475,7 @@ export async function setup(options, { runner = run, workerReader = readWorker,
       const keys = ['deviceId','serverURL','teamId','workerId','memberId','role'];
       if (verified.configured !== true || verified.verified !== true || verified.fleetAvailable !== true ||
           keys.some(key => verified[key] !== initialStatus[key]))
-        throw new Error('Bestehender Monitor-Zugang nach dem Update nicht vollständig bestätigt.');
+        throw new Error('Bestehender älterer Monitor-Zugang nach dem Update nicht vollständig bestätigt.');
     } else {
     const request = {workerId:worker.workerId,deviceId:identity.deviceId,name:os.hostname()};
     const enrollment = validateEnrollment(parseJson(await runner('ssh', hubArguments(worker,options), {
@@ -515,7 +515,7 @@ export async function setup(options, { runner = run, workerReader = readWorker,
     if (install) {
       // Never remove a bundle while its newly launched process still runs.
       try { await stopMonitorApps(options.bundleId, runner, pause); }
-      catch { throw new Error('Monitor ist noch geöffnet. Installation wurde beibehalten; App schließen und Setup erneut ausführen.'); }
+      catch { throw new Error('Laufende Monitor-App lässt sich nicht schließen. Installation wurde beibehalten; App schließen und Setup erneut ausführen.'); }
     }
     await install?.rollback();
     await restoreMonitorApps(stoppedApps, options.bundleId, runner);
