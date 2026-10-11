@@ -145,9 +145,9 @@ export async function appInformation(appPath, runner = run, expectedBundleId = B
   return { executable: path.join(appPath, 'Contents', 'MacOS', info.CFBundleExecutable), ...(legacy ? {legacy:true} : {}) };
 }
 
-export async function appStatus(app, verify = false, runner = run) {
+export async function appStatus(app, verify = false, runner = run, timeout = 45000) {
   const value = parseJson(await runner(app.executable, ['--enrollment-status', ...(verify ? ['--verify'] : [])],
-    {label: verify ? 'Monitor-Verbindung prüfen' : 'Mac-Kennung lesen', timeout:180000}), 'Monitor-Status');
+    {label: verify ? 'Monitor-Verbindung prüfen' : 'Mac-Kennung lesen', timeout}), 'Monitor-Status');
   const safe = {};
   for (const key of ['schema','deviceId','bundleId','configured','serverURL','teamId','workerId','memberId','role','launchAtLoginStatus','verified','fleetAvailable'])
     if (value[key] !== undefined) safe[key] = value[key];
@@ -445,7 +445,7 @@ export async function setup(options, { runner = run, workerReader = readWorker,
     await stopMonitorApps(options.bundleId, runner, pause, stoppedApps);
     install = await installBundle(bundle, options.appPath, runner);
     app = await appReader(options.appPath, runner, options.bundleId);
-    const identity = await appStatus(app, false, runner);
+    const identity = await appStatus(app, false, runner, 180000);
     // An older app had no status command; inspect its preserved preferences only after upgrading.
     if (!options.updateOnly && identity.configured && identity.role && identity.role !== 'member')
       throw new Error('Dieser Monitor nutzt bereits einen Inhaber- oder Admin-Zugang. Bestehende Verbindung zuerst in der App prüfen.');
@@ -454,7 +454,7 @@ export async function setup(options, { runner = run, workerReader = readWorker,
     if (!/^[0-9a-f-]{36}$/i.test(identity.deviceId)) throw new Error('Keine gültige Mac-Kennung verfügbar.');
     let verified;
     if (options.updateOnly) {
-      verified = await appStatus(app, true, runner);
+      verified = await appStatus(app, true, runner, 180000);
       const keys = ['deviceId','serverURL','teamId','workerId','memberId','role'];
       if (verified.configured !== true || verified.verified !== true || verified.fleetAvailable !== true ||
           keys.some(key => verified[key] !== initialStatus[key]))

@@ -52,7 +52,7 @@ async function fixture(t, { previous = false, configured = false } = {}) {
     return { executable: path.join(appPath, 'Contents', 'MacOS', 'Usage4Claude') };
   };
   const runner = async (command, args, options = {}) => {
-    calls.push({ command, args: [...args], input: options.input, inherit: options.inherit });
+    calls.push({ command, args: [...args], input: options.input, inherit: options.inherit, timeout: options.timeout });
     if (command === 'git') return `${state.revision}\n`;
     if (command === 'ssh') {
       if (args.at(-1).endsWith('--check')) return JSON.stringify(state.preflight);
@@ -154,6 +154,7 @@ test('update-only preserves legacy preferences and verifies credentials at the i
   const status = f.calls.findIndex(c => c.args[0] === '--enrollment-status');
   const preferences = f.calls.findIndex(c => c.command === '/usr/bin/defaults');
   assert.ok(preferences >= 0 && preferences < copy && status > copy);
+  assert.equal(f.calls[status].timeout, 180000);
   assert.equal(f.calls[status].command, path.join(f.options.appPath,'Contents/MacOS/Usage4Claude'));
   assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll'));
 });
