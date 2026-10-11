@@ -67,8 +67,8 @@ async function fixture(t, { previous = false, configured = false } = {}) {
       assert.deepEqual(args.slice(0, 3), ['-l', 'JavaScript', '-e']);
       const mode = args.at(-2), bundleId = args.at(-1);
       assert.equal(bundleId, BUNDLE_ID);
-      if (mode === 'terminate') {
-        if (!state.terminationRefused) state.runningApps = state.runningApps.filter(app => app.bundleId !== bundleId);
+      if (mode === 'terminate' || mode === 'forceTerminate') {
+        if (mode === 'forceTerminate' || !state.terminationRefused) state.runningApps = state.runningApps.filter(app => app.bundleId !== bundleId);
       } else assert.equal(mode, 'inventory');
       return JSON.stringify(state.runningApps);
     }
@@ -255,6 +255,8 @@ test('a helper update keeps the verified app running and records the checked sou
   const f = await fixture(t,{previous:true,configured:true});
   const before = 'a'.repeat(40); await f.writeReceipt(before);
   const old = f.runningApp();
+  const unrelated = f.runningApp(path.join(f.directory,'Private Preview.app'),'de.rs.private-preview');
+  f.state.terminationRefused = true;
   const runner = f.dependencies.runner;
   f.dependencies.runner = async (command,args,...rest) => command === 'git' && args.includes('diff')
     ? 'scripts/setup-mac-monitor.mjs\n' : runner(command,args,...rest);
@@ -264,10 +266,13 @@ test('a helper update keeps the verified app running and records the checked sou
   const receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
   assert.equal(receipt.sourceRevision,REVISION); assert.equal(receipt.binarySourceRevision,before);
   assert.equal(receipt.maintenanceVersion,1);
-  assert.notEqual(f.state.runningApps[0].pid,old.pid);
-  const resident = f.state.runningApps[0].pid;
+  assert.deepEqual(f.state.runningApps.find(app => app.pid === unrelated.pid),unrelated);
+  assert.ok(f.calls.some(c => c.args.at(-2) === 'forceTerminate'));
+  const active = f.state.runningApps.find(app => app.bundleId === BUNDLE_ID);
+  assert.notEqual(active.pid,old.pid);
+  const resident = active.pid;
   await setup({...f.options,appBundle:undefined,updateOnly:true},f.dependencies);
-  assert.equal(f.state.runningApps[0].pid,resident);
+  assert.equal(f.state.runningApps.find(app => app.bundleId === BUNDLE_ID).pid,resident);
   assert.ok(!f.calls.some(c => c.command === '/bin/bash' || c.command === '/usr/bin/ditto' || c.args[0] === '--enrollment-status'));
 });
 

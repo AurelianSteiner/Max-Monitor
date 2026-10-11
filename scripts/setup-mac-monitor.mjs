@@ -183,7 +183,7 @@ async function sourceRevision(runner) {
 const APP_PROCESS_SCRIPT = `ObjC.import('AppKit');
 function run(argv) {
   var action = argv[0], bundleId = argv[1];
-  if (action !== 'inventory' && action !== 'terminate') throw new Error('Invalid process action');
+  if (!['inventory','terminate','forceTerminate'].includes(action)) throw new Error('Invalid process action');
   var apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(bundleId);
   var result = [];
   for (var i = 0; i < apps.count; i++) {
@@ -191,6 +191,7 @@ function run(argv) {
     var value = {pid:Number(app.processIdentifier), bundleId:ObjC.unwrap(app.bundleIdentifier),
       bundlePath:ObjC.unwrap(app.bundleURL.path), executablePath:ObjC.unwrap(app.executableURL.path)};
     if (action === 'terminate') value.terminationRequested = Boolean(app.terminate);
+    if (action === 'forceTerminate') value.terminationRequested = Boolean(app.forceTerminate);
     result.push(value);
   }
   return JSON.stringify(result);
@@ -210,13 +211,20 @@ export async function runningMonitorApps(bundleId, runner = run, action = 'inven
   return matches;
 }
 
-export async function stopMonitorApps(bundleId, runner = run, pause = delay, knownApps) {
+export async function stopMonitorApps(bundleId, runner = run, pause = delay, knownApps, recoverHung = false) {
   const original = knownApps || await runningMonitorApps(bundleId, runner);
   if (!original.length) return [];
   await runningMonitorApps(bundleId, runner, 'terminate');
   for (let attempt = 0; attempt < 20; attempt++) {
     if (!(await runningMonitorApps(bundleId, runner)).length) return original;
     await pause(250);
+  }
+  if (recoverHung) {
+    await runningMonitorApps(bundleId,runner,'forceTerminate');
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (!(await runningMonitorApps(bundleId,runner)).length) return original;
+      await pause(250);
+    }
   }
   throw new Error('Laufende Monitor-App lässt sich nicht schließen. App schließen und Setup erneut ausführen.');
 }
@@ -385,7 +393,7 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
     if (options.open) {
       // One migration restart clears GUI processes left waiting by the old CLI probes.
       // Subsequent minute checks keep the resident credential owner running.
-      if (receipt?.maintenanceVersion !== 1) await stopMonitorApps(options.bundleId,runner,pause);
+      if (receipt?.maintenanceVersion !== 1) await stopMonitorApps(options.bundleId,runner,pause,undefined,true);
       await openMonitorApp(options.appPath,options.bundleId,runner,pause);
     }
     await writeReceipt(recorded,false);
@@ -409,7 +417,7 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   const original = await runningMonitorApps(options.bundleId,runner);
   let install;
   try {
-    await stopMonitorApps(options.bundleId,runner,pause,original);
+    await stopMonitorApps(options.bundleId,runner,pause,original,true);
     install = await installBundle(bundle,options.appPath,runner);
     app = await appReader(options.appPath,runner,options.bundleId);
     if (!app || app.version !== built.version) throw new Error('App-Version: Installierte Monitor-App stimmt nicht.');
