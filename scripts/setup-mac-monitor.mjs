@@ -373,8 +373,8 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   // Background maintenance must never launch the credential-reading native CLI.
   // The running GUI owns Keychain access and reports its authenticated heartbeat.
   const before = await storedMonitorPreferences(options.bundleId,runner);
-  if (!before.configured)
-    throw new Error('Bestehender älterer Monitor-Zugang nicht vollständig bestätigt – App bleibt erhalten.');
+  // Updating an existing bundle does not require an account or change its binding.
+  // Missing cached preferences must not disable future native code updates.
   const recorded = receipt?.binarySourceRevision || receipt?.sourceRevision;
   const sameCode = receipt?.sourceRevision === revision || await nativeCodeUnchanged(recorded,revision,runner);
   const sameVersion = !releaseCurrent || app.version === release.version;
@@ -397,7 +397,7 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
       await openMonitorApp(options.appPath,options.bundleId,runner,pause);
     }
     await writeReceipt(recorded,false);
-    log('Max Monitor ist aktuell; Geräteberichte laufen über die laufende App.');
+    log('Max Monitor ist aktuell; die vorhandenen Einstellungen bleiben erhalten.');
     return {schema:1,mode:'existing',...before};
   }
   let bundle = options.appBundle;
@@ -427,7 +427,7 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
     if (options.open) await openMonitorApp(options.appPath,options.bundleId,runner,pause);
     await writeReceipt(artifact && releaseCurrent ? release.sourceRevision : revision,true);
     await install.finish().catch(()=>{});
-    log('Max Monitor aktualisiert; Geräteberichte laufen über die laufende App.');
+    log('Max Monitor aktualisiert; die vorhandenen Einstellungen bleiben erhalten.');
     return {schema:1,mode:'installed',...after};
   } catch (error) {
     if (install) await stopMonitorApps(options.bundleId,runner,pause);

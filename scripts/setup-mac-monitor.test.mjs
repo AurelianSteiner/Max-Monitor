@@ -327,6 +327,18 @@ test('update-only refuses an unconfigured monitor and rolls back changed prefere
   assert.ok(!f.calls.some(call => call.args[0] === '--enroll'));
 });
 
+test('an existing app with missing cached preferences still updates without creating an account', async t => {
+  const f = await fixture(t,{previous:true});
+  const before = {...f.state.status};
+  const result = await setup({...f.options,updateOnly:true},f.dependencies);
+  assert.equal(result.mode,'installed');
+  assert.equal(result.configured,false);
+  assert.equal(result.verified,undefined);
+  assert.deepEqual(f.state.status,before);
+  assert.equal(await f.marker(),'new app');
+  assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll' || c.args[0] === '--enrollment-status'));
+});
+
 test('first installation passes one member token only through native stdin and writes a private safe receipt', async t => {
   const f = await fixture(t);
   const result = await setup(f.options, f.dependencies);
