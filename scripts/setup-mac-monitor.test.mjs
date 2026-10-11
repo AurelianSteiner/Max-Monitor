@@ -254,6 +254,7 @@ test('only helper, relay and documentation changes can reuse a verified native a
 test('a helper update keeps the verified app running and records the checked source without rebuilding', async t => {
   const f = await fixture(t,{previous:true,configured:true});
   const before = 'a'.repeat(40); await f.writeReceipt(before);
+  const old = f.runningApp();
   const runner = f.dependencies.runner;
   f.dependencies.runner = async (command,args,...rest) => command === 'git' && args.includes('diff')
     ? 'scripts/setup-mac-monitor.mjs\n' : runner(command,args,...rest);
@@ -262,7 +263,12 @@ test('a helper update keeps the verified app running and records the checked sou
   assert.equal(await f.marker(),'previous app');
   const receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
   assert.equal(receipt.sourceRevision,REVISION); assert.equal(receipt.binarySourceRevision,before);
-  assert.ok(!f.calls.some(c => c.command === '/bin/bash' || c.command === '/usr/bin/ditto'));
+  assert.equal(receipt.maintenanceVersion,1);
+  assert.notEqual(f.state.runningApps[0].pid,old.pid);
+  const resident = f.state.runningApps[0].pid;
+  await setup({...f.options,appBundle:undefined,updateOnly:true},f.dependencies);
+  assert.equal(f.state.runningApps[0].pid,resident);
+  assert.ok(!f.calls.some(c => c.command === '/bin/bash' || c.command === '/usr/bin/ditto' || c.args[0] === '--enrollment-status'));
 });
 
 test('update-only never invokes an old failing status CLI and preserves its settings', async t => {

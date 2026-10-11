@@ -372,7 +372,7 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   const sameVersion = !releaseCurrent || app.version === release.version;
   const writeReceipt = async (binarySourceRevision, installed) => {
     await fs.mkdir(path.dirname(receiptPath),{recursive:true,mode:0o700});
-    const safe = {schema:1,sourceRevision:revision,binarySourceRevision,appVersion:app.version,
+    const safe = {schema:1,maintenanceVersion:1,sourceRevision:revision,binarySourceRevision,appVersion:app.version,
       appPath:options.appPath,workerId:worker.workerId,deviceId:before.deviceId,
       serverURL:before.serverURL,teamId:before.teamId,checkedAt:new Date().toISOString(),
       installedAt:installed ? new Date().toISOString() : receipt?.installedAt};
@@ -382,7 +382,12 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   };
   if (!options.appBundle && sameCode && sameVersion) {
     await runner('/usr/bin/codesign',['--verify','--deep','--strict',options.appPath],{label:'App-Signatur prüfen'});
-    if (options.open) await openMonitorApp(options.appPath,options.bundleId,runner,pause);
+    if (options.open) {
+      // One migration restart clears GUI processes left waiting by the old CLI probes.
+      // Subsequent minute checks keep the resident credential owner running.
+      if (receipt?.maintenanceVersion !== 1) await stopMonitorApps(options.bundleId,runner,pause);
+      await openMonitorApp(options.appPath,options.bundleId,runner,pause);
+    }
     await writeReceipt(recorded,false);
     log('Max Monitor ist aktuell; Geräteberichte laufen über die laufende App.');
     return {schema:1,mode:'existing',...before};
