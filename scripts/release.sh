@@ -71,6 +71,7 @@ info "Version: $VERSION"
 info "Produkt: $PRODUCT_NAME"
 
 # ------------------------------------------------------------------ bauen
+BUILD_SOURCE="$(git rev-parse HEAD)"
 info "Baue App…"
 rm -rf "$BUILD_DIR"
 U4C_PRODUCT_NAME="$PRODUCT_NAME" \
@@ -100,6 +101,20 @@ hdiutil create \
 rm -rf "$STAGING"
 [[ -f "$DMG_PATH" ]] || fail "DMG wurde nicht erzeugt"
 success "DMG: $(du -h "$DMG_PATH" | awk '{print $1}')"
+
+# Worker updates use the same verified universal app; Macs need no local compiler.
+WORKER_ZIP="$PROJECT_ROOT/build/Max-Monitor-worker.zip"
+ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$WORKER_ZIP"
+WORKER_SHA="$(shasum -a 256 "$WORKER_ZIP" | awk '{print $1}')"
+WORKER_TAG="worker-native-${BUILD_SOURCE:0:12}"
+mkdir -p releases
+python3 - "$BUILD_SOURCE" "$WORKER_SHA" "$WORKER_TAG" <<'PY'
+import json,sys
+from pathlib import Path
+Path("releases/worker-native.json").write_text(json.dumps({
+    "schema":1,"sourceRevision":sys.argv[1],"sha256":sys.argv[2],
+    "tag":sys.argv[3],"asset":"Max-Monitor-worker.zip"},indent=2)+"\n")
+PY
 
 # ------------------------------------------------------------------ signieren
 info "Signiere für Sparkle…"
@@ -172,7 +187,13 @@ info "Committe appcast.xml…"
 # hier früher mit drin, obwohl das Skript sie nie anfasst — ein versehentlich
 # geänderter SUPublicEDKey wäre so unbemerkt ins Release-Commit gerutscht und
 # hätte jedes künftige Update abgeschnitten.
-git add appcast.xml
+# Publish the immutable binary before advertising its checksum to workers.
+gh release create "$WORKER_TAG" "$WORKER_ZIP" --target "$BUILD_SOURCE" \
+    --title "$PRODUCT_NAME Worker build ${BUILD_SOURCE:0:12}" --latest=false \
+    --notes "Verified universal app from $BUILD_SOURCE for automatic MacWorker maintenance." \
+    || fail "Worker-Release konnte nicht erstellt werden"
+
+git add appcast.xml releases/worker-native.json
 git commit -q -m "Release $VERSION" || warn "Nichts zu committen"
 git push -q origin main
 

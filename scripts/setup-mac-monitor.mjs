@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const require = createRequire(import.meta.url);
@@ -146,7 +147,7 @@ export async function appInformation(appPath, runner = run, expectedBundleId = B
 
 export async function appStatus(app, verify = false, runner = run) {
   const value = parseJson(await runner(app.executable, ['--enrollment-status', ...(verify ? ['--verify'] : [])],
-    {label: verify ? 'Monitor-Verbindung prüfen' : 'Mac-Kennung lesen', timeout:45000}), 'Monitor-Status');
+    {label: verify ? 'Monitor-Verbindung prüfen' : 'Mac-Kennung lesen', timeout:180000}), 'Monitor-Status');
   const safe = {};
   for (const key of ['schema','deviceId','bundleId','configured','serverURL','teamId','workerId','memberId','role','launchAtLoginStatus','verified','fleetAvailable'])
     if (value[key] !== undefined) safe[key] = value[key];
@@ -280,10 +281,71 @@ export async function nativeCodeUnchanged(from, to, runner = run) {
       {label:'Native App-Änderungen prüfen'})).trim().split('\n').filter(Boolean);
     const scripts = new Set(['scripts/setup-mac-monitor.mjs','scripts/setup-mac-monitor.sh',
       'scripts/setup-mac-monitor.test.mjs','scripts/newsletter-monitor-bridge.mjs',
-      'scripts/newsletter-monitor-bridge.test.mjs']);
+      'scripts/newsletter-monitor-bridge.test.mjs','scripts/release.sh']);
     return changed.every(file => file.startsWith('team-server/') || scripts.has(file) ||
-      file === 'README.md' || file.startsWith('docs/'));
+      file === 'README.md' || file === 'releases/worker-native.json' || file === 'appcast.xml' || file.startsWith('docs/'));
   } catch { return false; }
+}
+
+export async function storedMonitorPreferences(bundleId, runner = run) {
+  const safe = {schema:1,bundleId};
+  for (const [field,key] of Object.entries({deviceId:'fleetDeviceId',workerId:'fleetWorkerId',
+    serverURL:'teamServerURL',teamId:'teamServerTeamId',memberId:'teamServerMemberId',role:'teamServerRole'})) {
+    try { safe[field] = (await runner('/usr/bin/defaults',['read',bundleId,key],{label:'Gespeicherte Monitor-Einstellung lesen'})).trim() || null; }
+    catch { safe[field] = null; }
+  }
+  safe.deviceId = safe.deviceId?.toLowerCase();
+  safe.configured = Boolean(safe.serverURL && safe.teamId && /^[0-9a-f-]{36}$/.test(safe.deviceId || ''));
+  return safe;
+}
+
+export async function workerArtifactBundle(revision, runner = run, {
+  manifestPath = path.join(ROOT,'releases','worker-native.json'),
+  cacheRoot = path.join(ROOT,'build','worker-artifacts'),
+} = {}) {
+  let manifest;
+  try { manifest = JSON.parse(await fs.readFile(manifestPath,'utf8')); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw new Error('Monitor-Release ist ungültig.'); }
+  if (manifest.schema !== 1 || !/^[a-f0-9]{40}$/.test(manifest.sourceRevision || '') ||
+      !/^[a-f0-9]{64}$/.test(manifest.sha256 || '') ||
+      manifest.tag !== 'worker-native-' + manifest.sourceRevision.slice(0,12) ||
+      manifest.asset !== 'Max-Monitor-worker.zip') throw new Error('Monitor-Release ist ungültig.');
+  if (!await nativeCodeUnchanged(manifest.sourceRevision,revision,runner)) {
+    await runner('git',['-C',ROOT,'fetch','--quiet','origin',manifest.sourceRevision],{label:'Monitor-Release-Stand prüfen'});
+    if (!await nativeCodeUnchanged(manifest.sourceRevision,revision,runner)) return null;
+  }
+  await fs.mkdir(cacheRoot,{recursive:true});
+  const cache = path.join(cacheRoot,manifest.sha256);
+  const zip = path.join(cache,manifest.asset);
+  const bundle = path.join(cache,'Max Monitor.app');
+  try { await fs.access(zip); } catch {
+    const staging = await fs.mkdtemp(path.join(cacheRoot,'download-'));
+    try {
+      await runner('gh',['release','download',manifest.tag,'--repo','AurelianSteiner/Max-Monitor',
+        '--pattern',manifest.asset,'--dir',staging],{label:'Monitor-Release laden',timeout:180000});
+      const archive = path.join(staging,manifest.asset);
+      const size = (await fs.stat(archive)).size;
+      if (size > 64*1024*1024 || createHash('sha256').update(await fs.readFile(archive)).digest('hex') !== manifest.sha256)
+        throw new Error('Monitor-Release-Prüfsumme stimmt nicht.');
+      await fs.rename(staging,cache);
+    } finally { await fs.rm(staging,{recursive:true,force:true}); }
+  }
+  if (createHash('sha256').update(await fs.readFile(zip)).digest('hex') !== manifest.sha256)
+    throw new Error('Monitor-Release-Prüfsumme stimmt nicht.');
+  // Materialize the verified archive again; a changed extracted cache is never trusted.
+  await fs.rm(bundle,{recursive:true,force:true});
+  await runner('/usr/bin/ditto',['-x','-k',zip,cache],{label:'Monitor-Release entpacken'});
+  await runner('/usr/bin/codesign',['--verify','--deep','--strict',bundle],{label:'App-Signatur prüfen'});
+  // Reuse the Mac's existing local app signing identity, as the source build does.
+  // The publisher's archive has already passed its pinned hash and signature checks.
+  const identities = await runner('/usr/bin/security',['find-identity','-v','-p','codesigning'],{label:'Lokale App-Signatur lesen'});
+  const local = identities.match(/\b([A-F0-9]{40}) "Claude Max Monitor Signing"/i);
+  if (local) {
+    await runner('/usr/bin/codesign',['--force','--deep','--sign',local[1],'--timestamp=none',
+      '--preserve-metadata=entitlements,flags,runtime',bundle],{label:'App mit vorhandener Mac-Signatur versehen'});
+    await runner('/usr/bin/codesign',['--verify','--deep','--strict',bundle],{label:'App-Signatur prüfen'});
+  }
+  return bundle;
 }
 
 export async function setup(options, { runner = run, workerReader = readWorker,
@@ -358,6 +420,7 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   if (preflight.ok !== true || preflight.schema !== 1) throw new Error('Max Monitor ist auf dem Hub noch nicht bereitgestellt.');
   }
   let bundle = options.appBundle;
+  if (!bundle && options.updateOnly) bundle = await workerArtifactBundle(revision,runner);
   if (!bundle) {
     log('Max Monitor: aktuelle App aus dem Repo bauen.');
     await runner('/bin/bash', [path.join(ROOT, 'scripts','build_without_xcode.sh')], {
@@ -369,15 +432,11 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   const built = await appReader(bundle, runner, options.bundleId);
   if (!built) throw new Error('Die App unterstützt die automatische Worker-Einrichtung noch nicht.');
   if (options.updateOnly && app?.legacy) {
-    // Read preserved preferences/keychain with the new CLI before changing the old app.
-    initialStatus = await appStatus(built, false, runner);
-    if (!options.updateOnly && initialStatus.configured && !initialStatus.workerId)
-      throw new Error('Dieser Monitor hat noch keine Worker-Kennung – vorhandenen Zugang prüfen.');
-    if (initialStatus.configured && (initialStatus.workerId || !options.updateOnly) && initialStatus.workerId !== worker.workerId)
-      throw new Error('Bestehender älterer Monitor-Zugang nicht vollständig bestätigt – App bleibt erhalten.');
-    initialStatus = await appStatus(built, true, runner);
-    if (initialStatus.configured !== true || (initialStatus.workerId && initialStatus.workerId !== worker.workerId) ||
-        initialStatus.verified !== true || initialStatus.fleetAvailable !== true)
+    // Only non-secret preferences are read before replacement. Source-path binaries
+    // have a different Keychain access context from the registered installed app.
+    initialStatus = await storedMonitorPreferences(options.bundleId,runner);
+    if (initialStatus.configured !== true ||
+        (initialStatus.workerId && initialStatus.workerId !== worker.workerId))
       throw new Error('Bestehender älterer Monitor-Zugang nicht vollständig bestätigt – App bleibt erhalten.');
   }
   const stoppedApps = await runningMonitorApps(options.bundleId, runner);

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged, readWorker } from './setup-mac-monitor.mjs';
+import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged, readWorker, workerArtifactBundle } from './setup-mac-monitor.mjs';
+import { createHash } from 'node:crypto';
 
 const DEVICE_ID = '610be10e-8a00-4e00-b000-000000000051';
 const MEMBER_TOKEN = 'test_member_token_'.repeat(3);
@@ -15,6 +16,8 @@ async function appBundle(directory, name) {
   await fs.writeFile(path.join(directory, 'Contents', 'marker'), name);
   await fs.writeFile(path.join(directory, 'Contents', 'MacOS', 'Usage4Claude'), 'fake executable, never launched');
 }
+
+function fDefault(value) { if (value == null) throw new Error('missing preference'); return value + '\n'; }
 
 async function fixture(t, { previous = false, configured = false } = {}) {
   // NSRunningApplication reports macOS canonical paths (/private/tmp, etc.).
@@ -54,6 +57,10 @@ async function fixture(t, { previous = false, configured = false } = {}) {
     if (command === 'ssh') {
       if (args.at(-1).endsWith('--check')) return JSON.stringify(state.preflight);
       return JSON.stringify(state.enrollment);
+    }
+    if (command === '/usr/bin/defaults') {
+      const field = {fleetDeviceId:'deviceId',fleetWorkerId:'workerId',teamServerURL:'serverURL',teamServerTeamId:'teamId',teamServerMemberId:'memberId',teamServerRole:'role'}[args.at(-1)];
+      return fDefault(state.status[field]);
     }
     if (command === '/bin/ps') return '';
     if (command === '/usr/bin/osascript') {
@@ -132,7 +139,7 @@ test('background monitor reads the exact registered worker profile instead of as
   }
 });
 
-test('update-only verifies legacy app identity with the new CLI before replacing it', async t => {
+test('update-only preserves legacy preferences and verifies credentials at the installed path', async t => {
   const f = await fixture(t, {previous:true, configured:true});
   f.state.status.role = 'super'; f.state.status.memberId = 'team-owner';
   const read = f.dependencies.appReader;
@@ -145,8 +152,9 @@ test('update-only verifies legacy app identity with the new CLI before replacing
   assert.equal(result.role, 'super'); assert.deepEqual(f.state.status,initial);
   const copy = f.calls.findIndex(c => c.command === '/usr/bin/ditto');
   const status = f.calls.findIndex(c => c.args[0] === '--enrollment-status');
-  assert.ok(status >= 0 && status < copy);
-  assert.equal(f.calls[status].command, path.join(f.options.appBundle,'Contents/MacOS/Usage4Claude'));
+  const preferences = f.calls.findIndex(c => c.command === '/usr/bin/defaults');
+  assert.ok(preferences >= 0 && preferences < copy && status > copy);
+  assert.equal(f.calls[status].command, path.join(f.options.appPath,'Contents/MacOS/Usage4Claude'));
   assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll'));
 });
 
@@ -166,6 +174,44 @@ test('a legacy app without a matching verified configuration is left intact', as
   assert.equal(f.state.status.workerId,null);
   assert.equal(await f.marker(),'new app');
   assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll'));
+});
+
+test('worker artifact download verifies content, preserves tampered caches, and never reuses a different native body', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(),'monitor-artifact-'));
+  t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  const content = Buffer.from('authenticated-release-zip');
+  const manifest = {schema:1,sourceRevision:'a'.repeat(40),sha256:createHash('sha256').update(content).digest('hex'),
+    tag:'worker-native-'+'a'.repeat(12),asset:'Max-Monitor-worker.zip'};
+  const manifestPath = path.join(dir,'manifest.json'), cacheRoot = path.join(dir,'cache');
+  await fs.writeFile(manifestPath,JSON.stringify(manifest));
+  const calls = [];
+  let nativeChanged = false, corruptDownload = true;
+  const runner = async (command,args) => {
+    calls.push([command,args]);
+    if (command === 'git') return args.includes('diff') && nativeChanged ? 'Usage4Claude/Helpers/FleetReporter.swift' : '';
+    if (command === 'gh') {
+      await fs.writeFile(path.join(args[args.indexOf('--dir')+1],manifest.asset),corruptDownload ? 'tampered' : content);
+      return '';
+    }
+    if (command === '/usr/bin/ditto') {
+      await appBundle(path.join(args.at(-1),'Max Monitor.app'),'artifact'); return '';
+    }
+    if (command === '/usr/bin/codesign' || command === '/usr/bin/security') return '';
+    assert.fail(command);
+  };
+  await assert.rejects(workerArtifactBundle(REVISION,runner,{manifestPath,cacheRoot}),/Prüfsumme/);
+  assert.ok(!calls.some(([cmd])=>cmd === '/usr/bin/ditto'));
+  corruptDownload = false;
+  const bundle = await workerArtifactBundle(REVISION,runner,{manifestPath,cacheRoot});
+  assert.equal(await fs.readFile(path.join(bundle,'Contents','marker'),'utf8'),'artifact');
+  const count = calls.filter(([cmd])=>cmd === 'gh').length;
+  assert.equal(await workerArtifactBundle(REVISION,runner,{manifestPath,cacheRoot}),bundle);
+  assert.equal(calls.filter(([cmd])=>cmd === 'gh').length,count);
+  await fs.writeFile(path.join(path.dirname(bundle),manifest.asset),'tampered-cache');
+  await assert.rejects(workerArtifactBundle(REVISION,runner,{manifestPath,cacheRoot}),/Prüfsumme/);
+  nativeChanged = true;
+  assert.equal(await workerArtifactBundle(REVISION,runner,{manifestPath,cacheRoot}),null);
+  assert.equal(calls.filter(([cmd])=>cmd === 'gh').length,count);
 });
 
 test('only helper, relay and documentation changes can reuse a verified native app', async () => {
@@ -192,7 +238,7 @@ test('a helper update keeps the verified app running and records the checked sou
   assert.ok(!f.calls.some(c => c.command === '/bin/bash' || c.command === '/usr/bin/ditto'));
 });
 
-test('update-only verifies an old failing status CLI through the new binary before replacement', async t => {
+test('update-only repairs an old failing status CLI while preserving its settings', async t => {
   const f = await fixture(t, {previous:true,configured:true});
   f.state.status.workerId = null;
   f.state.status.memberId = null;
