@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged } from './setup-mac-monitor.mjs';
+import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged, readWorker } from './setup-mac-monitor.mjs';
 
 const DEVICE_ID = '610be10e-8a00-4e00-b000-000000000051';
 const MEMBER_TOKEN = 'test_member_token_'.repeat(3);
@@ -114,6 +114,23 @@ async function fixture(t, { previous = false, configured = false } = {}) {
     },
   };
 }
+
+test('background monitor reads the exact registered worker profile instead of assuming worker.local.json', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(),'monitor-profile-'));
+  t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+  const root = path.join(directory,'worker'), profile = path.join(directory,'profiles','machine.json');
+  await fs.mkdir(path.join(root,'src'),{recursive:true}); await fs.mkdir(path.dirname(profile),{recursive:true});
+  await fs.writeFile(path.join(root,'src/config.js'),"exports.loadConfig=file=>JSON.parse(require('fs').readFileSync(file,'utf8'));");
+  await fs.writeFile(profile,JSON.stringify({worker_id:'mac-real',hub:{ssh_host:'root@hub.example.test',identity_file:'~/.ssh/worker',known_hosts_file:'/safe/known_hosts'}}));
+  const previous = process.env.MAX_MONITOR_WORKER_CONFIG;
+  try {
+    process.env.MAX_MONITOR_WORKER_CONFIG=profile;
+    const result=await readWorker({workerRoot:root,updateOnly:true});
+    assert.equal(result.workerId,'mac-real'); assert.equal(result.hubHost,'root@hub.example.test');
+  } finally {
+    if(previous === undefined) delete process.env.MAX_MONITOR_WORKER_CONFIG; else process.env.MAX_MONITOR_WORKER_CONFIG=previous;
+  }
+});
 
 test('update-only verifies legacy app identity with the new CLI before replacing it', async t => {
   const f = await fixture(t, {previous:true, configured:true});

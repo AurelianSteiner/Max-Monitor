@@ -100,7 +100,8 @@ function parseJson(value, label) {
 function homePath(value) { return value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value; }
 
 export async function readWorker(options) {
-  const configFile = path.join(options.workerRoot, 'config', 'worker.local.json');
+  const configFile = path.resolve(options.workerRoot, homePath(options.workerConfig || process.env.MAX_MONITOR_WORKER_CONFIG || 'config/worker.local.json'));
+  if (options.updateOnly) await fs.access(configFile);
   const { loadConfig } = require(path.join(options.workerRoot, 'src', 'config.js'));
   const config = loadConfig(configFile, { root: options.workerRoot });
   if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(config.worker_id)) throw new Error('Eine eindeutige Worker-ID fehlt. Newsletter-Setup zuerst ausführen.');
