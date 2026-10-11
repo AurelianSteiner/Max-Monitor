@@ -364,6 +364,10 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   platform = process.platform, log = console.log, pause = delay,
   receiptPath = path.join(os.homedir(), 'Library', 'Application Support',
     options.bundleId && options.bundleId !== BUNDLE_ID ? options.bundleId : 'Max Monitor', 'Worker Setup', 'installation.json') } = {}) {
+  if (options.updateOnly) {
+    log('Automatische CLI-Verbindungsprüfungen sind pausiert; der laufende Monitor meldet weiter.');
+    return {schema:1,mode:'paused'};
+  }
   if (platform !== 'darwin' && !options.dryRun) throw new Error('Max Monitor benötigt macOS.');
   const worker = await workerReader(options);
   if (options.dryRun) return {schema:1,mode:'dry-run',workerId:worker.workerId,
