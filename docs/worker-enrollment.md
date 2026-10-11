@@ -38,6 +38,10 @@ noch in einen Download-Befehl, in die Worker-Konfiguration oder auf die neuen Ma
    Wenn Konfiguration oder die aktualisierten Endpunkte fehlen, bricht der
    Worker-Installer ab, bevor er ein neues Monitor-Mitglied anlegt.
 
+## Automatischer Abgleich bestehender Macs
+
+RS-Skills prüft Monitor-Updates alle 60 Sekunden und direkt nach der Anmeldung am Mac. Der Hintergrundmodus `--update-only` liest App-Metadaten und nicht geheime Einstellungen, bewahrt die bestehende Geräte- und Team-Zuordnung und startet die installierte App bei Bedarf. Er ruft keine native Schlüsselbund-CLI auf und registriert keine neuen Mitglieder. Die laufende App meldet die authentifizierte Verbindung jede Minute; nach einem Update wird dies über `nativeLastSeenAt` und `appVersion` in der zentralen Flotte geprüft.
+
 ## Was das Worker-Setup automatisch macht
 
 Die Monitor-App stellt ihre dauerhaft gespeicherte Geräte-UUID bereit. Der

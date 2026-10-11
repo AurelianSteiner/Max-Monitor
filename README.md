@@ -56,7 +56,7 @@ und die Kontenverwaltung. **Einstellungen → Verbindung & Worker** enthält die
 Serveradresse, Team-ID und den persönlichen Token. Es gibt keine separate Team-Ansicht
 und keinen Info-Knopf mehr.
 
-Jede verbundene App meldet ihren Mac alle zehn Minuten, beim Start und nach dem
+Jede verbundene App meldet ihren Mac jede Minute, beim Start und nach dem
 Aufwachen. Nach 15 Minuten ohne Meldung ist ein Gerät „still“, nach 30 Minuten
 „offline“. Fehler oder alte Claude-Messungen bleiben separat sichtbar. Der
 Newsletter-Abgleich liest ClickUp, Slack-Reservierungen und bestehende
