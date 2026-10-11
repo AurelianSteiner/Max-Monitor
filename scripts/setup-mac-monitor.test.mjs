@@ -339,6 +339,23 @@ test('an existing app with missing cached preferences still updates without crea
   assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll' || c.args[0] === '--enrollment-status'));
 });
 
+test('background installation preserves settings flushed by the old GUI at shutdown', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  f.runningApp();
+  const runner = f.dependencies.runner;
+  f.dependencies.runner = async (command,args,...rest) => {
+    const output = await runner(command,args,...rest);
+    if (command === '/usr/bin/osascript' && args.at(-2) === 'terminate')
+      f.state.status.workerId = 'native-binding';
+    return output;
+  };
+  const result = await setup({...f.options,updateOnly:true},f.dependencies);
+  assert.equal(result.workerId,'native-binding');
+  assert.equal(f.state.status.workerId,'native-binding');
+  assert.equal(await f.marker(),'new app');
+  assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll' || c.args[0] === '--enrollment-status'));
+});
+
 test('first installation passes one member token only through native stdin and writes a private safe receipt', async t => {
   const f = await fixture(t);
   const result = await setup(f.options, f.dependencies);

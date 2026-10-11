@@ -372,7 +372,7 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   if (!app) throw new Error('Kein eingerichteter Monitor vorhanden – zuerst die Worker-Einrichtung ausführen.');
   // Background maintenance must never launch the credential-reading native CLI.
   // The running GUI owns Keychain access and reports its authenticated heartbeat.
-  const before = await storedMonitorPreferences(options.bundleId,runner);
+  let before = await storedMonitorPreferences(options.bundleId,runner);
   // Updating an existing bundle does not require an account or change its binding.
   // Missing cached preferences must not disable future native code updates.
   const recorded = receipt?.binarySourceRevision || receipt?.sourceRevision;
@@ -418,6 +418,9 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   let install;
   try {
     await stopMonitorApps(options.bundleId,runner,pause,original,true);
+    // Shutdown can flush settings changed by the resident GUI. Preserve that
+    // durable snapshot rather than treating its own flush as an installer write.
+    before = await storedMonitorPreferences(options.bundleId,runner);
     install = await installBundle(bundle,options.appPath,runner);
     app = await appReader(options.appPath,runner,options.bundleId);
     if (!app || app.version !== built.version) throw new Error('App-Version: Installierte Monitor-App stimmt nicht.');
