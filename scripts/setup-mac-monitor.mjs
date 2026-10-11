@@ -22,6 +22,7 @@ export function optionsFrom(args) {
     const argument = args[index];
     if (argument === '--check') result.check = true;
     else if (argument === '--dry-run') result.dryRun = true;
+    else if (argument === '--update-only') result.updateOnly = true;
     else if (argument === '--no-open') result.open = false;
     else if (argument === '--no-launch-at-login') result.launchAtLogin = false;
     else if (argument === '--allow-loopback') result.allowLoopback = true;
@@ -285,7 +286,7 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   let initialStatus = null;
   if (app) {
     try { initialStatus = await appStatus(app, true, runner); } catch { initialStatus = await appStatus(app, false, runner); }
-    if (initialStatus.configured && initialStatus.role && initialStatus.role !== 'member')
+    if (!options.updateOnly && initialStatus.configured && initialStatus.role && initialStatus.role !== 'member')
       throw new Error('Dieser Monitor nutzt bereits einen Inhaber- oder Admin-Zugang. Bestehende Verbindung zuerst in der App prüfen.');
     if (options.check) {
       if (!healthy(initialStatus, worker)) throw new Error('Monitor ist noch nicht vollständig mit diesem Worker verbunden.');
@@ -296,16 +297,23 @@ export async function setup(options, { runner = run, workerReader = readWorker,
     if (initialStatus.configured && initialStatus.workerId !== worker.workerId)
       throw new Error('Dieser Monitor gehört bereits zu einer anderen Einrichtung. Verbindung zuerst in der App prüfen.');
   } else if (options.check) throw new Error('Die neue Max-Monitor-Version ist noch nicht installiert.');
-  if (app && healthy(initialStatus, worker) && receipt?.sourceRevision === revision && !options.appBundle) {
+  if (options.updateOnly && (!app || !initialStatus?.configured))
+    throw new Error('Kein eingerichteter Monitor vorhanden – zuerst die Worker-Einrichtung ausführen.');
+  const connected = Boolean(app) && (options.updateOnly
+    ? initialStatus.verified === true && initialStatus.fleetAvailable === true
+    : healthy(initialStatus, worker));
+  if (app && connected && receipt?.sourceRevision === revision && !options.appBundle) {
     log('Max Monitor ist bereits mit diesem Worker verbunden.');
     if (options.open) await openMonitorApp(options.appPath, options.bundleId, runner, pause);
     return {schema:1,mode:'existing',...startupSummary(initialStatus, options.launchAtLogin, log)};
   }
   // Detect a missing/unupgraded central service before an expensive local build.
+  if (!options.updateOnly) {
   await fs.access(worker.identityFile); await fs.access(worker.knownHostsFile);
   log('Max Monitor: zentralen Hub prüfen.');
   const preflight = parseJson(await runner('ssh', hubArguments(worker, options, true), {label:'Hub-Konfiguration prüfen'}), 'Hub-Prüfung');
   if (preflight.ok !== true || preflight.schema !== 1) throw new Error('Max Monitor ist auf dem Hub noch nicht bereitgestellt.');
+  }
   let bundle = options.appBundle;
   if (!bundle) {
     log('Max Monitor: aktuelle App aus dem Repo bauen.');
@@ -325,11 +333,19 @@ export async function setup(options, { runner = run, workerReader = readWorker,
     app = await appReader(options.appPath, runner, options.bundleId);
     const identity = await appStatus(app, false, runner);
     // An older app had no status command; inspect its preserved preferences only after upgrading.
-    if (identity.configured && identity.role && identity.role !== 'member')
+    if (!options.updateOnly && identity.configured && identity.role && identity.role !== 'member')
       throw new Error('Dieser Monitor nutzt bereits einen Inhaber- oder Admin-Zugang. Bestehende Verbindung zuerst in der App prüfen.');
     if (identity.configured && identity.workerId !== worker.workerId)
       throw new Error('Dieser Monitor gehört bereits zu einer anderen Einrichtung. Verbindung zuerst in der App prüfen.');
     if (!/^[0-9a-f-]{36}$/i.test(identity.deviceId)) throw new Error('Keine gültige Mac-Kennung verfügbar.');
+    let verified;
+    if (options.updateOnly) {
+      verified = await appStatus(app, true, runner);
+      const keys = ['deviceId','serverURL','teamId','workerId','memberId','role'];
+      if (verified.configured !== true || verified.verified !== true || verified.fleetAvailable !== true ||
+          keys.some(key => verified[key] !== initialStatus[key]))
+        throw new Error('Bestehender Monitor-Zugang nach dem Update nicht vollständig bestätigt.');
+    } else {
     const request = {workerId:worker.workerId,deviceId:identity.deviceId,name:os.hostname()};
     const enrollment = validateEnrollment(parseJson(await runner('ssh', hubArguments(worker,options), {
       input:JSON.stringify(request),label:'Eigenen Monitor-Zugang einrichten'}), 'Hub-Registrierung'),
@@ -347,11 +363,12 @@ export async function setup(options, { runner = run, workerReader = readWorker,
       if (!error.timedOut || error.stage !== 'login') throw error;
       loginTimedOut = true;
     }
-    const verified = await appStatus(app,true,runner);
+    verified = await appStatus(app,true,runner);
     if (!healthy(verified,worker) || (loginTimedOut &&
         ['deviceId','serverURL','teamId','memberId'].some(key => verified[key] !== enrollment[key])))
       throw new Error('Monitor wurde gespeichert, aber der gemeinsame Server ist noch nicht erreichbar.');
     if (loginTimedOut) log('Max Monitor: Autostart hat zu lange gedauert; die gespeicherte Geräteverbindung wurde separat bestätigt.');
+    }
     if (options.open) await openMonitorApp(options.appPath, options.bundleId, runner, pause);
     await fs.mkdir(path.dirname(receiptPath),{recursive:true,mode:0o700});
     const safeReceipt = {schema:1,sourceRevision:revision,appPath:options.appPath,
@@ -359,7 +376,7 @@ export async function setup(options, { runner = run, workerReader = readWorker,
     await fs.writeFile(receiptPath,JSON.stringify(safeReceipt,null,2)+'\n',{mode:0o600});
     // Cleanup must never undo an already configured and verified installation.
     await install.finish().catch(()=>{});
-    log('Max Monitor ist verbunden; Geräteberichte laufen alle zehn Minuten.');
+    log('Max Monitor ist verbunden; Geräteberichte laufen jede Minute.');
     const startup = startupSummary(verified, options.launchAtLogin, log);
     log('Das eigene Claude-Konto einmal in Max Monitor anmelden, damit dessen Kontingente erscheinen.');
     return {schema:1,mode:'installed',...startup};
@@ -380,7 +397,7 @@ export async function main(args = process.argv.slice(2)) {
     const options = optionsFrom(args);
     if (options.help) {
       console.log('Max Monitor automatisch für diesen Newsletter-Worker einrichten.\n' +
-        'setup-mac-monitor.sh --worker-root PATH [--check | --dry-run]\n' +
+        'setup-mac-monitor.sh --worker-root PATH [--check | --dry-run | --update-only]\n' +
         'Optional: --app-bundle PATH --app-path PATH --no-open --no-launch-at-login\n' +
         'Server und eigener Mitglieds-Token kommen über den bestehenden Hub-Zugang.');
       return;

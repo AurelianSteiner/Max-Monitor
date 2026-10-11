@@ -115,6 +115,30 @@ async function fixture(t, { previous = false, configured = false } = {}) {
   };
 }
 
+test('update-only preserves an owner identity without enrollment', async t => {
+  const f = await fixture(t, { previous: true, configured: true });
+  f.state.status.role = 'super';
+  f.state.status.memberId = 'team-owner';
+  const before = { ...f.state.status };
+  const result = await setup({ ...f.options, updateOnly: true }, f.dependencies);
+  assert.equal(result.role, 'super');
+  assert.deepEqual(f.state.status, before);
+  assert.ok(!f.calls.some(call => call.command === 'ssh' || call.args[0] === '--enroll'));
+  assert.equal(await f.marker(), 'new app');
+  assert.equal(f.state.runningApps.length, 1);
+});
+
+test('update-only refuses an unconfigured monitor and rolls back failed verification', async t => {
+  const empty = await fixture(t);
+  await assert.rejects(setup({ ...empty.options, updateOnly: true }, empty.dependencies), /Kein eingerichteter Monitor/);
+  assert.ok(!empty.calls.some(call => call.command === '/usr/bin/ditto'));
+  const f = await fixture(t, { previous: true, configured: true });
+  f.state.fleetFailure = true;
+  await assert.rejects(setup({ ...f.options, updateOnly: true }, f.dependencies), /nicht vollständig bestätigt/);
+  assert.equal(await f.marker(), 'previous app');
+  assert.ok(!f.calls.some(call => call.args[0] === '--enroll'));
+});
+
 test('first installation passes one member token only through native stdin and writes a private safe receipt', async t => {
   const f = await fixture(t);
   const result = await setup(f.options, f.dependencies);
