@@ -130,15 +130,17 @@ export function validateEnrollment(value, workerId, deviceId, allowLoopback = fa
   return value;
 }
 
-export async function appInformation(appPath, runner = run, expectedBundleId = BUNDLE_ID) {
+export async function appInformation(appPath, runner = run, expectedBundleId = BUNDLE_ID, allowLegacy = false) {
   const plist = path.join(appPath, 'Contents', 'Info.plist');
   try { await fs.access(plist); } catch { return null; }
   const info = parseJson(await runner('/usr/bin/python3', ['-c',
     'import plistlib,json,sys; d=plistlib.load(open(sys.argv[1],"rb")); print(json.dumps({k:d.get(k) for k in ["CFBundleIdentifier","CFBundleExecutable","RSWorkerEnrollmentVersion"]}))', plist],
     {label:'App-Version prüfen'}), 'App-Version');
-  if (info.CFBundleIdentifier !== expectedBundleId || info.RSWorkerEnrollmentVersion !== 1 ||
+  const legacy = info.RSWorkerEnrollmentVersion == null;
+  if (info.CFBundleIdentifier !== expectedBundleId ||
+      (info.RSWorkerEnrollmentVersion !== 1 && !(allowLegacy && legacy)) ||
       !/^[A-Za-z0-9_-]+$/.test(info.CFBundleExecutable || '')) return null;
-  return { executable: path.join(appPath, 'Contents', 'MacOS', info.CFBundleExecutable) };
+  return { executable: path.join(appPath, 'Contents', 'MacOS', info.CFBundleExecutable), ...(legacy ? {legacy:true} : {}) };
 }
 
 export async function appStatus(app, verify = false, runner = run) {
@@ -270,6 +272,19 @@ export async function installBundle(source, destination, runner = run) {
   };
 }
 
+export async function nativeCodeUnchanged(from, to, runner = run) {
+  if (!/^[a-f0-9]{40}$/.test(from || '') || !/^[a-f0-9]{40}$/.test(to || '')) return false;
+  try {
+    const changed = (await runner('git', ['-C', ROOT, 'diff', '--name-only', from, to, '--'],
+      {label:'Native App-Änderungen prüfen'})).trim().split('\n').filter(Boolean);
+    const scripts = new Set(['scripts/setup-mac-monitor.mjs','scripts/setup-mac-monitor.sh',
+      'scripts/setup-mac-monitor.test.mjs','scripts/newsletter-monitor-bridge.mjs',
+      'scripts/newsletter-monitor-bridge.test.mjs']);
+    return changed.every(file => file.startsWith('team-server/') || scripts.has(file) ||
+      file === 'README.md' || file.startsWith('docs/'));
+  } catch { return false; }
+}
+
 export async function setup(options, { runner = run, workerReader = readWorker,
   appReader = appInformation, platform = process.platform, log = console.log, pause = delay,
   receiptPath = path.join(os.homedir(), 'Library', 'Application Support',
@@ -282,9 +297,18 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   const revision = await sourceRevision(runner);
   let receipt;
   try { receipt = JSON.parse(await fs.readFile(receiptPath, 'utf8')); } catch {}
-  let app = await appReader(options.appPath, runner, options.bundleId);
+  let app = await appReader(options.appPath, runner, options.bundleId, options.updateOnly);
+  if (!app && options.updateOnly) {
+    const running = await runningMonitorApps(options.bundleId, runner);
+    const paths = [...new Set(running.map(value => value.bundlePath))];
+    if (paths.length > 1) throw new Error('Mehrere Monitor-Installationen laufen – App-Pfad zuerst eindeutig festlegen.');
+    for (const candidate of [...paths, '/Applications/Max Monitor.app']) {
+      const found = await appReader(candidate, runner, options.bundleId, true);
+      if (found) { options = {...options, appPath:candidate}; app = found; break; }
+    }
+  }
   let initialStatus = null;
-  if (app) {
+  if (app && !app.legacy) {
     try { initialStatus = await appStatus(app, true, runner); } catch { initialStatus = await appStatus(app, false, runner); }
     if (!options.updateOnly && initialStatus.configured && initialStatus.role && initialStatus.role !== 'member')
       throw new Error('Dieser Monitor nutzt bereits einen Inhaber- oder Admin-Zugang. Bestehende Verbindung zuerst in der App prüfen.');
@@ -297,12 +321,20 @@ export async function setup(options, { runner = run, workerReader = readWorker,
     if (initialStatus.configured && initialStatus.workerId !== worker.workerId)
       throw new Error('Dieser Monitor gehört bereits zu einer anderen Einrichtung. Verbindung zuerst in der App prüfen.');
   } else if (options.check) throw new Error('Die neue Max-Monitor-Version ist noch nicht installiert.');
-  if (options.updateOnly && (!app || !initialStatus?.configured))
+  if (options.updateOnly && (!app || (!app.legacy && !initialStatus?.configured)))
     throw new Error('Kein eingerichteter Monitor vorhanden – zuerst die Worker-Einrichtung ausführen.');
   const connected = Boolean(app) && (options.updateOnly
-    ? initialStatus.verified === true && initialStatus.fleetAvailable === true
+    ? initialStatus?.verified === true && initialStatus?.fleetAvailable === true
     : healthy(initialStatus, worker));
-  if (app && connected && receipt?.sourceRevision === revision && !options.appBundle) {
+  if (app && connected && !options.appBundle && (receipt?.sourceRevision === revision ||
+      await nativeCodeUnchanged(receipt?.sourceRevision, revision, runner))) {
+    if (receipt.sourceRevision !== revision) {
+      const updated = {...receipt,sourceRevision:revision,
+        binarySourceRevision:receipt.binarySourceRevision || receipt.sourceRevision,checkedAt:new Date().toISOString()};
+      const temporary = receiptPath + '.tmp';
+      await fs.writeFile(temporary, JSON.stringify(updated,null,2)+'\n',{mode:0o600});
+      await fs.rename(temporary,receiptPath);
+    }
     log('Max Monitor ist bereits mit diesem Worker verbunden.');
     if (options.open) await openMonitorApp(options.appPath, options.bundleId, runner, pause);
     return {schema:1,mode:'existing',...startupSummary(initialStatus, options.launchAtLogin, log)};
@@ -325,6 +357,13 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   }
   const built = await appReader(bundle, runner, options.bundleId);
   if (!built) throw new Error('Die App unterstützt die automatische Worker-Einrichtung noch nicht.');
+  if (options.updateOnly && app?.legacy) {
+    // Read preserved preferences/keychain with the new CLI before changing the old app.
+    initialStatus = await appStatus(built, true, runner);
+    if (initialStatus.configured !== true || initialStatus.workerId !== worker.workerId ||
+        initialStatus.verified !== true || initialStatus.fleetAvailable !== true)
+      throw new Error('Bestehender älterer Monitor-Zugang nicht vollständig bestätigt – App bleibt erhalten.');
+  }
   const stoppedApps = await runningMonitorApps(options.bundleId, runner);
   let install;
   try {

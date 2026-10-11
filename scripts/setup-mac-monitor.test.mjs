@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { setup, optionsFrom, validateEnrollment, appStatus, run } from './setup-mac-monitor.mjs';
+import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged } from './setup-mac-monitor.mjs';
 
 const DEVICE_ID = '610be10e-8a00-4e00-b000-000000000051';
 const MEMBER_TOKEN = 'test_member_token_'.repeat(3);
@@ -114,6 +114,60 @@ async function fixture(t, { previous = false, configured = false } = {}) {
     },
   };
 }
+
+test('update-only verifies legacy app identity with the new CLI before replacing it', async t => {
+  const f = await fixture(t, {previous:true, configured:true});
+  f.state.status.role = 'super'; f.state.status.memberId = 'team-owner';
+  const read = f.dependencies.appReader;
+  f.dependencies.appReader = async (appPath, ...args) => {
+    const app = await read(appPath, ...args);
+    return app && appPath === f.options.appPath && await f.marker() === 'previous app' ? {...app,legacy:true} : app;
+  };
+  const initial = {...f.state.status};
+  const result = await setup({...f.options,updateOnly:true}, f.dependencies);
+  assert.equal(result.role, 'super'); assert.deepEqual(f.state.status,initial);
+  const copy = f.calls.findIndex(c => c.command === '/usr/bin/ditto');
+  const status = f.calls.findIndex(c => c.args[0] === '--enrollment-status');
+  assert.ok(status >= 0 && status < copy);
+  assert.equal(f.calls[status].command, path.join(f.options.appBundle,'Contents/MacOS/Usage4Claude'));
+  assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll'));
+});
+
+test('a legacy app without a matching verified configuration is left intact', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  const read = f.dependencies.appReader;
+  f.dependencies.appReader = async (appPath,...args) => {
+    const app = await read(appPath,...args); return app && appPath === f.options.appPath ? {...app,legacy:true} : app;
+  };
+  f.state.status.workerId = 'another-mac';
+  await assert.rejects(setup({...f.options,updateOnly:true},f.dependencies), /älterer Monitor-Zugang/);
+  assert.equal(await f.marker(),'previous app');
+  assert.ok(!f.calls.some(c => c.command === '/usr/bin/ditto'));
+});
+
+test('only helper, relay and documentation changes can reuse a verified native app', async () => {
+  const before = 'a'.repeat(40), after = 'b'.repeat(40);
+  const diff = files => async () => files.join('\n');
+  assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/setup-mac-monitor.mjs','team-server/fleet.js'])),true);
+  assert.equal(await nativeCodeUnchanged(before,after,diff(['Usage4Claude/Helpers/FleetReporter.swift'])),false);
+  assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/build_without_xcode.sh'])),false);
+  assert.equal(await nativeCodeUnchanged(undefined,after,diff([])),false);
+  assert.equal(await nativeCodeUnchanged(before,after,async()=>{throw Error('missing revision');}),false);
+});
+
+test('a helper update keeps the verified app running and records the checked source without rebuilding', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  const before = 'a'.repeat(40); await f.writeReceipt(before);
+  const runner = f.dependencies.runner;
+  f.dependencies.runner = async (command,args,...rest) => command === 'git' && args.includes('diff')
+    ? 'scripts/setup-mac-monitor.mjs\n' : runner(command,args,...rest);
+  const result = await setup({...f.options,appBundle:undefined,updateOnly:true},f.dependencies);
+  assert.equal(result.mode,'existing');
+  assert.equal(await f.marker(),'previous app');
+  const receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+  assert.equal(receipt.sourceRevision,REVISION); assert.equal(receipt.binarySourceRevision,before);
+  assert.ok(!f.calls.some(c => c.command === '/bin/bash' || c.command === '/usr/bin/ditto'));
+});
 
 test('update-only preserves an owner identity without enrollment', async t => {
   const f = await fixture(t, { previous: true, configured: true });
