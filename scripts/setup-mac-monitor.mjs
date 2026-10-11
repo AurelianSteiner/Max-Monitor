@@ -136,13 +136,14 @@ export async function appInformation(appPath, runner = run, expectedBundleId = B
   const plist = path.join(appPath, 'Contents', 'Info.plist');
   try { await fs.access(plist); } catch { return null; }
   const info = parseJson(await runner('/usr/bin/python3', ['-c',
-    'import plistlib,json,sys; d=plistlib.load(open(sys.argv[1],"rb")); print(json.dumps({k:d.get(k) for k in ["CFBundleIdentifier","CFBundleExecutable","RSWorkerEnrollmentVersion"]}))', plist],
+    'import plistlib,json,sys; d=plistlib.load(open(sys.argv[1],"rb")); print(json.dumps({k:d.get(k) for k in ["CFBundleIdentifier","CFBundleExecutable","CFBundleShortVersionString","RSWorkerEnrollmentVersion"]}))', plist],
     {label:'App-Version prüfen'}), 'App-Version');
   const legacy = info.RSWorkerEnrollmentVersion == null;
   if (info.CFBundleIdentifier !== expectedBundleId ||
       (info.RSWorkerEnrollmentVersion !== 1 && !(allowLegacy && legacy)) ||
       !/^[A-Za-z0-9_-]+$/.test(info.CFBundleExecutable || '')) return null;
-  return { executable: path.join(appPath, 'Contents', 'MacOS', info.CFBundleExecutable), ...(legacy ? {legacy:true} : {}) };
+  return { executable: path.join(appPath, 'Contents', 'MacOS', info.CFBundleExecutable),
+    version:info.CFBundleShortVersionString, ...(legacy ? {legacy:true} : {}) };
 }
 
 export async function appStatus(app, verify = false, runner = run, timeout = 45000) {
@@ -299,21 +300,31 @@ export async function storedMonitorPreferences(bundleId, runner = run) {
   return safe;
 }
 
+export async function workerArtifactManifest(manifestPath = path.join(ROOT,'releases','worker-native.json')) {
+  let manifest;
+  try { manifest = JSON.parse(await fs.readFile(manifestPath,'utf8')); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw new Error('Monitor-Release ist ungültig.'); }
+  if (manifest.schema !== 1 || !/^\d+\.\d+(?:\.\d+)?$/.test(manifest.version || '') ||
+      !/^[a-f0-9]{40}$/.test(manifest.sourceRevision || '') ||
+      !/^[a-f0-9]{64}$/.test(manifest.sha256 || '') ||
+      manifest.tag !== 'worker-native-' + manifest.sourceRevision.slice(0,12) ||
+      manifest.asset !== 'Max-Monitor-worker.zip') throw new Error('Monitor-Release ist ungültig.');
+  return manifest;
+}
+
+async function artifactMatchesSource(manifest, revision, runner) {
+  if (await nativeCodeUnchanged(manifest.sourceRevision,revision,runner)) return true;
+  await runner('git',['-C',ROOT,'fetch','--quiet','origin',manifest.sourceRevision],{label:'Monitor-Release-Stand prüfen'});
+  return nativeCodeUnchanged(manifest.sourceRevision,revision,runner);
+}
+
 export async function workerArtifactBundle(revision, runner = run, {
   manifestPath = path.join(ROOT,'releases','worker-native.json'),
   cacheRoot = path.join(ROOT,'build','worker-artifacts'),
 } = {}) {
-  let manifest;
-  try { manifest = JSON.parse(await fs.readFile(manifestPath,'utf8')); }
-  catch (error) { if (error.code === 'ENOENT') return null; throw new Error('Monitor-Release ist ungültig.'); }
-  if (manifest.schema !== 1 || !/^[a-f0-9]{40}$/.test(manifest.sourceRevision || '') ||
-      !/^[a-f0-9]{64}$/.test(manifest.sha256 || '') ||
-      manifest.tag !== 'worker-native-' + manifest.sourceRevision.slice(0,12) ||
-      manifest.asset !== 'Max-Monitor-worker.zip') throw new Error('Monitor-Release ist ungültig.');
-  if (!await nativeCodeUnchanged(manifest.sourceRevision,revision,runner)) {
-    await runner('git',['-C',ROOT,'fetch','--quiet','origin',manifest.sourceRevision],{label:'Monitor-Release-Stand prüfen'});
-    if (!await nativeCodeUnchanged(manifest.sourceRevision,revision,runner)) return null;
-  }
+  const manifest = await workerArtifactManifest(manifestPath);
+  if (!manifest) return null;
+  if (!await artifactMatchesSource(manifest,revision,runner)) return null;
   await fs.mkdir(cacheRoot,{recursive:true});
   const cache = path.join(cacheRoot,manifest.sha256);
   const zip = path.join(cache,manifest.asset);
@@ -349,7 +360,8 @@ export async function workerArtifactBundle(revision, runner = run, {
 }
 
 export async function setup(options, { runner = run, workerReader = readWorker,
-  appReader = appInformation, platform = process.platform, log = console.log, pause = delay,
+  appReader = appInformation, artifactReader = workerArtifactBundle, manifestReader = workerArtifactManifest,
+  platform = process.platform, log = console.log, pause = delay,
   receiptPath = path.join(os.homedir(), 'Library', 'Application Support',
     options.bundleId && options.bundleId !== BUNDLE_ID ? options.bundleId : 'Max Monitor', 'Worker Setup', 'installation.json') } = {}) {
   if (platform !== 'darwin' && !options.dryRun) throw new Error('Max Monitor benötigt macOS.');
@@ -358,6 +370,8 @@ export async function setup(options, { runner = run, workerReader = readWorker,
     appPath:options.appPath,hubHost:worker.hubHost,
     steps:['App installieren','Eigenen Mitglieds-Token über Hub beziehen','Team und Worker-ID speichern','Autostart aktivieren','App öffnen']};
   const revision = await sourceRevision(runner);
+  const release = options.updateOnly && !options.appBundle ? await manifestReader() : null;
+  const releaseCurrent = release ? await artifactMatchesSource(release,revision,runner) : false;
   let receipt;
   try { receipt = JSON.parse(await fs.readFile(receiptPath, 'utf8')); } catch {}
   let app = await appReader(options.appPath, runner, options.bundleId, options.updateOnly);
@@ -399,7 +413,8 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   const connected = Boolean(app) && (options.updateOnly
     ? initialStatus?.verified === true && initialStatus?.fleetAvailable === true
     : healthy(initialStatus, worker));
-  if (app && connected && !options.appBundle && (receipt?.sourceRevision === revision ||
+  if (app && connected && !options.appBundle && (!releaseCurrent || app.version === release.version) &&
+      (receipt?.sourceRevision === revision ||
       await nativeCodeUnchanged(receipt?.sourceRevision, revision, runner))) {
     if (receipt.sourceRevision !== revision) {
       const updated = {...receipt,sourceRevision:revision,
@@ -420,7 +435,8 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   if (preflight.ok !== true || preflight.schema !== 1) throw new Error('Max Monitor ist auf dem Hub noch nicht bereitgestellt.');
   }
   let bundle = options.appBundle;
-  if (!bundle && options.updateOnly) bundle = await workerArtifactBundle(revision,runner);
+  const artifact = !bundle && options.updateOnly ? await artifactReader(revision,runner) : null;
+  bundle ||= artifact;
   if (!bundle) {
     log('Max Monitor: aktuelle App aus dem Repo bauen.');
     await runner('/bin/bash', [path.join(ROOT, 'scripts','build_without_xcode.sh')], {
@@ -431,6 +447,7 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   }
   const built = await appReader(bundle, runner, options.bundleId);
   if (!built) throw new Error('Die App unterstützt die automatische Worker-Einrichtung noch nicht.');
+  if (artifact && built.version !== release.version) throw new Error('Die Monitor-Release-Version stimmt nicht.');
   if (options.updateOnly && app?.legacy) {
     // Only non-secret preferences are read before replacement. Source-path binaries
     // have a different Keychain access context from the registered installed app.

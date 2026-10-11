@@ -108,11 +108,11 @@ ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$WORKER_ZIP"
 WORKER_SHA="$(shasum -a 256 "$WORKER_ZIP" | awk '{print $1}')"
 WORKER_TAG="worker-native-${BUILD_SOURCE:0:12}"
 mkdir -p releases
-python3 - "$BUILD_SOURCE" "$WORKER_SHA" "$WORKER_TAG" <<'PY'
+python3 - "$BUILD_SOURCE" "$WORKER_SHA" "$WORKER_TAG" "$VERSION" <<'PY'
 import json,sys
 from pathlib import Path
 Path("releases/worker-native.json").write_text(json.dumps({
-    "schema":1,"sourceRevision":sys.argv[1],"sha256":sys.argv[2],
+    "schema":1,"version":sys.argv[4],"sourceRevision":sys.argv[1],"sha256":sys.argv[2],
     "tag":sys.argv[3],"asset":"Max-Monitor-worker.zip"},indent=2)+"\n")
 PY
 

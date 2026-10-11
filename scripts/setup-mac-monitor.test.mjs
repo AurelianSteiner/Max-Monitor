@@ -49,7 +49,7 @@ async function fixture(t, { previous = false, configured = false } = {}) {
     try { await fs.access(path.join(appPath, 'Contents', 'marker')); }
     catch { return null; }
     if (state.appFailure && appPath === destination) return null;
-    return { executable: path.join(appPath, 'Contents', 'MacOS', 'Usage4Claude') };
+    return { executable: path.join(appPath, 'Contents', 'MacOS', 'Usage4Claude'), version:'2.14.1' };
   };
   const runner = async (command, args, options = {}) => {
     calls.push({ command, args: [...args], input: options.input, inherit: options.inherit, timeout: options.timeout });
@@ -106,6 +106,8 @@ async function fixture(t, { previous = false, configured = false } = {}) {
   };
   const options = optionsFrom(['--worker-root', workerRoot, '--app-path', destination, '--app-bundle', source]);
   const dependencies = { runner, appReader, workerReader: async () => worker,
+    artifactReader: async () => source,
+    manifestReader: async () => ({schema:1,version:'2.14.1',sourceRevision:REVISION}),
     platform: 'darwin', receiptPath, pause: async () => {}, log: value => logs.push(value) };
   return { directory, source, destination, receiptPath, options, dependencies, state, calls, logs, worker,
     async marker() { return fs.readFile(path.join(destination, 'Contents', 'marker'), 'utf8'); },
@@ -177,11 +179,31 @@ test('a legacy app without a matching verified configuration is left intact', as
   assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll'));
 });
 
+test('a newer packaged version replaces an older app even when its recorded source is current', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  await f.writeReceipt();
+  const read = f.dependencies.appReader;
+  f.dependencies.appReader = async (appPath,...args) => {
+    const app = await read(appPath,...args);
+    return app && appPath === f.options.appPath && await f.marker() === 'previous app'
+      ? {...app,version:'2.14'} : app;
+  };
+  const runner = f.dependencies.runner;
+  f.dependencies.runner = (command,args,options) => command === 'git' && args.includes('diff')
+    ? Promise.resolve('') : runner(command,args,options);
+  const initial = {...f.state.status};
+  const result = await setup({...f.options,appBundle:null,updateOnly:true},f.dependencies);
+  assert.equal(result.mode,'installed');
+  assert.equal(await f.marker(),'new app');
+  assert.deepEqual(f.state.status,initial);
+  assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll'));
+});
+
 test('worker artifact download verifies content, preserves tampered caches, and never reuses a different native body', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(),'monitor-artifact-'));
   t.after(()=>fs.rm(dir,{recursive:true,force:true}));
   const content = Buffer.from('authenticated-release-zip');
-  const manifest = {schema:1,sourceRevision:'a'.repeat(40),sha256:createHash('sha256').update(content).digest('hex'),
+  const manifest = {schema:1,version:'2.14.1',sourceRevision:'a'.repeat(40),sha256:createHash('sha256').update(content).digest('hex'),
     tag:'worker-native-'+'a'.repeat(12),asset:'Max-Monitor-worker.zip'};
   const manifestPath = path.join(dir,'manifest.json'), cacheRoot = path.join(dir,'cache');
   await fs.writeFile(manifestPath,JSON.stringify(manifest));
