@@ -242,3 +242,35 @@ Journalfenster. Bestehende Tunnel bleiben erhalten. Sicherungen:
 `/var/backups/max-monitor/team-ssh-capacity-20261012T190838Z` (Kapazität).
 Die Live-Hub-Installer-Datei besaß eigene Änderungen; nur ihre Bundle-Dateiliste
 wurde ergänzt, der übrige Inhalt erhalten.
+
+
+## Session-Abschluss: Till Main ebenfalls entfernt, 21:50 Uhr
+
+Till verlangt anschließend, auch den aktuell benutzten Till Main auszunehmen,
+alles zu pushen und die Session zu archivieren. Der lokale Wartungs-LaunchAgent
+`de.rs.max-monitor.remote`, sein Profil und die eigenen Operator-/Team-CA-Zeilen
+in `authorized_keys` sind entfernt; Newsletter-Worker PID 15368 blieb gleich.
+Die Hub-Policy schließt jetzt `macbook-till-main` und `macbook-von-till-main-2` aus.
+Till Main ist aus privatem Operator-Register, öffentlichem Team-Manifest und
+Bastion-Portfreigabe entfernt. Die IDs sind außerdem vor Registrierung und Lookup
+im Hub-Helfer gesperrt, damit eine erneute Installation sie nicht freigibt.
+Es verbleiben Mac 1, Mac 2, Mac 4 und Mac 5. Persönliche Team-Zugänge der Till-Macs
+bleiben zum Warten der anderen Worker gültig. Kein Newsletter-Neustart und keine
+Änderung an macOS-Fernanmeldung oder fremden SSH-Schlüsseln.
+Sicherung lokal `remove-personal-main-20261012T194925Z`, Hub
+`/var/backups/max-monitor/remove-personal-main-20261012T194946Z`.
+
+Live-Gegenprobe: beide Zertifikatsanträge HTTP 404, lokaler Wartungsdienst und
+Schlüssel entfernt, vier Ziele im veröffentlichten Manifest; Mac 1 erneut SSH
+als `tuck2` bestätigt. Der zusätzliche Mac-2-Test lief in einen Timeout, ohne
+Hinweis auf eine geänderte Freigabe. Die bereits vorhandene UI-Beschriftung
+„Mac 4“ wird auf Nutzerwunsch zusammen mit allen übrigen Änderungen gepusht.
+Sie wurde im echten lokalen Relay/Chrome mit Testdaten bei 1440×900, 390×844 und
+1024×768 visuell geprüft: sichtbar, kein horizontaler Überlauf, keine JS-Fehler.
+Die in AGENTS genannten UI-Skills und Playwright-MCP waren nicht verfügbar;
+der Browserlauf nutzte stattdessen das gebündelte Playwright mit echtem Chrome.
+70 Relay-Tests und 37 gezielte Remote-/Installer-Tests bestanden.
+
+Zum Abschluss bestanden außerdem alle 146 Skript-Tests; kein fehlgeschlagener
+Test. Alle aktuellen Arbeitskopie-Änderungen einschließlich der vorhandenen
+Mac-4-Beschriftung werden auf `codex/worker-remote-access` veröffentlicht.

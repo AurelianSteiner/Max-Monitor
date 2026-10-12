@@ -198,6 +198,26 @@ test('team manifest and bastion key retain exact registered ports and exclude pr
   await fs.chmod(policyFile,0o644); assert.throws(()=>syncTeamAccess({teamId},options),/Ungültige/);
 });
 
+test('excluded personal Macs cannot enroll or use an existing operator registration', async t => {
+  const f = await fixture(t), teamId = 'DEMO1234', dataDir = path.join(f.home, 'data');
+  const policyFile = path.join(f.home, 'policy.json');
+  await fs.mkdir(path.join(dataDir, teamId), { recursive: true });
+  await fs.writeFile(path.join(dataDir, teamId, 'remote-ca.pub'), operatorKey);
+  const excludedWorkerIds = ['macbook-till-main', 'macbook-von-till-main-2'];
+  await fs.writeFile(policyFile, JSON.stringify({ schema: 1, teamId, hubHost: 'hub.example.test', excludedWorkerIds }), { mode: 0o600 });
+  await fs.writeFile(f.file, JSON.stringify({ schema: 1, workers: [{ ...entry, workerId: excludedWorkerIds[0] }] }), { mode: 0o600 });
+  const saved = await fs.readFile(f.file, 'utf8');
+  let permissionCalls = 0;
+  const options = { ...f, settings: { teamId }, teamOptions: { policyFile, dataDir }, permission: async () => { permissionCalls++; return { reason: 'enabled' }; } };
+  for (const workerId of excludedWorkerIds) {
+    for (const operation of ['enroll', 'lookup']) {
+      await assert.rejects(handle({ ...entry, workerId, operation }, options), /ausgenommen/);
+    }
+  }
+  assert.equal(permissionCalls, 0);
+  assert.equal(await fs.readFile(f.file, 'utf8'), saved);
+});
+
 test('team install and uninstall preserve unrelated and operator keys independently', async t => {
   const f=await fixture(t), hostKeyFile=path.join(f.home,'host.pub');
   await fs.writeFile(hostKeyFile,hostKey); await fs.mkdir(path.join(f.home,'.ssh'));

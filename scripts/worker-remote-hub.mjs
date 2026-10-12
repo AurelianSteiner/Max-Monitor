@@ -90,6 +90,8 @@ export async function handle(body, { settings = loadConfiguration(), file = '/et
   operatorFile = '/etc/max-monitor/remote-operator.pub', permission = checkWorkerControl, teamOptions = {} } = {}) {
   if (!['enroll', 'lookup'].includes(body?.operation) || !WORKER_ID.test(body?.workerId || '')) throw new Error('Ungültige Fernzugriffs-Anfrage.');
   if (body.deviceId !== undefined && (typeof body.deviceId !== 'string' || !DEVICE_ID.test(body.deviceId))) throw new Error('Ungültige Gerätekennung.');
+  const policy = teamConfiguration(settings, teamOptions);
+  if (policy?.excludedWorkerIds.includes(body.workerId)) throw new Error('Dieser Mac ist ausdrücklich vom Fernzugriff ausgenommen.');
   const saved = registryAt(file).workers.find(v => v.workerId === body.workerId);
   if (saved?.deviceId && body.deviceId && saved.deviceId !== body.deviceId) throw new Error('Mac-Identität hat sich geändert; bestehende Zuordnung zuerst prüfen.');
   // Legacy apps are bound by their existing UUID; display names never grant access.

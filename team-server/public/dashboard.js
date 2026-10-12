@@ -4,6 +4,9 @@
 // its bootstrap before this script runs; browsers use the connection dialog.
 (() => {
   const $ = (id) => document.getElementById(id);
+  // Display names do not change task ownership or the SSH/enrollment identity.
+  const workerDisplayNames = new Map([["newsletter-mac-141b2976", "Mac 4"]]);
+  const workerName = (workerId, fallback = "Mac") => workerDisplayNames.get(workerId) || workerId || fallback;
   // The relay can be hosted at / or behind a shared Hub path such as /max-monitor.
   const relayPrefix = location.pathname.replace(/\/(?:fleet|monitor)\/?$/, "");
   const bootstrap = window.__MAX_MONITOR__;
@@ -552,7 +555,7 @@
       const result = compareSkills(machine);
       const row = node("li");
       const head = node("div", "skill-comparison-head");
-      const link = node("button", "text-button", machine.workerId || machine.name);
+      const link = node("button", "text-button", workerName(machine.workerId, machine.name));
       link.dataset.skillWorker = machine.workerId || machine.id;
       link.type = "button"; link.addEventListener("click", () => machineDetails(machine));
       const state = node("span", "skill-comparison-state", result.label); state.dataset.state = result.state;
@@ -756,7 +759,7 @@
       button.type = "button";
       const severity = attentionSeverity(entry);
       const dot = node("span", `dot ${task ? entity.status : severity <= 1 ? "offline" : severity === 2 ? "silent" : "unknown"}`);
-      const title = task ? entity.title || entity.id : entity.name || entity.workerId || "Mac";
+      const title = task ? entity.title || entity.id : workerName(entity.workerId, entity.name);
       const label = node("strong", "", title);
       label.title = title;
       const reason = entry.reasons.length > 1
@@ -846,7 +849,7 @@
       const displayStatus = machineDisplayStatus(machine);
       const failure = workerFailureReason(machine);
       const row = node("tr", `fleet-row ${displayStatus}`);
-      const label = machine.workerId || machine.name || "Mac";
+      const label = workerName(machine.workerId, machine.name);
       const nameCell = node("td");
       const name = node("div", "fleet-name");
       const signal = node("span", `dot ${displayStatus}`);
@@ -926,7 +929,7 @@
       const card = node("article", `machine ${displayStatus}`);
       const title = node("div", "machine-title");
       const identity = node("div", "machine-name");
-      const label = machine.workerId || machine.name || "Mac";
+      const label = workerName(machine.workerId, machine.name);
       const machineName = node("h3", "", label);
       machineName.title = label;
       const deviceName = machine.deviceName || (machine.name !== machine.workerId ? machine.name : null);
@@ -1004,7 +1007,7 @@
     });
   }
   function filtered(items, { ignoreStatus = false } = {}) {
-    const workerNames = new Map(machines().filter(machine => machine.workerId).map(machine => [machine.workerId, [machine.name, machine.deviceName].filter(Boolean).join(" ")]));
+    const workerNames = new Map(machines().filter(machine => machine.workerId).map(machine => [machine.workerId, [workerName(machine.workerId, machine.name), machine.deviceName].filter(Boolean).join(" ")]));
     const needle = query.trim().toLocaleLowerCase();
     return items
       .filter((task) => {
@@ -1177,7 +1180,7 @@
       const assigned = node("td");
       const assignment = node("div", "progress");
       assignment.append(
-        node("span", "", task.workerId || "Noch nicht zugewiesen"),
+        node("span", "", workerName(task.workerId, "Noch nicht zugewiesen")),
       );
       if (Number.isFinite(task.progress)) {
         const track = node("div", "usage-track");
@@ -1382,7 +1385,7 @@
       detailField("Unternehmen", task.company || "Nicht hinterlegt"),
       detailField("Workflow", workflow(task.workflow)),
       detailField("Status", task.completion === "manual" ? "Manuell erledigt" : statusNames[task.status] || task.status),
-      detailField("Worker", task.workerId || "Noch nicht zugewiesen"),
+      detailField("Worker", workerName(task.workerId, "Noch nicht zugewiesen")),
       detailField(
         "Fortschritt",
         Number.isFinite(task.progress)
@@ -1586,10 +1589,10 @@
       remove.addEventListener("click", () => confirmMachineDeletion(machine));
       children.push(remove);
     }
-    openDetail(machine.name || machine.workerId || "Mac", children);
+    openDetail(workerName(machine.workerId, machine.name), children);
   }
   function confirmMachineDeletion(machine) {
-    const label = machine.workerId || machine.name || "Mac";
+    const label = workerName(machine.workerId, machine.name);
     const message = node("p", "", `„${label}“ und der zugehörige Mitgliedszugang werden endgültig gelöscht. Alle Macs dieses Mitglieds sowie ihre Kontingentdaten und Verläufe werden entfernt. Automatische Worker-Meldungen stellen sie nicht wieder her. Das kann nicht rückgängig gemacht werden.`);
     const actions = node("div", "dialog-actions");
     const cancel = node("button", "button secondary", "Abbrechen");
@@ -1656,7 +1659,7 @@
         const task = entry.type === "task";
         return {
           type: task ? "task" : "machine",
-          title: task ? entity.title || entity.id : entity.name || entity.workerId || "Mac",
+          title: task ? entity.title || entity.id : workerName(entity.workerId, entity.name),
           id: task ? entity.id : entity.workerId || entity.deviceId,
           kind: task ? workflow(entity.workflow) : "Mac",
           workerId: entity.workerId,
@@ -1697,7 +1700,7 @@
         ? "Aufgabenstatus aktualisiert" : rawMessage;
       return {
         type,
-        title: type === "machine" ? workerId || event.title || entity?.name || "Mac"
+        title: type === "machine" ? workerName(workerId, event.title || entity?.name || "Mac")
           : event.title || entity?.title || (type === "source" ? "Queue-Quelle" : "Status aktualisiert"),
         id: type === "task" ? event.taskId || event.entityId : type === "machine" ? event.workerId || entity?.workerId : "",
         kind: type === "task" ? workflow(event.workflow || entity?.workflow || "Aufgabe")
@@ -1719,7 +1722,7 @@
       detailField(row.attention ? "Aktualisiert" : "Ereigniszeitpunkt", exact(row.at)),
       detailField("Typ", row.kind),
       detailField("Status", row.statusLabel),
-      detailField(row.currentWorker ? "Mac · aktuelle Zuordnung" : "Mac", row.workerId || "Nicht zugeordnet"),
+      detailField(row.currentWorker ? "Mac · aktuelle Zuordnung" : "Mac", workerName(row.workerId, "Nicht zugeordnet")),
     );
     const reasons = node("ul", row.attention ? "attention-reasons" : "log-detail-messages");
     row.messages.forEach((message) => reasons.append(node("li", "", message)));
@@ -1753,7 +1756,7 @@
     const queryText = logQuery.trim().toLocaleLowerCase("de-DE");
     const visible = allRows.filter((row) =>
       (logType === "all" || row.type === logType) && (!queryText ||
-        [row.title, row.id, row.kind, row.workerId, row.entity?.deviceName, row.statusLabel, row.phase, ...row.messages]
+        [row.title, row.id, row.kind, row.workerId, workerName(row.workerId, ""), row.entity?.deviceName, row.statusLabel, row.phase, ...row.messages]
           .filter(Boolean).join(" ").toLocaleLowerCase("de-DE").includes(queryText)))
       .sort((a, b) => {
         const first = timestamp(a.at);
@@ -1802,9 +1805,9 @@
       }
       subject.append(title, meta);
       const worker = cell("worker", "Mac");
-      const workerName = node("span", "log-worker-name", row.workerId || (row.type === "source" ? "—" : "Nicht zugeordnet"));
-      workerName.title = row.workerId || "";
-      worker.append(workerName);
+      const workerLabel = node("span", "log-worker-name", workerName(row.workerId, row.type === "source" ? "—" : "Nicht zugeordnet"));
+      workerLabel.title = row.workerId || "";
+      worker.append(workerLabel);
       if (row.currentWorker) worker.append(node("small", "log-secondary", "aktuelle Zuordnung"));
       const state = cell("status", "Status");
       const signal = badge(row.status);

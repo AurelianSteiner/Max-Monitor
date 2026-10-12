@@ -21,9 +21,10 @@ des Workers. Die strikte Hostschlüsselprüfung bleibt aktiv.
 
 ## Zugang für alle Team-Mitglieder
 
-Die fünf eingerichteten Macs akzeptieren zusätzlich persönliche Max-Monitor-
+Die vier eingerichteten Worker-Macs akzeptieren zusätzlich persönliche Max-Monitor-
 Team-Zugänge. Inhaber, Admin, Mitglied und Gast erhalten nach frischer
-Anmeldung kurzlebige SSH-Zertifikate. Till Main 2 bleibt als Ziel ausgenommen.
+Anmeldung kurzlebige SSH-Zertifikate. Till Main und Till Main 2 sind als Ziele
+ausgenommen.
 Befehl, Freigabe und Widerruf stehen in [team-remote-access.md](team-remote-access.md).
 Die folgenden Operator-Befehle bleiben für Einrichtung und Wartung gültig.
 

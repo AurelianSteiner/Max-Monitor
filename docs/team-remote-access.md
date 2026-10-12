@@ -1,11 +1,11 @@
 # Fernzugriff mit persönlichem Max-Monitor-Zugang
 
-Alle aktiven Max-Monitor-Mitglieder dürfen die fünf eingerichteten Macs per
+Alle aktiven Max-Monitor-Mitglieder dürfen die vier eingerichteten Worker-Macs per
 Terminal warten: Inhaber, Admin, Mitglied und Gast. Die MacWorker-Einstellung
 bleibt davon unabhängig. Neue Mitglieder erhalten dieselbe Freigabe durch ihren
 bestehenden Team-Zugang; es ist keine eigene SSH-Schlüsselverteilung nötig.
-Till Main 2 ist als Ziel weiterhin ausdrücklich ausgenommen. Sein Benutzer darf
-mit seinem Team-Zugang auf die anderen fünf Macs zugreifen.
+Till Main und Till Main 2 sind als Ziele ausdrücklich ausgenommen. Ihre
+persönlichen Team-Zugänge dürfen weiterhin auf die vier Worker-Macs zugreifen.
 
 ## Verbindung öffnen
 
@@ -23,7 +23,6 @@ Worker-Hub-Schlüssel sind dafür nicht erforderlich.
 
 | Mac | Kennung für den Befehl |
 | --- | --- |
-| Till Main | `macbook-till-main` |
 | Mac 1 | `macbook-1` |
 | Mac 2 | `macbook-2` |
 | Mac 4 / Newsletter Mac | `newsletter-mac-141b2976` |
@@ -63,7 +62,8 @@ Port-/Agent-/X11-Weiterleitung und `~/.ssh/rc` bleiben gesperrt.
 ## Betrieb auf dem Hub
 
 - `/etc/max-monitor/remote-team.json`: private, ausdrücklich eingerichtete
-  Team-Freigabe mit Hub-Host und ausgeschlossener Worker-ID von Till Main 2.
+  Team-Freigabe mit Hub-Host und den ausgeschlossenen Worker-IDs von Till Main
+  und Till Main 2.
 - `/var/lib/max-monitor/RSMACS01/remote-ca`: privater SSH-Signierschlüssel des
   Relay-Benutzers; der private Schlüssel bleibt auf dem Hub.
 - `remote-ca.pub` daneben: öffentliche Prüfbasis auf den Ziel-Macs.
@@ -105,7 +105,7 @@ Die SSH-Mechanik folgt den offiziellen Beschreibungen von
 [ssh-keygen](https://man.openbsd.org/ssh-keygen) und
 [authorized_keys in sshd](https://man.openbsd.org/sshd).
 
-## Live-Prüfung vom 12.10.2026, 21:29 Uhr
+## Historische Live-Prüfung vom 12.10.2026, 21:29 Uhr
 
 Alle neun aktuellen persönlichen Team-Zugänge erhielten ein auf ihre tatsächliche
 Mitgliedskennung gebundenes Zertifikat. Mit Vales und Relis persönlichen
@@ -121,3 +121,26 @@ mit HTTP 404. Hub-Shell, ein nicht freigegebener Hub-Port und Reverse-Forwarding
 wurden separat live abgewiesen. Die Gastrolle und der sofortige Entzug eines
 persönlichen Team-Tokens sind zusätzlich im echten HTTP-Server-Test abgedeckt.
 145 Skript-, 70 Relay- und drei Python-Client-Tests bestanden.
+
+## Till Main entfernt, 12.10.2026, 21:50 Uhr
+
+Auf erneuten Nutzerwunsch ist auch `macbook-till-main` als Fernzugriffsziel
+entfernt. Die Team-Policy sperrt beide persönlichen Till-Macs. Der Hub-Helfer
+weist für ausgeschlossene IDs sowohl `enroll` als auch `lookup` ab, selbst bei
+einem noch vorhandenen alten Operator-Registereintrag. Das Team-Manifest enthält
+nur Mac 1, Mac 2, Mac 4 und Mac 5; die Bastion erlaubt deren vier Zielports.
+
+Auf Till Main wurden nur der Wartungs-LaunchAgent, sein Profil und seine beiden
+SSH-Freigaben entfernt. Bestehende fremde SSH-Schlüssel und die macOS-Fernanmeldung
+bleiben erhalten. Der Newsletter-Worker blieb beim Rückbau unverändert PID 15368.
+Sicherungen liegen lokal unter
+`~/.local/share/max-monitor-remote/backups/remove-personal-main-20261012T194925Z`
+und auf dem Hub unter
+`/var/backups/max-monitor/remove-personal-main-20261012T194946Z`.
+
+Die erneuten Live-Anträge für beide ausgeschlossenen Macs liefern HTTP 404;
+Operator-Registrierung und Lookup werden ebenfalls abgewiesen. Mac 1 bestand
+nach dem Rückbau erneut den echten SSH-Check als `tuck2`. Ein zusätzlicher
+Mac-2-Check hatte eine SSH-Zeitüberschreitung; daraus wird keine neue erfolgreiche
+Verbindung abgeleitet. Seine Freigabe und die drei anderen Zielbindungen wurden
+beim Rückbau nicht verändert.
