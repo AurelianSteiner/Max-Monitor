@@ -509,7 +509,7 @@
     }
   }
   const skillNames = {
-    "content-creation": "Erstellung", "newsletter-korrektur": "Korrektur", "rs-klaviyo-upload": "Klaviyo-Upload",
+    "content-creation": "Content Creation", "newsletter-korrektur": "Correction", "rs-klaviyo-upload": "Klaviyo-Upload",
   };
   function latestSkills() {
     return Array.isArray(snapshot?.skillRelease?.items)
