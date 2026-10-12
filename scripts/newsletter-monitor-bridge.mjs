@@ -531,22 +531,36 @@ export async function readLocalHubFleet(hub, { fleetDirectory = path.join(hub.hu
 
 export async function readLocalSales(directory, now = Date.now()) {
   const rows = [];
-  for (const name of await fs.readdir(directory)) {
+  const statuses = { reserved: 'queued', running: 'running', delivery: 'running', blocked: 'blocked', aborted: 'blocked', done: 'completed' };
+  const phases = { reserved: 'Reserviert', running: 'In Bearbeitung', delivery: 'PDF-Upload', blocked: 'Sales blockiert', aborted: 'Abgebrochen', done: 'Fertig' };
+  let names;
+  try { names = await fs.readdir(directory); }
+  catch { throw new Error('Sales-Jobablage ist nicht lesbar; bisheriger Queue-Stand bleibt erhalten.'); }
+  for (const name of names) {
     if (!/^\d+\.\d+$/.test(name)) continue;
     try {
       const file = path.join(directory, name, 'job.json');
       const stat = await fs.lstat(file);
-      if (!stat.isFile() || stat.size > 2 * 1024 * 1024) continue;
+      if (!stat.isFile() || stat.size > 2 * 1024 * 1024) throw new Error('Ungültige Jobdatei');
       const job = JSON.parse(await fs.readFile(file, 'utf8'));
-      const stamp = job.observed_at || job.updated_at;
+      const status = Object.hasOwn(statuses, job.status) ? statuses[job.status] : undefined;
+      const stamp = job.observed_at || job.updated_at || job.created_at;
       const seen = typeof stamp === 'number' ? stamp : Date.parse(stamp);
-      if (job.status !== 'running' || !/^[a-z0-9][a-z0-9._-]{0,79}$/i.test(job.worker)
-        || !Number.isFinite(seen) || now - seen > 120000 || seen > now + 30000) continue;
+      if (!status || !/^[a-z0-9][a-z0-9._-]{0,79}$/i.test(job.worker)
+        || !Number.isFinite(seen) || seen > now + 30000) throw new Error('Ungültiger Jobstatus');
       const url = new URL(job.url);
-      if (url.protocol !== 'https:' || url.username || url.password) continue;
-      rows.push({ id: `sales:${name}`, title: `Sales · ${url.hostname}`, url: url.href, workflow: 'sales', status: 'running',
-        workerId: job.worker, phase: displayText(job.monitor?.phase, 160, 'Sales-Newsletter in Bearbeitung'), updatedAt: new Date(seen).toISOString() });
-    } catch { /* An incomplete sales report never clears the production queue. */ }
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Ungültige Shopadresse');
+      const blockedReason = status === 'blocked' ? displayText(job.reason, 500, job.status === 'aborted' ? 'Sales-Lauf wurde abgebrochen' : 'Sales-Lauf ist blockiert') : undefined;
+      // Job state is authoritative. A missing heartbeat must never remove accepted work.
+      const awaitingWorker = ['queued', 'running'].includes(status) && now - seen > 30 * 60000;
+      rows.push({ id: `sales:${name}`, title: `Sales · ${url.hostname}`, url: url.href, workflow: 'sales', status,
+        sourceStatus: job.status, workerId: job.worker, attemptId: displayText(job.owner, 200),
+        phase: awaitingWorker ? 'Worker-Meldung ausstehend' : phases[job.status],
+        ...(blockedReason ? { blockedReason } : {}), ...(status === 'completed' ? { progress: 100 } : {}),
+        updatedAt: new Date(seen).toISOString() });
+    } catch {
+      throw new Error(`Sales-Job ${name} konnte nicht vollständig gelesen werden; bisheriger Queue-Stand bleibt erhalten.`);
+    }
   }
   return rows;
 }
@@ -581,7 +595,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
     const key = `${issue.workerId}:${issue.stage}:${issue.severity}`;
     if (!issues.has(key) || Date.parse(issue.reportedAt) > Date.parse(issues.get(key).reportedAt)) issues.set(key, issue);
   };
-  const [taskResult, claimResult, workerResult, issueResult] = await Promise.allSettled([
+  const [taskResult, claimResult, workerResult, issueResult, salesResult] = await Promise.allSettled([
     (async () => {
       const variants = await discoverTags(hubFetch, config.clickup.workspace_id, workflows);
       return { variants, tasks: await listTasks(hubFetch, config.clickup.workspace_id, variants) };
@@ -596,11 +610,12 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
     Promise.resolve().then(() => fleetReader(config.hub, fleetDirectory ? { fleetDirectory } : {})),
     config.monitor_channels?.errors || (config.fehler?.enabled && config.fehler.channel_id !== config.slack.channel_id)
       ? claimReader(hubFetch, config.monitor_channels?.errors || config.fehler.channel_id, { now, onMessage, lookbackDays: 7 }) : Promise.resolve(),
+    Promise.resolve().then(() => salesReader ? salesReader(now) : []),
   ]);
   // Clear resolved notices only after every configured warning channel was read completely.
   const workerIssues = claimResult.status === 'fulfilled' && issueResult.status === 'fulfilled' ? [...issues.values()] : undefined;
-  if (taskResult.status === 'rejected' || claimResult.status === 'rejected' || issueResult.status === 'rejected') {
-    const error = [taskResult, claimResult, issueResult].find(result => result.status === 'rejected').reason;
+  if ([taskResult, claimResult, issueResult, salesResult].some(result => result.status === 'rejected')) {
+    const error = [taskResult, claimResult, issueResult, salesResult].find(result => result.status === 'rejected').reason;
     return { ...(workerIssues === undefined ? {} : { workerIssues }), source: {
       name: SOURCE_NAME, error: displayText(error.message, 300, 'Quellenabfrage fehlgeschlagen.'),
     } };
@@ -611,9 +626,9 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const fleetDetail = workerResult.status === 'rejected'
     ? 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.' : undefined;
   const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl });
-  if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
   await addRunDetails(queue, { hubFetch, channelId: config.slack.channel_id, previews, previousTasks, now });
-  if (salesReader) queue.push(...await salesReader(now));
+  queue.push(...salesResult.value);
+  if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
   return { tasks: queue, workerIssues, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
     name: SOURCE_NAME, lastSuccessAt: new Date(now).toISOString(),
     detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${claims.length} Reservierungen${fleetDetail ? ` · ${fleetDetail}` : ''}`,
@@ -747,7 +762,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       try {
         const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
           previews, previousTasks: cached?.tasks, ...(options.localHub ? { fleetReader: readLocalHubFleet,
-            salesReader: time => readLocalSales(path.join(options.localHub, 'sales-newsletter'), time).catch(() => []) } : {}) }), cachedSource: cached?.source,
+            salesReader: time => readLocalSales(path.join(options.localHub, 'sales-newsletter'), time) } : {}) }), cachedSource: cached?.source,
           publish: snapshot => options.dryRun ? console.log(JSON.stringify(snapshot, null, 2)) : publishSnapshot(snapshot, options),
           save: options.dryRun ? undefined : async snapshot => {
             await fs.mkdir(path.dirname(options.cacheFile), { recursive: true, mode: 0o700 });
