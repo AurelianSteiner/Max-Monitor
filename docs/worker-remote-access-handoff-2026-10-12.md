@@ -6,6 +6,8 @@ Till beauftragt eine dauerhafte Lösung für die erneut als pausiert angezeigte
 Auftragsannahme und echten Fernzugriff auf die Macs. Er hat den Umfang auf
 Terminal und Worker-Reparatur festgelegt. Bildschirmzugriff gehört nicht dazu.
 Till hat die macOS-Fernanmeldung auf dem Haupt-Mac freigegeben und dies bestätigt.
+Auch Mac 5 hat die lokale Einrichtung ausgeführt und die korrigierte Installation
+erneut geladen.
 
 ## Fertig und live geprüft
 
@@ -27,9 +29,24 @@ Till hat die macOS-Fernanmeldung auf dem Haupt-Mac freigegeben und dies bestäti
   (PID 49076 → 52829); der Newsletter-Dienst blieb PID 4392.
 - Ein realer Fernbefehl hat die produktive Worker-LaunchAgent-Konfiguration
   über diesen Tunnel ausgelesen. Kein Newsletter-Dienst wurde neu gestartet.
+  Nach der Prüfdatei-Korrektur wurden auch Worker-Code, Konfiguration und die
+  konfigurierte Zustandsdatenbank über SSH erfolgreich gelesen.
+- `check macworker-5-schwarz` bestätigte um 19:48 Uhr die vollständige SSH-Verbindung
+  als `claude3` über Port 23001. Worker PID 10102 und Wartungstunnel PID 7417 liefen.
+  Der Zugriff auf Worker-Code, Konfiguration und Zustandsverzeichnis unter
+  `/Users/claude3/Documents/AI Newsletter Creation` wurde jedoch mit `EPERM`
+  abgewiesen. Die Zusatzfreigabe für entfernten Festplattenzugriff wird gerade
+  durch Till geprüft; bis zum echten Dateizugriff keine vollständige
+  Worker-Reparaturfähigkeit melden.
+- Der zuerst scheiternde Mac-5-Tunnel verwendete eine Hub-Prüfdatei im geschützten
+  Documents-Ordner. Die korrigierte Installation kopiert die bereits vertrauten
+  öffentlichen Pins in das eigene Wartungsverzeichnis. Die strikte SSH-Prüfung
+  bleibt aktiv. Die Korrektur liegt bereits auf dem Hub; der Haupt-Mac wurde
+  damit erneut installiert und die vollständige Verbindung erneut bestätigt.
 - 134 Skript-Tests und 66 Relay-Tests bestanden. Nach dem ergänzten Test für
-  macOS-Hostschlüssel bestanden alle 15 Fernzugriffstests plus 11 Hub-Installer-
-  Tests. Bash-Syntaxprüfung und `git diff --check` bestanden.
+  macOS-Hostschlüssel und den unabhängigen Prüfdateipfad bestanden alle 16
+  Fernzugriffstests plus 11 Hub-Installer-Tests. Bash-Syntaxprüfung und
+  `git diff --check` bestanden.
 
 Die Runtime-Erweiterung änderte keine Relay-/Queue-Dienste, Mitglieder,
 Inhabertokens oder vorhandene SSH-Zugangsrechte. Vorhandene Dateien wurden
@@ -39,12 +56,15 @@ sie ist jetzt auch im regulären Installer enthalten.
 
 ## Noch offen
 
-Die fünf anderen Macs sind noch nicht für diesen neuen Terminal-Zugang
+Die vier anderen Macs sind noch nicht für diesen neuen Terminal-Zugang
 registriert. Pro Mac muss der angemeldete Benutzer die macOS-Fernanmeldung
 freigeben und den bereitgestellten Setup-Befehl einmal ausführen. Das lässt sich
 über den bisher nur lesenden Monitor-Beobachter nicht ausführen. Keine bloße
 Registrierung oder `installed: true` als Zugriffserfolg melden: jeden Mac mit
 `worker-remote.mjs check <exakte-worker-id>` prüfen.
+Auf Mac 5 ist zusätzlich die Dateifreigabe noch zu verifizieren. Danach den
+aktiven Konfigurationspfad aus dem LaunchAgent lesen, die Konfiguration laden
+und die konfigurierte Datenbank schreibgeschützt auslesen.
 
 Die allgemeine Monitor-Anzeige „Annahme pausiert“ wurde in diesem Auftrag
 nicht visuell geändert. Der neue Zugang ermöglicht die lokale Diagnose; eine

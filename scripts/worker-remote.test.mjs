@@ -22,7 +22,10 @@ async function fixture(t) {
   t.after(() => fs.rm(home, { recursive: true, force: true }));
   const file = path.join(home, 'registry.json'), operatorFile = path.join(home, 'operator.pub');
   await fs.writeFile(operatorFile, operatorKey);
-  return { home, file, operatorFile, settings: {}, permission: async () => ({ reason: 'enabled' }) };
+  const knownHostsFile = path.join(home, 'Documents/AI Newsletter Creation/config/hub_known_hosts');
+  await fs.mkdir(path.dirname(knownHostsFile), { recursive: true });
+  await fs.writeFile(knownHostsFile, `hub.example.test ${hostKey}\n`);
+  return { home, file, operatorFile, worker: { ...worker, knownHostsFile }, settings: {}, permission: async () => ({ reason: 'enabled' }) };
 }
 
 test('key parsing rejects options, malformed wire data and multiple keys', () => {
@@ -131,11 +134,17 @@ test('install and uninstall preserve unrelated keys and never touch newsletter s
   await fs.writeFile(hostKeyFile, hostKey); await fs.mkdir(path.join(f.home, '.ssh'));
   await fs.writeFile(path.join(f.home, '.ssh/authorized_keys'), 'existing-key\n');
   const calls = [], execute = async (binary, args) => { calls.push([binary, args]); return binary.endsWith('/ssh') ? JSON.stringify({ schema: 1, ...entry, operatorKey }) : ''; };
-  const result = await install(worker, { home: f.home, uid: 501, platform: 'darwin', username: entry.username, hostKeyFile, preflight: async () => {}, execute });
+  const result = await install(f.worker, { home: f.home, uid: 501, platform: 'darwin', username: entry.username, hostKeyFile, preflight: async () => {}, execute });
   assert.equal(result.installed, true); assert.equal(result.verified, false);
   assert.ok((await fs.readFile(path.join(f.home, '.ssh/authorized_keys'), 'utf8')).startsWith('existing-key\n'));
+  const plist = await fs.readFile(path.join(f.home, 'Library/LaunchAgents/de.rs.max-monitor.remote.plist'), 'utf8');
+  assert.ok(!plist.includes('/Documents/'));
+  const copied = path.join(f.home, '.local/share/max-monitor-remote/hub_known_hosts');
+  assert.equal(await fs.readFile(copied, 'utf8'), await fs.readFile(f.worker.knownHostsFile, 'utf8'));
+  assert.equal((await fs.stat(copied)).mode & 0o077, 0);
   await uninstall({ home: f.home, uid: 501, execute });
   assert.equal(await fs.readFile(path.join(f.home, '.ssh/authorized_keys'), 'utf8'), 'existing-key\n');
+  await assert.rejects(fs.access(copied));
   assert.ok(!JSON.stringify(calls).includes('de.ruegamer-steiner.ai-newsletter'));
 });
 
@@ -147,8 +156,20 @@ test('failed launchd install restores original authorized_keys and removes new a
     if (binary.endsWith('/ssh')) return JSON.stringify({ schema: 1, ...entry, operatorKey });
     if (args[0] === 'bootstrap') throw Error('bootstrap failed'); return '';
   };
-  await assert.rejects(install(worker, { home: f.home, uid: 501, platform: 'darwin', username: entry.username, hostKeyFile, preflight: async () => {}, execute }), /bootstrap failed/);
+  await assert.rejects(install(f.worker, { home: f.home, uid: 501, platform: 'darwin', username: entry.username, hostKeyFile, preflight: async () => {}, execute }), /bootstrap failed/);
   assert.equal(await fs.readFile(authorized, 'utf8'), 'existing-key\n');
   await assert.rejects(fs.access(path.join(f.home, '.local/share/max-monitor-remote/profile.json')));
   await assert.rejects(fs.access(path.join(f.home, 'Library/LaunchAgents/de.rs.max-monitor.remote.plist')));
+  await assert.rejects(fs.access(path.join(f.home, '.local/share/max-monitor-remote/hub_known_hosts')));
+});
+
+test('empty trusted Hub pins fail before authorizing a key or loading launchd', async t => {
+  const f = await fixture(t), hostKeyFile = path.join(f.home, 'host.pub');
+  await fs.writeFile(hostKeyFile, hostKey); await fs.writeFile(f.worker.knownHostsFile, '');
+  const execute = async (binary, args) => {
+    assert.equal(binary, '/usr/bin/ssh');
+    return JSON.stringify({ schema: 1, ...entry, operatorKey });
+  };
+  await assert.rejects(install(f.worker, { home: f.home, uid: 501, platform: 'darwin', username: entry.username, hostKeyFile, preflight: async () => {}, execute }), /Hostschlüsseldatei/);
+  await assert.rejects(fs.access(path.join(f.home, '.ssh/authorized_keys')));
 });

@@ -14,6 +14,11 @@ Wartungsschlüssel und der Max-Monitor-Inhabertoken werden nicht auf andere Macs
 kopiert. Der Tunnel verwendet den schon vorhandenen Worker-Hub-Schlüssel samt
 dessen bestehenden Berechtigungen; er ändert die Hub-SSH-Zugangsrechte nicht.
 
+Bei der Installation wird die bereits vertraute öffentliche Hub-Prüfdatei nach
+`~/.local/share/max-monitor-remote/hub_known_hosts` kopiert. Der eigenständige
+SSH-Dienst benötigt dadurch keinen Zugriff auf den geschützten Documents-Ordner
+des Workers. Die strikte Hostschlüsselprüfung bleibt aktiv.
+
 ## Einmalige Freigabe auf jedem Ziel-Mac
 
 Als normaler angemeldeter Worker-Benutzer unter **Systemeinstellungen → Allgemein
@@ -64,6 +69,10 @@ node scripts/worker-remote.mjs connect macworker-5-schwarz
 
 `check` prüft die gesamte SSH-Verbindung, den gespeicherten Hostschlüssel und den
 erwarteten Mac-Benutzer. Erst `verified: true` ist ein bestätigter Terminal-Zugang.
+Danach den Zugriff auf den aktiven Worker-Code, die Konfiguration und die
+konfigurierte Zustandsdatenbank mit einem echten Fernbefehl prüfen. `EPERM` oder
+„Operation not permitted“ im Documents-Ordner bedeutet, dass dieser Dateizugriff
+noch nicht freigegeben ist; eine erfolgreiche SSH-Anmeldung beweist ihn nicht.
 `connect` öffnet das Terminal. `--identity-file` erlaubt einen anderen eigenen
 privaten Wartungsschlüssel; `--worker-root` bestimmt die lokale Hub-Konfiguration.
 Ein Befehl kann ausdrücklich nach `--` übergeben werden, beispielsweise:

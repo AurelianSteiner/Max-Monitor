@@ -114,6 +114,13 @@ export async function install(worker, { home = os.homedir(), username = os.userI
   const profileFile = path.join(state, 'profile.json');
   const previousText = await readable(profileFile);
   const previous = previousText ? JSON.parse(previousText) : null;
+  // Standalone launchd ssh must not depend on access to a worker's Documents
+  // directory. Preserve the existing trusted pins outside protected folders.
+  const hubKnownHostsFile = path.join(state, 'hub_known_hosts');
+  const previousHubHosts = await readable(hubKnownHostsFile);
+  const trustedHubHosts = await readable(worker.knownHostsFile);
+  if (!trustedHubHosts.trim()) throw new Error('Vertraute Hub-Hostschlüsseldatei fehlt oder ist leer.');
+  const tunnelWorker = { ...worker, knownHostsFile: hubKnownHostsFile };
   const authorizedFile = path.join(home, '.ssh/authorized_keys');
   // Read only regular files; do not follow a pre-existing symlink.
   try { if (!(await fs.lstat(authorizedFile)).isFile()) throw new Error('authorized_keys ist keine reguläre Datei.'); }
@@ -124,8 +131,9 @@ export async function install(worker, { home = os.homedir(), username = os.userI
   const oldPlist = await readable(plist);
   await writePrivate(authorizedFile, updateAuthorized(authorized, line, previous?.authorizedLine));
   try {
-    await writePrivate(profileFile, JSON.stringify({ schema: 1, ...entry, authorizedLine: line, installedAt: new Date().toISOString() }, null, 2) + '\n');
-    await writePrivate(plist, launchAgent(worker, entry, path.join(state, 'tunnel.log')));
+    await writePrivate(hubKnownHostsFile, trustedHubHosts);
+    await writePrivate(profileFile, JSON.stringify({ schema: 1, ...entry, authorizedLine: line, hubKnownHostsFile, installedAt: new Date().toISOString() }, null, 2) + '\n');
+    await writePrivate(plist, launchAgent(tunnelWorker, entry, path.join(state, 'tunnel.log')));
     await execute('/usr/bin/plutil', ['-lint', plist]);
     try { await execute('/bin/launchctl', ['bootout', `gui/${uid}/${LABEL}`]); } catch {}
     await execute('/bin/launchctl', ['bootstrap', `gui/${uid}`, plist]);
@@ -133,6 +141,7 @@ export async function install(worker, { home = os.homedir(), username = os.userI
   } catch (error) {
     try { await execute('/bin/launchctl', ['bootout', `gui/${uid}/${LABEL}`]); } catch {}
     await writePrivate(authorizedFile, authorized);
+    if (previousHubHosts) await writePrivate(hubKnownHostsFile, previousHubHosts); else await fs.rm(hubKnownHostsFile, { force: true });
     if (previousText) await writePrivate(profileFile, previousText); else await fs.rm(profileFile, { force: true });
     if (oldPlist) { await writePrivate(plist, oldPlist); try { await execute('/bin/launchctl', ['bootstrap', `gui/${uid}`, plist]); } catch {} }
     else await fs.rm(plist, { force: true });
@@ -163,6 +172,7 @@ export async function uninstall({ home = os.homedir(), uid = process.getuid(), e
     await writePrivate(authorizedFile, updateAuthorized(await readable(authorizedFile), null, profile.authorizedLine));
     await fs.rm(path.join(home, 'Library/LaunchAgents', LABEL + '.plist'), { force: true });
     await fs.rm(file);
+    await fs.rm(path.join(home, '.local/share/max-monitor-remote/hub_known_hosts'), { force: true });
     return { uninstalled: true, workerId: profile.workerId };
   }
 }
