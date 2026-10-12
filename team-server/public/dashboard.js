@@ -130,7 +130,7 @@
   function safeLink(value) {
     try {
       const url = new URL(value);
-      return url.protocol === "https:" && !url.username && !url.password ? url.href : null;
+      return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.href : null;
     } catch {
       return null;
     }
@@ -1201,14 +1201,14 @@
       const actions = node("td");
       const actionGroup = node("div", "queue-actions");
       const links = node("div", "task-links");
-      for (const [label, value] of [["Slack", task.errorUrl], ["ClickUp", task.url], ["Figma", task.figmaUrl]]) {
+      for (const [label, value] of [["Slack", task.errorUrl], [task.workflow === "sales" ? "Shop" : "ClickUp", task.url], ["Figma", task.figmaUrl]]) {
         const href = safeLink(value);
         if (!href) continue;
         const link = node("a", "text-button", `${label} ↗`);
         link.href = href;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
-        link.setAttribute("aria-label", `${label === "Figma" ? "Figma-Board" : label === "Slack" ? "Fehler in Slack" : "ClickUp"} öffnen: ${task.title || task.id}`);
+        link.setAttribute("aria-label", `${label === "Figma" ? "Figma-Board" : label === "Slack" ? "Fehler in Slack" : label} öffnen: ${task.title || task.id}`);
         links.append(link);
       }
       const detail = node("button", "icon-button", "⋯");
@@ -1377,6 +1377,7 @@
   }
   function taskDetails(task, keep = {}) {
     const grid = node("div", "detail-grid");
+    const salesStatuses = { reserved: "Reserviert", running: "Läuft", delivery: "PDF-Upload", blocked: "Blockiert", aborted: "Abgebrochen", done: "Fertig" };
     grid.append(
       detailField("Unternehmen", task.company || "Nicht hinterlegt"),
       detailField("Workflow", workflow(task.workflow)),
@@ -1393,7 +1394,8 @@
         task.step || task.phase || "Noch kein Schritt gemeldet",
         true,
       ),
-      detailField("ClickUp-Status", task.sourceStatus || "Unbekannt"),
+      detailField(task.workflow === "sales" ? "Sales-Status" : "ClickUp-Status",
+        (task.workflow === "sales" ? salesStatuses[task.sourceStatus] : task.sourceStatus) || "Unbekannt"),
       detailField("Aktualisiert", exact(task.updatedAt)),
     );
     if (task.blockedReason) grid.append(detailField("Blockiergrund", task.blockedReason, true));
@@ -1412,7 +1414,7 @@
     }
     const url = safeLink(task.url);
     if (url) {
-      const link = node("a", "button primary", "In ClickUp öffnen ↗");
+      const link = node("a", "button primary", task.workflow === "sales" ? "Shop öffnen ↗" : "In ClickUp öffnen ↗");
       link.href = url;
       link.target = "_blank";
       link.rel = "noopener noreferrer";

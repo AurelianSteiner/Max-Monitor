@@ -353,6 +353,16 @@ Schreibweise. Alle Tags werden in **einer** seitenweisen ClickUp-Abfrage gelesen
 deutlich unter dem Limit des gemeinsamen Hub-Schlüssels. Die Bridge führt selbst
 keine Uploads oder Übersetzungen aus.
 
+Sales-Jobs werden im zentralen Hub-Modus aus `sales-newsletter/<Slack-ts>/job.json`
+gelesen, einschließlich HTTP-Shopadressen. `reserved` erscheint als Wartet,
+`running` und `delivery` als Läuft, `blocked` und `aborted` als Blockiert
+(Abbrüche mit „Abgebrochen“), `done` als Fertig mit 100 %. Blockiergründe und
+der aktuelle Versuch bleiben zugeordnet. Eine verspätete Worker-Meldung entfernt
+keinen Auftrag; nach 30 Minuten erscheint „Worker-Meldung ausstehend“, bis der
+Hub einen neuen Jobstatus speichert. Nicht lesbare oder unvollständige Sales-Daten
+melden einen Quellenfehler und behalten die letzte vollständige Queue im Relay
+und Cache. Abgeschlossene Jobs haben kein zeitliches Ablaufdatum.
+
 Weitere Workflows kommen über eine JSON-Datei hinzu:
 
 ```json
