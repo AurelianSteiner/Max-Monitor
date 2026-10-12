@@ -104,7 +104,28 @@ werden; erst nach beendetem Tunnel einen Port neu vergeben. Eine Schlüsselrotat
 muss auf jedem Ziel-Mac durch erneute Installation umgesetzt werden. Das Ersetzen
 der öffentlichen Datei auf dem Hub widerruft bereits eingerichtete Macs nicht.
 
-## Verifizierter Diagnose-Stand vom 12.10.2026, 19:57 Uhr
+## Verifizierter Diagnose-Stand vom 12.10.2026, 20:08 Uhr
+
+Vier Macs sind für SSH und echten Worker-Dateizugriff verifiziert:
+
+| Worker | SSH-Benutzer | Hub-Loopback-Port | Status |
+| --- | --- | --- | --- |
+| `macbook-till-main` | `tillticktucktim` | 23000 | Terminal und Worker-Dateien geprüft |
+| `macworker-5-schwarz` | `claude3` | 23001 | Terminal, Worker-Dateien und Schreiben geprüft |
+| `newsletter-mac-141b2976` | `codex1` | 23002 | Terminal, Worker-Dateien und Schreiben geprüft |
+| `macbook-1` | `tuck2` | 23003 | Terminal, Worker-Dateien und Schreiben geprüft |
+
+Bei `macbook-2` fehlt noch die Registrierung; die lokale Installer-Ausgabe ist
+angefragt. `macbook-von-till-main-2` ist auf ausdrücklichen Wunsch des Nutzers von
+diesem Fernzugriff ausgenommen. Das ist keine Deaktivierung seines Workers.
+
+Mac 1 hat vier laufende Aufgaben. Der Codex-Mac hat drei laufende und eine
+wartende Aufgabe. Beide Pools sind damit voll. Ihre aktuellen Polls meldeten
+einen während der Abfrage geänderten ClickUp-Status; die SSH-/Dateiprüfung ist
+unabhängig davon erfolgreich. Mac 2 wurde von der Live-Fleet online mit drei
+aktiven Aufgaben und erlaubter Annahme gemeldet.
+
+Vorherige lokale Diagnose auf Mac 5 um 19:57 Uhr:
 
 Haupt-Mac (`macbook-till-main`) und Mac 5 (`macworker-5-schwarz`, Benutzer `claude3`)
 sind über den neuen SSH-Weg erreichbar. Auf beiden wurden Worker-Code,
@@ -116,8 +137,8 @@ des bestehenden Codes, Profils und der Datenbank bestätigt.
 Mac 5 meldet vier laufende Aufgaben, aktive Max-Monitor-Freigabe und keine
 STOP-Datei. Der neue Poll um 19:57:08 Uhr war erfolgreich. Die Annahmepause
 bei vier belegten Plätzen entspricht der verbindlichen Kapazitätsgrenze.
-Automatisches Wiederverbinden des Wartungstunnels wurde auf beiden Macs
-getestet. Die vier anderen Macs brauchen noch die lokale Einrichtung.
+Automatisches Wiederverbinden des Wartungstunnels wurde auf Haupt-Mac und Mac 5
+getestet.
 
 Frühere Fleet-Beobachtung um 19:27 Uhr:
 

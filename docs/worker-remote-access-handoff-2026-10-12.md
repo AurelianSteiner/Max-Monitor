@@ -8,6 +8,9 @@ Terminal und Worker-Reparatur festgelegt. Bildschirmzugriff gehört nicht dazu.
 Till hat die macOS-Fernanmeldung auf dem Haupt-Mac freigegeben und dies bestätigt.
 Auch Mac 5 hat die lokale Einrichtung ausgeführt und die korrigierte Installation
 erneut geladen.
+Um 20:07 Uhr hat Till auch Mac 1, Mac 2 und den Codex-Mac als eingerichtet gemeldet.
+Den persönlich genutzten `macbook-von-till-main-2` nimmt er ausdrücklich vom
+Fernzugriff aus. Auf diesem Mac keine Einrichtung verlangen oder ausführen.
 
 ## Fertig und live geprüft
 
@@ -53,6 +56,14 @@ erneut geladen.
   macOS-Hostschlüssel und den unabhängigen Prüfdateipfad bestanden alle 16
   Fernzugriffstests plus 11 Hub-Installer-Tests. Bash-Syntaxprüfung und
   `git diff --check` bestanden.
+- Um 20:07 Uhr bestätigten echte SSH-Checks und Fernbefehle auch `macbook-1`
+  als `tuck2` (Port 23003) und `newsletter-mac-141b2976` als `codex1` (Port 23002).
+  Code, Konfiguration und die jeweilige konfigurierte SQLite-Datei wurden gelesen.
+  Eine private temporäre Datei im Zustandsverzeichnis wurde jeweils geschrieben,
+  gelesen und entfernt; Code, Profil und Datenbank haben Schreibberechtigung.
+  Beide Wartungs-LaunchAgents und Newsletter-Dienste liefen, keine STOP-Dateien,
+  Max-Monitor-Freigabe aktiv. Keine lokalen Git-Änderungen: Mac 1 `e14f310`,
+  Codex-Mac `96f7785` zum Zeitpunkt der Prüfung.
 
 Die Runtime-Erweiterung änderte keine Relay-/Queue-Dienste, Mitglieder,
 Inhabertokens oder vorhandene SSH-Zugangsrechte. Vorhandene Dateien wurden
@@ -64,14 +75,16 @@ Entwurfs-PR ist https://github.com/AurelianSteiner/Max-Monitor/pull/44.
 
 ## Noch offen
 
-Die vier anderen Macs sind noch nicht für diesen neuen Terminal-Zugang
-registriert. Pro Mac muss der angemeldete Benutzer die macOS-Fernanmeldung
-freigeben und den bereitgestellten Setup-Befehl einmal ausführen. Das lässt sich
-über den bisher nur lesenden Monitor-Beobachter nicht ausführen. Keine bloße
-Registrierung oder `installed: true` als Zugriffserfolg melden: jeden Mac mit
-`worker-remote.mjs check <exakte-worker-id>` prüfen.
-Haupt-Mac und Mac 5 sind für Terminal-Wartung einschließlich Worker-Dateizugriff
-verifiziert. Der Fernzugriff verwendet die Rechte des jeweiligen Worker-Benutzers;
+Nur `macbook-2` fehlt noch im Fernzugriff-Register; der vollständige Check scheitert
+schon beim Hub-Lookup. Trotz gemeldeter Ausführung ist damit keine erfolgreiche
+Installation belegt. Till wurde um die komplette Textausgabe beim erneuten Start
+des unveränderten Bootstrap-Befehls gebeten. Die Antwort steht noch aus.
+Keine bloße Registrierung oder `installed: true` als Zugriffserfolg melden:
+jeden Mac mit `worker-remote.mjs check <exakte-worker-id>` und einem echten
+Dateibefehl prüfen. `macbook-von-till-main-2` bleibt ausdrücklich ausgenommen.
+
+Haupt-Mac, Mac 5, Mac 1 und Codex-Mac sind für Terminal-Wartung einschließlich
+Worker-Dateizugriff verifiziert. Der Fernzugriff verwendet die Rechte des jeweiligen Worker-Benutzers;
 administrative macOS-Aufgaben benötigen weiterhin dessen normale sudo-Freigabe.
 
 Die allgemeine Monitor-Anzeige „Annahme pausiert“ wurde in diesem Auftrag
@@ -79,7 +92,20 @@ nicht visuell geändert. Der neue Zugang ermöglicht die lokale Diagnose; eine
 präzisere Anzeige der tatsächlichen Sperrgründe bleibt eine eigene UI-Änderung
 mit den geltenden Skill- und Browserprüfungen.
 
-## Live-Diagnose, 19:57 Uhr
+## Live-Diagnose, 20:08 Uhr
+
+Mac 1 belegt vier laufende Plätze. Der Codex-Mac hat lokal drei laufende und
+einen wartenden Lauf; damit ebenfalls vier belegte Plätze. Beide letzten Polls
+waren aktuell (20:07:34 bzw. 20:07:24 Uhr), meldeten jedoch einen während der
+Abfrage geänderten ClickUp-Status. Einen aktuellen erfolglosen Poll nicht als
+erfolgreiche vollständige Abfrage darstellen. Keine zusätzlichen Testaufgaben
+bei voller Kapazität starten.
+
+Die Live-Fleet um 20:07:54 Uhr meldete alle sechs Worker online. Mac 2 hatte drei
+sichtbare aktive Läufe, einen aktuellen Poll und `acceptingTasks: true`; seine
+fehlende Wartungsregistrierung ist von der laufenden Produktion getrennt.
+
+Vorherige lokale Diagnose auf Mac 5 um 19:57 Uhr:
 
 Der echte lokale Datenbanktest bestätigte eine erfolgreiche neue Aufgabenabfrage
 um 19:57:08 Uhr (`ok: true`, 73 Einträge). `worker_control` wurde um 19:57:35 Uhr
@@ -116,7 +142,8 @@ zu bewerten.
 
 ## Nächste Schritte
 
-1. Setup auf den übrigen Macs ausführen und jeden tatsächlichen SSH-Zugang prüfen.
+1. Installer-Ausgabe von Mac 2 auswerten, nur den nachgewiesenen Fehler beheben,
+   dann dessen tatsächlichen SSH- und Dateizugriff prüfen. Till Main 2 ausnehmen.
 2. Falls ein Mac trotz freier Plätze und nutzbarem Claude pausiert, über den
    neuen Zugang den aktiven Produktionspfad, STOP-Zustand, `worker_control`,
    `monitor_admission`, `last_poll`, reservierte Plätze und lokale Logs lesen.
