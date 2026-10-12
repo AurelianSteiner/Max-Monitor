@@ -197,3 +197,48 @@ aber laut geladenem Profil die Zustandsdatenbank im Entwicklungsverzeichnis.
 Die genaue Datei steht in `config.paths.state_db`; keine Pfade raten.
 
 Einrichtung und Rückbau stehen in [worker-remote-access.md](worker-remote-access.md).
+
+
+## Persönlicher Fernzugriff für alle Team-Mitglieder, abgeschlossen 21:29 Uhr
+
+Till beauftragt anschließend: Alle Personen mit Max-Monitor-Zugang sollen die
+Macs warten können. Auf dem Hub und allen fünf eingerichteten Ziel-Macs ist
+jetzt eine SSH-Zertifikatsfreigabe installiert. Bestehende und künftige aktive
+Team-Mitglieder aller Rollen nutzen ihren eigenen Max-Monitor-Zugangscode;
+`macWorker` und Queue-Rechte bleiben unabhängig. Till Main 2 bleibt als Ziel
+entsprechend Tills vorheriger Ausnahme ausgeschlossen, sein Team-Zugang kann
+aber auf die anderen fünf Macs zugreifen.
+
+`team-server/remote-access.js` signiert nach frischer persönlicher Authentifizierung
+nur einen öffentlichen Schlüssel für genau den angefragten registrierten Mac.
+Die 90 Sekunden gültigen Anmeldezertifikate tragen Mitgliedskennung und exakte
+Bastion-/Mac-Principals. Der öffentliche Python-Client nutzt temporäre eigene
+Schlüssel und gepinnte Hostschlüssel; private Operator- und Root-Schlüssel
+werden nicht verteilt. Der Hub-Benutzer `max-monitor-access` erlaubt ausschließlich
+die fünf Loopback-Zielports; er besitzt keine Hub-Shell. Lokale CA-Freigaben auf
+den Ziel-Macs erlauben Terminal und PTY, keine Weiterleitungen. Die Installer
+übernehmen diese Freigabe künftig und entfernen nur die eigenen Zeilen beim
+Uninstall. Nutzung und Rückbau stehen in `docs/team-remote-access.md`.
+
+Alle neun vorhandenen Team-Zugänge erhielten live persönlich gebundene
+Zertifikate. Mit den persönlichen Zugängen von Vale und Reli bestanden echte
+SSH-Anmeldungen und `id -un` jeweils auf allen fünf Macs. Ein einmaliger
+Banner-Timeout von Reli auf Mac 4 bestand nach gezielter Wiederholung. Die Tests
+liefen von Till Main aus; die physischen Rechner von Vale und Reli wurden dabei
+nicht bedient. Der veröffentlichte Client entspricht bytegenau der geprüften
+lokalen Quelle. Keine Newsletter-Worker wurden für die CA-Freigaben neu gestartet.
+
+Unbekannte Token werden live mit 401, der private Mac als Ziel mit 404 abgewiesen.
+Hub-Shell, unzulässige Ports und Reverse-Forwarding wurden live gesperrt; alle
+Rollen einschließlich Gast sowie entfernter Mitgliedszugang sind im HTTP-Test
+abgedeckt. 145 Skript-Tests, 70 Relay-Tests und drei Python-Client-Tests bestanden.
+
+Der Hub verwarf zuvor echte SSH-Verbindungen wegen `MaxStartups 10:30:100`.
+Die neue Datei `/etc/ssh/sshd_config.d/00-max-monitor-capacity.conf` setzt
+`MaxStartups 50:30:100`; effektive Konfiguration und laufender Listener bestätigen
+das. Nach dem Reload keine weiteren MaxStartups-Abweisungen im geprüften
+Journalfenster. Bestehende Tunnel bleiben erhalten. Sicherungen:
+`/var/backups/max-monitor/team-remote-20261012T185242Z` (Runtime/SSH) und
+`/var/backups/max-monitor/team-ssh-capacity-20261012T190838Z` (Kapazität).
+Die Live-Hub-Installer-Datei besaß eigene Änderungen; nur ihre Bundle-Dateiliste
+wurde ergänzt, der übrige Inhalt erhalten.

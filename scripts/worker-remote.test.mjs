@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { generateKeyPairSync } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { handle, registryAt, publicKey, validateEntry } from './worker-remote-hub.mjs';
-import { install, uninstall, tunnelArgs, launchAgent, connectionArgs, authorizedLine, updateAuthorized, writePrivate, hubRequest, localHostKey, readMonitorDeviceId } from './worker-remote.mjs';
+import { handle, registryAt, publicKey, validateEntry, syncTeamAccess } from './worker-remote-hub.mjs';
+import { install, uninstall, tunnelArgs, launchAgent, connectionArgs, authorizedLine, authorizedTeamLine, updateAuthorized, writePrivate, hubRequest, localHostKey, readMonitorDeviceId } from './worker-remote.mjs';
 import control from '../team-server/worker-control.js';
 
 function key() {
@@ -170,6 +170,47 @@ test('operator key accepts only tunnel-local connections and preserves unrelated
   assert.ok(line.startsWith('from="127.0.0.1,::1",no-agent-forwarding,no-port-forwarding,no-X11-forwarding '));
   assert.equal(updateAuthorized('existing-key\n' + line + '\n', line, line), 'existing-key\n' + line + '\n');
   assert.equal(updateAuthorized('existing-key\n' + line + '\n', null, line), 'existing-key\n');
+});
+
+test('team CA trusts only the exact target principal and tunnel-local terminal sessions', () => {
+  const line = authorizedTeamLine({ teamId: 'DEMO1234', publicKey: operatorKey }, entry.workerId);
+  assert.ok(line.includes('from="127.0.0.1,::1",cert-authority,principals="max-monitor-DEMO1234-macbook-1",restrict,pty'));
+  assert.ok(!line.includes('port-forwarding'));
+  for (const teamId of ['DEMO1234,root', 'other-team', null]) assert.throws(() => authorizedTeamLine({ teamId, publicKey: operatorKey }, entry.workerId));
+});
+
+test('team manifest and bastion key retain exact registered ports and exclude private Macs', async t => {
+  const f = await fixture(t), teamId = 'DEMO1234', dataDir = path.join(f.home, 'data');
+  const policyFile = path.join(f.home,'policy.json'), bastionKeys=path.join(f.home,'bastion-authorized'), hostKeyFile=path.join(f.home,'hub.pub');
+  await fs.mkdir(path.join(dataDir,teamId),{recursive:true});
+  await fs.writeFile(path.join(dataDir,teamId,'remote-ca.pub'),operatorKey);
+  await fs.writeFile(policyFile,JSON.stringify({schema:1,teamId,hubHost:'hub.example.test',excludedWorkerIds:['macbook-von-till-main-2']}),{mode:0o600});
+  await fs.writeFile(bastionKeys,''); await fs.writeFile(hostKeyFile,hostKey);
+  await fs.writeFile(f.file,JSON.stringify({schema:1,workers:[entry,{...entry,workerId:'macbook-von-till-main-2',port:23001}]}),{mode:0o600});
+  const options={file:f.file,policyFile,dataDir,bastionKeys,hostKeyFile};
+  syncTeamAccess({teamId},options);
+  const manifest=JSON.parse(await fs.readFile(path.join(dataDir,teamId,'remote-access.json'),'utf8'));
+  assert.deepEqual(manifest.workers,[entry]); assert.equal(manifest.hubUser,'max-monitor-access');
+  const line=await fs.readFile(bastionKeys,'utf8');
+  assert.ok(line.includes('principals="max-monitor-DEMO1234-bastion"')); assert.ok(line.includes('command="/usr/bin/false"'));
+  assert.ok(line.includes('permitopen="127.0.0.1:23000"')); assert.ok(!line.includes('23001'));
+  assert.throws(()=>syncTeamAccess({teamId:'OTHER123'},options),/Ungültige/);
+  await fs.chmod(policyFile,0o644); assert.throws(()=>syncTeamAccess({teamId},options),/Ungültige/);
+});
+
+test('team install and uninstall preserve unrelated and operator keys independently', async t => {
+  const f=await fixture(t), hostKeyFile=path.join(f.home,'host.pub');
+  await fs.writeFile(hostKeyFile,hostKey); await fs.mkdir(path.join(f.home,'.ssh'));
+  const authorized=path.join(f.home,'.ssh/authorized_keys'); await fs.writeFile(authorized,'unrelated-key\n');
+  const authority={teamId:'DEMO1234',publicKey:operatorKey};
+  const execute=async binary=>binary.endsWith('/ssh')?JSON.stringify({schema:1,...entry,operatorKey,teamAuthority:authority}):'';
+  const options={home:f.home,uid:501,platform:'darwin',username:entry.username,hostKeyFile,preflight:async()=>{},execute};
+  await install(f.worker,options); await install(f.worker,options);
+  const text=await fs.readFile(authorized,'utf8');
+  assert.equal(text.split('\n').filter(v=>v.includes('cert-authority')).length,1);
+  assert.ok(text.includes(authorizedLine(operatorKey,entry.workerId)));
+  await uninstall({home:f.home,uid:501,execute});
+  assert.equal(await fs.readFile(authorized,'utf8'),'unrelated-key\n');
 });
 
 test('proxy safely quotes paths and pins the target host key', () => {

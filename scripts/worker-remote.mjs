@@ -36,6 +36,11 @@ export function authorizedLine(operatorKey, workerId) {
   return `from="127.0.0.1,::1",no-agent-forwarding,no-port-forwarding,no-X11-forwarding ${publicKey(operatorKey)} max-monitor-remote-${workerId}`;
 }
 
+export function authorizedTeamLine(authority, workerId) {
+  if (!authority || typeof authority.teamId !== 'string' || !/^[A-Z0-9]{4,16}$/.test(authority.teamId) || !WORKER_ID.test(workerId || '')) throw new Error('Ungültige Team-Fernzugriff-Freigabe.');
+  return `from="127.0.0.1,::1",cert-authority,principals="max-monitor-${authority.teamId}-${workerId}",restrict,pty ${publicKey(authority.publicKey)} max-monitor-team-${workerId}`;
+}
+
 export function updateAuthorized(existing, line, previous) {
   const lines = existing.split('\n').filter(value => value !== previous && value !== line);
   while (lines.at(-1) === '') lines.pop();
@@ -93,7 +98,8 @@ export async function hubRequest(worker, body, execute = run) {
   const value = JSON.parse(await execute('/usr/bin/ssh', [...hubArgs(worker), worker.hubHost, HELPER], { input: JSON.stringify(body), timeout: 20000 }));
   const entry = validateEntry(value);
   if (value.schema !== 1 || entry.workerId !== body.workerId) throw new Error('Hub-Antwort passt nicht zum angefragten Mac.');
-  return { ...entry, ...(value.operatorKey ? { operatorKey: publicKey(value.operatorKey) } : {}) };
+  if (value.teamAuthority) authorizedTeamLine(value.teamAuthority, entry.workerId);
+  return { ...entry, ...(value.operatorKey ? { operatorKey: publicKey(value.operatorKey) } : {}), ...(value.teamAuthority ? { teamAuthority: value.teamAuthority } : {}) };
 }
 
 export async function localHostKey(file, execute = run) {
@@ -136,12 +142,13 @@ export async function install(worker, { home = os.homedir(), username = os.userI
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   const authorized = await readable(authorizedFile);
   const line = authorizedLine(entry.operatorKey, worker.workerId);
+  const teamLine = entry.teamAuthority ? authorizedTeamLine(entry.teamAuthority, worker.workerId) : null;
   const plist = path.join(home, 'Library/LaunchAgents', LABEL + '.plist');
   const oldPlist = await readable(plist);
-  await writePrivate(authorizedFile, updateAuthorized(authorized, line, previous?.authorizedLine));
+  await writePrivate(authorizedFile, updateAuthorized(updateAuthorized(authorized, line, previous?.authorizedLine), teamLine, previous?.authorizedTeamLine));
   try {
     await writePrivate(hubKnownHostsFile, trustedHubHosts);
-    await writePrivate(profileFile, JSON.stringify({ schema: 1, ...entry, authorizedLine: line, hubKnownHostsFile, installedAt: new Date().toISOString() }, null, 2) + '\n');
+    await writePrivate(profileFile, JSON.stringify({ schema: 1, ...entry, authorizedLine: line, ...(teamLine ? { authorizedTeamLine: teamLine } : {}), hubKnownHostsFile, installedAt: new Date().toISOString() }, null, 2) + '\n');
     await writePrivate(plist, launchAgent(tunnelWorker, entry, path.join(state, 'tunnel.log')));
     await execute('/usr/bin/plutil', ['-lint', plist]);
     try { await execute('/bin/launchctl', ['bootout', `gui/${uid}/${LABEL}`]); } catch {}
@@ -178,7 +185,7 @@ export async function uninstall({ home = os.homedir(), uid = process.getuid(), e
   return remove();
   async function remove() {
     const authorizedFile = path.join(home, '.ssh/authorized_keys');
-    await writePrivate(authorizedFile, updateAuthorized(await readable(authorizedFile), null, profile.authorizedLine));
+    await writePrivate(authorizedFile, updateAuthorized(updateAuthorized(await readable(authorizedFile), null, profile.authorizedLine), null, profile.authorizedTeamLine));
     await fs.rm(path.join(home, 'Library/LaunchAgents', LABEL + '.plist'), { force: true });
     await fs.rm(file);
     await fs.rm(path.join(home, '.local/share/max-monitor-remote/hub_known_hosts'), { force: true });

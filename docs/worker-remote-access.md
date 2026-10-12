@@ -19,6 +19,14 @@ Bei der Installation wird die bereits vertraute öffentliche Hub-Prüfdatei nach
 SSH-Dienst benötigt dadurch keinen Zugriff auf den geschützten Documents-Ordner
 des Workers. Die strikte Hostschlüsselprüfung bleibt aktiv.
 
+## Zugang für alle Team-Mitglieder
+
+Die fünf eingerichteten Macs akzeptieren zusätzlich persönliche Max-Monitor-
+Team-Zugänge. Inhaber, Admin, Mitglied und Gast erhalten nach frischer
+Anmeldung kurzlebige SSH-Zertifikate. Till Main 2 bleibt als Ziel ausgenommen.
+Befehl, Freigabe und Widerruf stehen in [team-remote-access.md](team-remote-access.md).
+Die folgenden Operator-Befehle bleiben für Einrichtung und Wartung gültig.
+
 ## Einmalige Freigabe auf jedem Ziel-Mac
 
 Als normaler angemeldeter Worker-Benutzer unter **Systemeinstellungen → Allgemein

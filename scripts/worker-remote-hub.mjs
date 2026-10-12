@@ -47,8 +47,47 @@ export function registryAt(file) {
   }
 }
 
+export function teamConfiguration(settings, { policyFile = '/etc/max-monitor/remote-team.json', dataDir = '/var/lib/max-monitor' } = {}) {
+  let policy;
+  try {
+    const stat = fs.lstatSync(policyFile);
+    if (!stat.isFile() || stat.size > 4096 || stat.mode & 0o077) throw Error('invalid');
+    policy = JSON.parse(fs.readFileSync(policyFile, 'utf8'));
+  } catch (error) { if (error.code === 'ENOENT') return null; throw new Error('Ungültige Team-Fernzugriff-Freigabe.'); }
+  if (policy.schema !== 1 || !/^[A-Z0-9]{4,16}$/.test(policy.teamId || '') || policy.teamId !== settings.teamId ||
+      typeof policy.hubHost !== 'string' || !/^[a-z0-9][a-z0-9.-]{0,252}$/i.test(policy.hubHost) ||
+      !Array.isArray(policy.excludedWorkerIds) || policy.excludedWorkerIds.some(v => typeof v !== 'string' || !WORKER_ID.test(v))) throw new Error('Ungültige Team-Fernzugriff-Freigabe.');
+  const keyFile = path.join(dataDir, policy.teamId, 'remote-ca.pub');
+  if (!fs.lstatSync(keyFile).isFile()) throw new Error('Team-Prüfschlüssel ist keine reguläre Datei.');
+  return { ...policy, publicKey: publicKey(fs.readFileSync(keyFile, 'utf8').trim()), dataDir };
+}
+
+export function syncTeamAccess(settings, { file = '/etc/max-monitor/remote-access.json', bastionKeys = '/var/lib/max-monitor-access/.ssh/authorized_keys', hostKeyFile = '/etc/ssh/ssh_host_ed25519_key.pub', ...options } = {}) {
+  const team = teamConfiguration(settings, options);
+  if (!team) return null;
+  const workers = registryAt(file).workers.filter(v => !team.excludedWorkerIds.includes(v.workerId));
+  if (!workers.length) throw new Error('Keine Macs für Team-Fernzugriff eingerichtet.');
+  const keys = ['cert-authority', `principals="max-monitor-${team.teamId}-bastion"`, 'restrict', 'port-forwarding',
+    'command="/usr/bin/false"', ...workers.map(v => `permitopen="127.0.0.1:${v.port}"`)].join(',') + ` ${team.publicKey} max-monitor-team-access\n`;
+  if (!fs.lstatSync(bastionKeys).isFile()) throw new Error('Bastion-Prüfschlüssel ist keine reguläre Datei.');
+  const manifest = { schema: 1, enabled: true, teamId: team.teamId, hubHost: team.hubHost, hubUser: 'max-monitor-access',
+    hubHostKey: publicKey(fs.readFileSync(hostKeyFile, 'utf8').trim()),
+    workers: workers.map(({ workerId, username, port, hostKey }) => ({ workerId, username, port, hostKey })) };
+  const target = path.join(team.dataDir, team.teamId, 'remote-access.json');
+  for (const [output, value] of [[bastionKeys, keys], [target, JSON.stringify(manifest, null, 2) + '\n']]) {
+    try { if (!fs.lstatSync(output).isFile()) throw new Error('Team-Konfiguration ist keine reguläre Datei.'); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const temporary = output + `.tmp-${process.pid}`;
+    try {
+      fs.writeFileSync(temporary, value, { mode: 0o644, flag: 'wx' });
+      fs.renameSync(temporary, output);
+    } finally { fs.rmSync(temporary, { force: true }); }
+  }
+  return team;
+}
+
 export async function handle(body, { settings = loadConfiguration(), file = '/etc/max-monitor/remote-access.json',
-  operatorFile = '/etc/max-monitor/remote-operator.pub', permission = checkWorkerControl } = {}) {
+  operatorFile = '/etc/max-monitor/remote-operator.pub', permission = checkWorkerControl, teamOptions = {} } = {}) {
   if (!['enroll', 'lookup'].includes(body?.operation) || !WORKER_ID.test(body?.workerId || '')) throw new Error('Ungültige Fernzugriffs-Anfrage.');
   if (body.deviceId !== undefined && (typeof body.deviceId !== 'string' || !DEVICE_ID.test(body.deviceId))) throw new Error('Ungültige Gerätekennung.');
   const saved = registryAt(file).workers.find(v => v.workerId === body.workerId);
@@ -93,7 +132,9 @@ export async function handle(body, { settings = loadConfiguration(), file = '/et
         fs.renameSync(temporary, file);
       } finally { fs.rmSync(temporary, { force: true }); }
     }
-    return { schema: 1, ...entry, operatorKey };
+    const team = syncTeamAccess(settings, { ...teamOptions, file });
+    const teamAuthority = team && !team.excludedWorkerIds.includes(entry.workerId) ? { teamId: team.teamId, publicKey: team.publicKey } : null;
+    return { schema: 1, ...entry, operatorKey, ...(teamAuthority ? { teamAuthority } : {}) };
   } finally { fs.rmdirSync(lock); }
 }
 

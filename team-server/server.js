@@ -41,6 +41,7 @@ const crypto = require("crypto");
 const { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, MAX_PREVIEW_BYTES } = require("./fleet");
 const { EnrollmentError, enrollWorkerMember, validateEnrollment } = require("./enrollment");
 const { controlForWorker, WORKER_ID, DEVICE_ID } = require("./worker-control");
+const remoteAccess = require("./remote-access");
 
 const PORT = process.env.PORT === undefined ? 8080 : Number(process.env.PORT);
 const HOST = process.env.HOST || undefined;
@@ -419,6 +420,13 @@ function visibleFleet(teamId, who) {
 const server = http.createServer((req, res) => {
   let url;
   try { url = new URL(req.url, "http://localhost"); } catch { return send(res, 400, { error: "ungültiger Pfad" }); }
+  if (req.method === "GET" && url.pathname === "/remote-client.py") {
+    try {
+      const data = fs.readFileSync(path.join(__dirname, "../scripts/member-remote.py"));
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", "content-length": data.length });
+      return res.end(data);
+    } catch { return send(res, 503, { error: "Fernzugriff-Client nicht verfügbar" }); }
+  }
 
   if (req.method === "GET" && url.pathname === "/health") {
     return send(res, 200, { ok: true });
@@ -473,6 +481,29 @@ const server = http.createServer((req, res) => {
 
   const who = identify(req, teamId);
   if (!who) return send(res, 401, { error: "Token fehlt oder passt nicht zum Team" });
+
+  // Explicit team policy: every authenticated role may maintain every enrolled Mac.
+  // Tokens are checked afresh; requests only sign a public key, never execute commands.
+  if (req.method === "GET" && rest === "/remote-access") {
+    try { return send(res, 200, remoteAccess.configuration(DATA_DIR, teamId)); }
+    catch (error) { return send(res, error instanceof remoteAccess.RemoteAccessError ? error.status : 503, { error: "Team-Fernzugriff ist nicht eingerichtet" }); }
+  }
+  if (req.method === "POST" && rest === "/remote-access/certificate") {
+    return readBody(req, async (error, raw) => {
+      if (error) return send(res, 413, { error: "Fernzugriffs-Anfrage zu groß" });
+      let body; try { body = JSON.parse(raw); } catch { return send(res, 400, { error: "Ungültiges JSON" }); }
+      const current = identify(req, teamId);
+      if (!current) return send(res, 401, { error: "Team-Zugang wurde entfernt" });
+      try {
+        const ticket = await remoteAccess.issueCertificate(DATA_DIR, teamId, current.member.id, body);
+        if (!identify(req, teamId)) return send(res, 401, { error: "Team-Zugang wurde entfernt" });
+        return send(res, 200, ticket);
+      } catch (error) {
+        return send(res, error instanceof remoteAccess.RemoteAccessError ? error.status : 503,
+          { error: error instanceof remoteAccess.RemoteAccessError ? error.message : "Fernzugriff konnte nicht freigegeben werden" });
+      }
+    }, 4096);
+  }
 
   // Only the trusted Hub enrollment command holds the owner token. An enrolled
   // worker always receives its own ordinary member token, never owner rights.
