@@ -14,7 +14,7 @@ async function fixture(t) {
   t.after(() => previousRoot === undefined ? delete process.env.MAC_MONITOR_WORKER_ROOT : process.env.MAC_MONITOR_WORKER_ROOT = previousRoot);
   const dependencies = { home, platform: 'darwin', node: '/registered/node',
     loadConfig: (file, { root }) => { calls.push({ file, root }); return { root, clickup: { transport: 'rs_hub' } }; },
-    loadAgent: entry => ({ installAgent: (_config, options) => { calls.push({ entry, ...options }); return { installed: true }; } }),
+    loadAgent: entry => ({ deviceIdOf: () => undefined, installAgent: (_config, options) => { calls.push({ entry, ...options }); return { installed: true }; } }),
     runner: () => { throw Error('unexpected download'); } };
   return { home, workerRoot, calls, dependencies };
 }
@@ -43,4 +43,13 @@ test('checks and dry runs never install the observer or read worker credentials'
     assert.deepEqual(await ensureWorkerObserver({ workerRoot: f.workerRoot, [flag]: true }, f.dependencies), { installed: false });
   }
   assert.equal(f.calls.length, 0);
+});
+test('an older observer does not prevent the compatible bootstrap from being fetched', async t => {
+  const f = await fixture(t); const entry = path.join(f.workerRoot, 'src/monitor-agent.js');
+  await fs.mkdir(path.dirname(entry), { recursive: true }); await fs.writeFile(entry, 'old observer');
+  f.dependencies.loadAgent = () => ({ installAgent: () => assert.fail('old observer must not be installed') });
+  let downloaded = false;
+  f.dependencies.runner = async () => { downloaded = true; return Buffer.from('incorrect download').toString('base64'); };
+  await assert.rejects(ensureWorkerObserver({ workerRoot: f.workerRoot }, f.dependencies), /Prüfsumme/);
+  assert.equal(downloaded, true);
 });

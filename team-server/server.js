@@ -512,9 +512,14 @@ const server = http.createServer((req, res) => {
       if (error) return send(res, 413, { error: 'Worker-Meldung zu groß' });
       let body; try { body = JSON.parse(raw); } catch { return send(res, 400, { error: 'Ungültiges JSON' }); }
       if (body?.workerId !== reportMatch[1]) return send(res, 400, { error: 'Worker-ID widerspricht dem Bericht' });
-      const permission = controlForWorker(body.workerId, [ownerIdentity(teamId, true), ...readMembers(teamId, true)], fleet.snapshot(teamId).machines);
+      if (body.deviceId != null && (typeof body.deviceId !== 'string' || !DEVICE_ID.test(body.deviceId))) return send(res, 400, { error: 'Ungültige Geräte-ID' });
+      const permission = controlForWorker(body.workerId, [ownerIdentity(teamId, true), ...readMembers(teamId, true)], fleet.snapshot(teamId).machines, body.deviceId || null);
       if (!['enabled', 'disabled'].includes(permission.reason)) return send(res, 409, { error: 'Worker ist nicht eindeutig registriert' });
-      return fleetResult(res, () => ({ ok: true, ...fleet.workerReport(teamId, body) }));
+      return fleetResult(res, () => {
+        const result = fleet.workerReport(teamId, body);
+        if (result.accepted && body.deviceId) fleet.linkWorker(teamId, body.workerId, body.deviceId);
+        return { ok: true, ...result };
+      });
     }, 64 * 1024);
   }
   if (req.method === "GET" && controlMatch) {

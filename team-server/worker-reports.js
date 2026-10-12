@@ -1,9 +1,11 @@
 // Direct local observations. No provider credentials or arbitrary log output.
 const ID = /^[a-z0-9][a-z0-9._-]{0,79}$/i;
+const { DEVICE_ID } = require('./worker-control');
 const FRESH_MS = 45000;
 function validateReport(raw, now = Date.now()) {
   const fail = () => { throw new Error('Ungültiger Worker-Bericht'); };
   if (!raw || raw.schema !== 1 || !ID.test(raw.workerId) || !raw.service || !raw.activity) fail();
+  if (raw.deviceId != null && (typeof raw.deviceId !== 'string' || !DEVICE_ID.test(raw.deviceId))) fail();
   const at = Date.parse(raw.sampledAt);
   if (!Number.isFinite(at) || now - at > 90000 || at > now + 30000) fail();
   const text = (value, max, required = false) => {
@@ -32,7 +34,7 @@ function validateReport(raw, now = Date.now()) {
     || !Number.isFinite(Date.parse(raw.service.lastPollAt)))) fail();
   const maintenance = raw.maintenance;
   if (maintenance && typeof maintenance.ok !== 'boolean') fail();
-  return { schema: 1, workerId: raw.workerId, sampledAt: new Date(at).toISOString(), receivedAt: new Date(now).toISOString(),
+  return { schema: 1, workerId: raw.workerId, deviceId: raw.deviceId, sampledAt: new Date(at).toISOString(), receivedAt: new Date(now).toISOString(),
     workerVersion: text(raw.workerVersion, 80), workerRevision: text(raw.workerRevision, 80),
     service: { running: raw.service.running, lastPollAt: date(raw.service.lastPollAt) },
     activity: { state: raw.activity.state, acceptingTasks: raw.activity.acceptingTasks, runs },
