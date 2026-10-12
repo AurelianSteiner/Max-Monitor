@@ -509,13 +509,11 @@
     }
   }
   const skillNames = {
-    "content-creation": "Erstellung", "figma-translate": "Übersetzung", "newsletter-korrektur": "Korrektur",
-    "rs-klaviyo-upload": "Klaviyo", "figma-slicer-verlinkung": "Slicer", "rs-sales-newsletter": "Sales",
-    "rs-kundentexte-einsetzen": "Kundentexte", "rs-briefing": "Briefing", "figma-library-rollout": "Library",
-    "rs-kunden-onboarding": "Kundenstart", "macworker-onboarding": "Mac-Setup",
+    "content-creation": "Erstellung", "newsletter-korrektur": "Korrektur", "rs-klaviyo-upload": "Klaviyo-Upload",
   };
   function latestSkills() {
-    return Array.isArray(snapshot?.skillRelease?.items) ? snapshot.skillRelease.items : [];
+    return Array.isArray(snapshot?.skillRelease?.items)
+      ? snapshot.skillRelease.items.filter(item => Object.keys(skillNames).includes(item.id)) : [];
   }
   function skillsFresh(release, reportedAt = null) {
     const checked = timestamp(release?.checkedAt);
