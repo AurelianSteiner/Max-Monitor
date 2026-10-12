@@ -247,10 +247,26 @@ test('only helper, relay and documentation changes can reuse a verified native a
   const before = 'a'.repeat(40), after = 'b'.repeat(40);
   const diff = files => async () => files.join('\n');
   assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/setup-mac-monitor.mjs','team-server/fleet.js'])),true);
+  assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/install-worker-observer.mjs',
+    'scripts/install-worker-observer.test.mjs','scripts/install-monitor-hub.mjs'])),true);
   assert.equal(await nativeCodeUnchanged(before,after,diff(['Usage4Claude/Helpers/FleetReporter.swift'])),false);
   assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/build_without_xcode.sh'])),false);
   assert.equal(await nativeCodeUnchanged(undefined,after,diff([])),false);
   assert.equal(await nativeCodeUnchanged(before,after,async()=>{throw Error('missing revision');}),false);
+});
+
+test('observer-only updates preserve a current native app with local build metadata', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  await f.writeReceipt('a'.repeat(40));
+  const read = f.dependencies.appReader;
+  f.dependencies.appReader = async (...args) => ({...await read(...args),version:'2.14.1+dashboard'});
+  const runner = f.dependencies.runner;
+  f.dependencies.runner = async (command,args,...rest) => command === 'git' && args.includes('diff')
+    ? 'scripts/install-worker-observer.mjs\nteam-server/public/dashboard.js' : runner(command,args,...rest);
+  const result = await setup({...f.options,appBundle:null,updateOnly:true,open:false},f.dependencies);
+  assert.equal(result.mode,'existing');
+  assert.equal(await f.marker(),'previous app');
+  assert.ok(!f.calls.some(c => c.command === '/bin/bash' || c.command === '/usr/bin/ditto'));
 });
 
 test('a helper update keeps the verified app running and records the checked source without rebuilding', async t => {

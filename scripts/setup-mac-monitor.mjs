@@ -290,7 +290,9 @@ export async function nativeCodeUnchanged(from, to, runner = run) {
       {label:'Native App-Änderungen prüfen'})).trim().split('\n').filter(Boolean);
     const scripts = new Set(['scripts/setup-mac-monitor.mjs','scripts/setup-mac-monitor.sh',
       'scripts/setup-mac-monitor.test.mjs','scripts/newsletter-monitor-bridge.mjs',
-      'scripts/newsletter-monitor-bridge.test.mjs','scripts/release.sh']);
+      'scripts/newsletter-monitor-bridge.test.mjs','scripts/install-worker-observer.mjs',
+      'scripts/install-worker-observer.test.mjs','scripts/install-monitor-hub.mjs',
+      'scripts/install-monitor-hub.test.mjs','scripts/release.sh']);
     return changed.every(file => file.startsWith('team-server/') || scripts.has(file) ||
       file === 'README.md' || file === 'releases/worker-native.json' || file === 'appcast.xml' || file.startsWith('docs/'));
   } catch { return false; }
@@ -377,7 +379,7 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   // Missing cached preferences must not disable future native code updates.
   const recorded = receipt?.binarySourceRevision || receipt?.sourceRevision;
   const sameCode = receipt?.sourceRevision === revision || await nativeCodeUnchanged(recorded,revision,runner);
-  const sameVersion = !releaseCurrent || app.version === release.version;
+  const sameVersion = !releaseCurrent || app.version.split('+')[0] === release.version;
   const writeReceipt = async (binarySourceRevision, installed) => {
     await fs.mkdir(path.dirname(receiptPath),{recursive:true,mode:0o700});
     const safe = {schema:1,maintenanceVersion:1,sourceRevision:revision,binarySourceRevision,appVersion:app.version,
