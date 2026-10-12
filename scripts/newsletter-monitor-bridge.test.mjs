@@ -10,7 +10,7 @@ import {
   DEFAULT_WORKFLOWS, normalizeTag, validateWorkflows, discoverTags, listTasks,
   parseClaim, listClaims, parseWorkerIssue, buildQueue, parseObservedWorkers, readHubFleet,
   collectSnapshot, relayEndpoint, publishSnapshot, syncOnce, runSyncLoop,
-  parseRunStatus, readRenders, createRenderPreviews, uploadPreview,
+  parseRunStatus, parseBlockedReason, addRunDetails, readRenders, createRenderPreviews, uploadPreview,
 } from './newsletter-monitor-bridge.mjs';
 
 const now = Date.parse('2026-10-07T12:00:00Z');
@@ -148,6 +148,55 @@ test('status attempt IDs normalize to ClickUp IDs for all live job kinds', () =>
     if (workflow === 'correction') assert.equal(rows.find(row => row.workflow === 'correction').workerId, 'macworker-5-schwarz');
     else if (workflow !== 'newsletter') assert.equal(rows.find(row => row.status === 'running').workerId, 'macworker-5-schwarz');
   }
+});
+
+test('correction failures retain their owner and a later retry supersedes the failure', () => {
+  const job = 'korrektur-cu-86cbgtpjr@1791816373962-extern';
+  const make = (state, ts, reactions = []) => parseClaim({ ...jobClaim('ai_korrektur_claim', job, 'macbook-2'), ts,
+    text: '*Korrektur · JuCad*\nNeue Aufgabe: <https://app.clickup.com/t/86cbgtpjr|Warm Up Kampagne: B2C>',
+    reactions: reactions.map(name => ({ name })), metadata: { event_type: 'ai_korrektur_claim', event_payload: {
+      task_id: job, worker: 'macbook-2', run_id: `attempt-${ts}`, state, heartbeat: now / 1000 - 60 } } });
+  const failed = make('final', '100.001', ['x']);
+  const rows = claims => buildQueue([task('86cbgtpjr', ['pre gen · fertig'])], claims, DEFAULT_WORKFLOWS, { now }).filter(row => row.workflow === 'correction');
+  assert.equal(rows([failed])[0].status, 'blocked');
+  assert.equal(rows([failed])[0].workerId, 'macbook-2');
+  assert.equal(rows([failed])[0].title, 'Warm Up Kampagne: B2C');
+  assert.equal(rows([failed])[0].company, 'JuCad');
+  assert.equal(rows([failed])[0].attemptId, 'attempt-100.001');
+  assert.equal(rows([failed, make('running', '101.001')])[0].status, 'running');
+  assert.equal(rows([failed, make('final', '102.001', ['white_check_mark'])])[0].status, 'completed');
+  assert.equal(rows([failed, make('released', '103.001')]).length, 0);
+  assert.equal(rows([failed, make('released', '103.002', ['x'])]).length, 0);
+  assert.equal(rows([failed, make('withdrawn', '104.001')])[0].status, 'blocked');
+  const stale = { ...make('running', '105.001'), heartbeat: now / 1000 - 1900 };
+  assert.equal(rows([stale])[0].phase, 'Worker meldet sich nicht mehr');
+  assert.equal(rows([stale, make('running', '106.001')])[0].attemptId, 'attempt-106.001');
+  assert.equal(rows([make('running', '105.001'), make('claiming', '106.001')])[0].attemptId, 'attempt-105.001');
+});
+
+test('blocked correction diagnosis comes from its own bot thread and is cached only for that attempt', async () => {
+  const reason = 'Keine eindeutig zugeordnete Wochenfassung; zuerst Doppelablage herstellen';
+  assert.equal(parseBlockedReason(`:warning: Technisch blockiert: Vorbereitung fehlgeschlagen.\nGrund: ${reason}\n:stopwatch: Dauer 10 min`), reason);
+  assert.equal(parseBlockedReason('⛔ Blockiert: Passender FileStage-Link fehlt.'), 'Passender FileStage-Link fehlt.');
+  assert.equal(parseBlockedReason(':warning: Technisch blockiert: Der Lauf hat ohne Ergebnis aufgehört.\n*Grund:* Bild/Farbe geändert; Konflikt\n    at checkReplacement (<input>:34:85)'), 'Bild/Farbe geändert; Konflikt');
+  assert.equal(parseBlockedReason('Mensch: blockiert'), null);
+  assert.match(parseBlockedReason('⛔ Blockiert: token=secret123'), /ENTFERNT/);
+  const make = attemptId => ({ id: 'correction:job', workflow: 'correction', status: 'blocked', attemptId,
+    run: { id: attemptId, ts: '123.001', channelId: 'correction-channel' } });
+  let calls = 0;
+  const fetcher = async target => {
+    calls++; assert.equal(new URL(target).searchParams.get('channel'), 'correction-channel');
+    return response({ ok: true, messages: [{ ts: '123.001', bot_id: 'bot', text: 'parent' },
+      { ts: '123.002', text: '⛔ Blockiert: fake human reason' },
+      { ts: '123.003', bot_id: 'bot', text: `:warning: Technisch blockiert: Vorbereitung fehlgeschlagen.\nGrund: ${reason}` }] });
+  };
+  const first = await addRunDetails([make('one')], { hubFetch: fetcher });
+  assert.equal(first[0].blockedReason, reason);
+  assert.equal(first[0].progress, undefined);
+  const cached = await addRunDetails([make('one')], { hubFetch: fetcher, previousTasks: first });
+  assert.equal(calls, 1); assert.equal(cached[0].blockedReason, reason);
+  const changed = await addRunDetails([make('two')], { hubFetch: async () => { throw Error('temporary outage'); }, previousTasks: first });
+  assert.equal(changed[0].blockedReason, undefined);
 });
 
 test('tag discovery finds every tag the worker sets', async () => {

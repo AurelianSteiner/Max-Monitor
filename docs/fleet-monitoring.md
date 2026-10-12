@@ -114,6 +114,26 @@ werden keine direkten ClickUp-Webhooks vorausgesetzt. Die Quellenlaufzeit und
 Verfügbarkeit bestimmen die tatsächliche Verzögerung. Geräte- und
 Account-Heartbeats laufen unabhängig davon im Minuten-Takt.
 
+Zusätzlich meldet ein eigener LaunchAgent auf jedem Worker alle 15 Sekunden den
+lokalen Worker-Dienst, seine tatsächlich offenen Läufe und den letzten Poll direkt
+an den bestehenden RS Hub. Die Anzeige verwirft diese Aktivitätsmessung nach 45
+Sekunden. „frei“ setzt einen laufenden Dienst, keine offenen Läufe und einen frischen
+Poll voraus; ohne Nachweis steht „Tätigkeit ungeprüft“. Pausierte Annahme wird
+gesondert gezeigt. Der Wartungsdienst prüft alle 60 Sekunden mit dem vorhandenen
+Worker-Wächter; launchd startet einen beendeten Beobachter erneut. Aktive Läufe
+werden dafür nicht beendet. Claude-Kontingente werden alle fünf Minuten geprüft;
+Fehler führen zu gestaffelten Wiederholungen, statt den Account zurückzusetzen.
+
+Korrekturen erscheinen unabhängig vom alten Pre-Gen-Abschluss. Die aktuellen
+Slack-Reservierungen werden jede Minute neu gelesen: ❌ am finalen Claim bedeutet
+blockiert, ✅ abgeschlossen. Die eigene Bot-Antwort liefert den Blockiergrund. Er
+bleibt samt zuständigem Mac sichtbar, auch wenn dieser bereits andere Aufgaben
+bearbeitet. Ein neuer Versuch ersetzt die alte Blockierung; freigegebene oder
+zurückgezogene Versuche werden nicht als offene Korrektur gezählt. Die Queue
+unterscheidet Vorbereitung und Mail-Korrektur, ihre Statuszahlen berücksichtigen
+Workflow, Mac und Suche. Mac-Karten und Details nennen die blockierten Korrekturen,
+ohne sie als noch laufende Prozesse zu zählen.
+
 ## Fortschritt und Entwurf laufender Newsletter
 
 Für jede laufende Aufgabe liest die Brücke die Status-Antwort des Workers im

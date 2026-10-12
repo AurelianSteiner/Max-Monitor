@@ -269,9 +269,9 @@
         type: "task",
         entity: task,
         reasons: [
-          task.status === "blocked"
+          task.blockedReason || task.phase || (task.status === "blocked"
             ? "Aufgabe blockiert"
-            : "Aufgabe fehlgeschlagen",
+            : "Aufgabe fehlgeschlagen"),
         ],
       }));
     for (const machine of devices) {
@@ -520,18 +520,6 @@
     $("log-attention-count").textContent = snapshot ? attention.length : "—";
     $("machine-count").textContent = devices.length;
     $("queue-count").textContent = items.length;
-    const statusCounts = {
-      open: openCount,
-      running: items.filter((task) => task.status === "running").length,
-      queued: items.filter((task) => task.status === "queued").length,
-      blocked: items.filter((task) => task.status === "blocked").length,
-      completed: items.filter((task) => task.status === "completed").length,
-      all: items.length,
-    };
-    for (const [status, count] of Object.entries(statusCounts)) {
-      const label = $(`${status}-count`);
-      if (label) label.textContent = numberFormat.format(count);
-    }
     $("page-title").textContent =
       { overview: "Übersicht", queue: "Queue", machines: "Macs", log: "Log" }[view] || "Übersicht";
     document.querySelectorAll(".nav-item").forEach((button) => {
@@ -717,6 +705,13 @@
         .sort((a, b) => (a.status !== "running") - (b.status !== "running"))
       : [];
   }
+  function blockedCorrections(machine) {
+    return machine.workerId ? tasks().filter(task => task.workerId === machine.workerId
+      && task.workflow === "correction" && ["blocked", "failed"].includes(task.status)) : [];
+  }
+  function blockedCorrectionLabel(items) {
+    return `${items.length} ${items.length === 1 ? "Korrektur blockiert" : "Korrekturen blockiert"}`;
+  }
   function idleLabel(machine) {
     if (machine.status !== "online") return "—";
     if (machine.activity?.fresh && machine.activity.state === "idle") return machine.activity.acceptingTasks ? "frei" : "Annahme pausiert";
@@ -791,6 +786,12 @@
       if (failure && active.length) taskCell.append(node("span", "fleet-sub", `Zuletzt: ${active[0].title || active[0].id}`));
       else if (active[0]?.status === "queued") taskCell.append(node("span", "fleet-sub", "reserviert · startet gleich"));
       if (active.length > 1) taskCell.append(node("span", "fleet-sub", `+ ${active.length - 1} weitere`));
+      const blocked = blockedCorrections(machine);
+      if (blocked.length) {
+        const summary = node("span", "fleet-sub fleet-issue", blockedCorrectionLabel(blocked));
+        summary.title = blocked.map(task => `${task.title}: ${task.blockedReason || task.phase}`).join("\n");
+        taskCell.append(summary);
+      }
       const [battery, source] = batteryText(machine);
       const batteryCell = node("td", "fleet-battery", battery);
       if (source === "veraltet") batteryCell.title = "Keine aktuelle Akku-Messung der Mac-App";
@@ -868,6 +869,12 @@
         data.append(datum);
       }
       card.append(title, data);
+      const blocked = blockedCorrections(machine);
+      if (blocked.length) {
+        const summary = node("p", "usage-note fleet-issue", blockedCorrectionLabel(blocked));
+        summary.title = blocked.map(task => `${task.title}: ${task.blockedReason || task.phase}`).join("\n");
+        card.append(summary);
+      }
       const failure = workerFailureReason(machine);
       if (failure) card.append(node("p", "usage-note fleet-issue", failure));
       const account = machineAccount(machine);
@@ -910,22 +917,22 @@
       $("machine-grid").append(card);
     });
   }
-  function filtered(items) {
+  function filtered(items, { ignoreStatus = false } = {}) {
     const workerNames = new Map(machines().filter(machine => machine.workerId).map(machine => [machine.workerId, [machine.name, machine.deviceName].filter(Boolean).join(" ")]));
     const needle = query.trim().toLocaleLowerCase();
     return items
       .filter((task) => {
         if (
-          statusFilter === "open"
+          !ignoreStatus && (statusFilter === "open"
             ? !isOpen(task)
-            : statusFilter !== "all" && task.status !== statusFilter
+            : statusFilter !== "all" && task.status !== statusFilter)
         )
           return false;
         if (workerFilter && task.workerId !== workerFilter) return false;
         if (workflowFilter && task.workflow !== workflowFilter) return false;
         return (
           !needle ||
-          [task.title, task.id, task.company, task.workerId, workerNames.get(task.workerId), task.url, task.phase, task.step, ...(task.tags || [])]
+          [task.title, task.id, task.company, task.workerId, workerNames.get(task.workerId), task.url, task.blockedReason, task.phase, task.step, ...(task.tags || [])]
             .filter(Boolean).join(" ").toLocaleLowerCase().includes(needle)
         );
       })
@@ -1011,6 +1018,13 @@
     }
   }
   function renderQueue(items) {
+    const scoped = filtered(items, { ignoreStatus: true });
+    const statusCounts = { open: scoped.filter(isOpen).length, all: scoped.length };
+    for (const status of ["running", "queued", "blocked", "completed"]) statusCounts[status] = scoped.filter(task => task.status === status).length;
+    for (const [status, count] of Object.entries(statusCounts)) {
+      const label = $(`${status}-count`);
+      if (label) label.textContent = numberFormat.format(count);
+    }
     const visible = filtered(items);
     const body = $("queue-body");
     body.replaceChildren();
@@ -1058,9 +1072,11 @@
         title.rel = "noopener noreferrer";
       }
       titleCell.append(title);
-      if (task.company || drafts) {
+      const scope = task.workflow === "correction" ? /-file-[a-f0-9]{31,32}$/.test(task.id) ? "Mail-Korrektur" : "Vorbereitung" : null;
+      if (task.company || drafts || scope) {
         const company = node("span", "task-company", task.company || "");
         company.title = task.company || "";
+        if (scope) company.append(node("span", "", `${task.company ? " · " : ""}${scope}`));
         if (drafts) company.append(node("span", "task-drafts",
           `${task.company ? " · " : ""}${drafts === 1 ? "Entwurf" : `${drafts} Entwürfe`}`));
         titleCell.append(company);
@@ -1086,7 +1102,11 @@
       }
       assigned.append(assignment);
       // The worker's live step replaces the generic "In Bearbeitung".
-      if (task.step || task.phase) assigned.append(node("span", "phase", task.step || task.phase));
+      if (task.blockedReason || task.step || task.phase) {
+        const phase = node("span", task.blockedReason ? "phase blocked-reason" : "phase", task.blockedReason || task.step || task.phase);
+        phase.title = phase.textContent;
+        assigned.append(phase);
+      }
       const updated = node("td");
       const time = node("time", "row-time", relative(task.updatedAt));
       time.title = exact(task.updatedAt);
@@ -1165,7 +1185,7 @@
     return parts.map((part, index) => (shared ? part.at(-1) : previews[index].title) || `Mail ${index + 1}`);
   }
   function taskSignature(task) {
-    return JSON.stringify([task.status, task.progress, task.step, task.phase, task.workerId, task.completion,
+    return JSON.stringify([task.status, task.progress, task.step, task.phase, task.blockedReason, task.workerId, task.completion,
       (task.previews || []).map((entry) => [entry.id, entry.render])]);
   }
   function draftSection(task, keep) {
@@ -1290,6 +1310,7 @@
       detailField("ClickUp-Status", task.sourceStatus || "Unbekannt"),
       detailField("Aktualisiert", exact(task.updatedAt)),
     );
+    if (task.blockedReason) grid.append(detailField("Blockiergrund", task.blockedReason, true));
     const tags = node("div", "detail-tags");
     (task.tags || []).forEach((tag) =>
       tags.append(node("span", "workflow-name", tag)),
@@ -1373,6 +1394,17 @@
             : "Aus",
       ),
     );
+    const blocked = blockedCorrections(machine);
+    if (blocked.length) {
+      const field = detailField("Blockierte Korrekturen", blockedCorrectionLabel(blocked), true);
+      for (const task of blocked) {
+        const link = node("button", "text-button detail-line", `${task.title || task.id} ↗`);
+        link.type = "button";
+        link.addEventListener("click", () => taskDetails(task));
+        field.append(link, node("p", "form-hint", task.blockedReason || task.phase || "Grund noch nicht gemeldet"));
+      }
+      grid.append(field);
+    }
     if (machine.nativeLastSeenAt)
       grid.append(
         detailField("App-Meldungen", machine.nativeStatus === "online" ? "Aktuell" : "Keine aktuelle Meldung"),
