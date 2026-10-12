@@ -411,7 +411,7 @@ wird nur bei einem belegten Abschluss als 100 % angezeigt.
 
 ## Skill-Versionen in der Kopfzeile
 
-Die Kopfzeile zeigt die Versionen aller Skills aus dem neuesten bestätigten RS-Skills-Paket. Der unabhängige Mac-Beobachter liest dafür ausschließlich das installierte Release-Manifest und den Zeitstempel des erfolgreichen RS-Skills-Abgleichs; Pfade, Skill-Inhalte und Zugangsdaten werden nicht übertragen. Neue Meldungen kommen alle 15 Sekunden.
+Die Kopfzeile und der Versionsabgleich zeigen ausschließlich Erstellung (`content-creation`), Korrektur (`newsletter-korrektur`) und Klaviyo-Upload (`rs-klaviyo-upload`) aus dem neuesten bestätigten RS-Skills-Paket. Der unabhängige Mac-Beobachter liest dafür ausschließlich das installierte Release-Manifest und den Zeitstempel des erfolgreichen RS-Skills-Abgleichs; Pfade, Skill-Inhalte und Zugangsdaten werden nicht übertragen. Neue Meldungen kommen alle 15 Sekunden.
 
 Der Relay behält den neuesten bekannten Stand auch über Neustarts und ältere Mac-Meldungen hinweg. Ohne aktuelle Meldung bzw. nach mehr als drei Minuten ohne erfolgreichen Skill-Abgleich heißt die Referenz „Stand ungeprüft“. „Abgleich x/y“ vergleicht Version und Inhaltsstand jedes Skills mit den installierten Paketen der sichtbaren Macs; fehlende oder veraltete Meldungen zählen niemals als aktuell. Laufende Aufträge behalten ihre fest zugeordneten Pakete.
 
