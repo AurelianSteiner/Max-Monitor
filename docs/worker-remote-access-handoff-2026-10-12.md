@@ -38,6 +38,10 @@ erneut geladen.
   abgewiesen. Die Zusatzfreigabe für entfernten Festplattenzugriff wird gerade
   durch Till geprüft; bis zum echten Dateizugriff keine vollständige
   Worker-Reparaturfähigkeit melden.
+- Auch auf Mac 5 wurde ausschließlich der Tunnel-Prozess beendet. launchd
+  verband automatisch neu (PID 7417 → 11075), danach bestand der vollständige
+  SSH-Test erneut. Der Newsletter-Worker blieb PID 10102. Ein erneuter echter
+  Dateitest um 19:51 Uhr ergab weiterhin `EPERM` für alle drei Worker-Pfade.
 - Der zuerst scheiternde Mac-5-Tunnel verwendete eine Hub-Prüfdatei im geschützten
   Documents-Ordner. Die korrigierte Installation kopiert die bereits vertrauten
   öffentlichen Pins in das eigene Wartungsverzeichnis. Die strikte SSH-Prüfung
@@ -53,6 +57,8 @@ Inhabertokens oder vorhandene SSH-Zugangsrechte. Vorhandene Dateien wurden
 unter `/var/backups/max-monitor/remote-access-20261012T173611Z` gesichert.
 Die Client-Hilfsdatei `setup-mac-monitor.mjs` war vorher nicht im Hub-Bundle;
 sie ist jetzt auch im regulären Installer enthalten.
+Der Code ist auf `codex/worker-remote-access` veröffentlicht; der bestehende
+Entwurfs-PR ist https://github.com/AurelianSteiner/Max-Monitor/pull/44.
 
 ## Noch offen
 
@@ -71,7 +77,15 @@ nicht visuell geändert. Der neue Zugang ermöglicht die lokale Diagnose; eine
 präzisere Anzeige der tatsächlichen Sperrgründe bleibt eine eigene UI-Änderung
 mit den geltenden Skill- und Browserprüfungen.
 
-## Live-Diagnose, 19:38 Uhr
+## Live-Diagnose, 19:51 Uhr
+
+Mac 5 meldete weiterhin vier laufende Aufgaben mit Fortschritt 90 %, 70 %, 72 %
+und 75 %. Der frische Beobachterbericht um 19:50:50 Uhr bestätigt laufende
+Bearbeitung; die zuletzt gemeldete vollständige Aufgabenabfrage war 19:46:27 Uhr.
+Annahme bei vollem Pool bleibt absichtlich gesperrt. Den älteren Poll und die
+aktuelle Bearbeitung getrennt bewerten; kein Neustart allein aufgrund der Anzeige.
+
+Zuvor um 19:38 Uhr:
 
 Alle sechs Macs waren online. Vier laufende Aufgaben wurden jeweils für
 `macbook-till-main`, `macbook-von-till-main-2`, `macworker-5-schwarz` und inzwischen
