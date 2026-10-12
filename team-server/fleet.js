@@ -361,9 +361,10 @@ function withLinkedWorker(machine, links) {
 
 // A completion belongs to one blocking state, not every future attempt of a task.
 function taskVersion(task) {
-  return crypto.createHash("sha256").update(JSON.stringify([
-    task.status, task.phase || null, task.workerId || null, task.sourceStatus || null, task.attemptId || null, task.blockedReason || null,
-  ])).digest("hex");
+  const state = [task.status, task.phase || null, task.workerId || null, task.sourceStatus || null];
+  // Preserve existing completion signatures for tasks without new diagnostics.
+  if (task.attemptId || task.blockedReason) state.push(task.attemptId || null, task.blockedReason || null);
+  return crypto.createHash("sha256").update(JSON.stringify(state)).digest("hex");
 }
 
 function publicTask(task, completions = []) {

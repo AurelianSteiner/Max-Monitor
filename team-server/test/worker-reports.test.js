@@ -67,3 +67,18 @@ test('blocked corrections survive idle reports and restart, but a newer live att
     assert.equal(store.snapshot('TEAM1234').queue.tasks[0].status, 'blocked');
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
+
+test('the correction upgrade preserves completion signatures of existing ordinary tasks', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'existing-completions-'));
+  try {
+    const store = createFleetStore(directory, () => now);
+    store.updateQueue('TEAM1234', { source: { name: 'test' }, tasks: [
+      { id: 'existing', title: 'Mail', workflow: 'newsletter', status: 'blocked', phase: 'Blockiert oder pausiert', workerId: 'mac-1' },
+    ] });
+    // Signature written by the deployed release before correction diagnoses existed.
+    const existingVersion = require('node:crypto').createHash('sha256').update('["blocked","Blockiert oder pausiert","mac-1",null]').digest('hex');
+    assert.equal(store.snapshot('TEAM1234').queue.tasks[0].taskVersion, existingVersion);
+    store.completeTask('TEAM1234', { role: 'super' }, { taskId: 'existing', taskVersion: existingVersion });
+    assert.equal(createFleetStore(directory, () => now).snapshot('TEAM1234').queue.tasks[0].status, 'completed');
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
