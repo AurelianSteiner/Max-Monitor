@@ -202,8 +202,6 @@
         : `Newsletter-Worker meldet sich seit über 15 Minuten nicht${machine.status === "online" ? " – Mac-App ist separat erreichbar" : ""}`);
     if (machine.workerId && !machine.workerStatus && machine.telemetrySource !== "worker")
       reasons.push("Worker-Betriebsstatus noch nicht gemeldet");
-    if (machine.pendingClickup > 0)
-      reasons.push(`${machine.pendingClickup} ClickUp-Statusupdates konnten noch nicht übertragen werden`);
     if (machine.usageError || machine.usageStatus === "error")
       reasons.push(`Claude-Kontingente konnten nicht geprüft werden${machine.usageError ? `: ${machine.usageError}` : ""}`);
     if (!limits.length) reasons.push(machine.monitoringAccountId
@@ -248,7 +246,7 @@
     if (machine.status !== "online") return machine.status || "unknown";
     if ((machine.workerIssues || []).some(issue => issue.severity === "error")) return "failed";
     if (machine.workerStatus && machine.workerStatus !== "online") return machine.workerStatus;
-    if ((machine.workerIssues || []).length || machine.pendingClickup > 0) return "blocked";
+    if ((machine.workerIssues || []).length) return "blocked";
     if (machine.workerId && !machine.workerStatus && machine.telemetrySource !== "worker") return "unknown";
     return machine.status;
   }
@@ -256,7 +254,6 @@
     if ((machine.workerIssues || []).length) return machineAttentionReasons(machine)[0];
     if (machine.workerStatus && machine.workerStatus !== "online") return `Worker ${statusNames[machine.workerStatus] || machine.workerStatus}`;
     if (machine.workerId && !machine.workerStatus && machine.telemetrySource !== "worker") return "Worker-Status unbekannt";
-    if (machine.pendingClickup > 0) return `${machine.pendingClickup} ClickUp-Updates ausstehend`;
     return null;
   }
   function attentionEntries(devices, items) {
@@ -1365,7 +1362,9 @@
       );
     if (Number.isInteger(machine.pendingClickup))
       grid.append(
-        detailField("ClickUp-Updates ausstehend", machine.pendingClickup),
+        detailField("ClickUp-Abgleich", machine.pendingClickup > 0
+          ? `${machine.pendingClickup} ${machine.pendingClickup === 1 ? "Änderung wird" : "Änderungen werden"} automatisch erneut übertragen`
+          : "Alle Änderungen übertragen"),
       );
     if (machine.workerLastSeenAt)
       grid.append(
