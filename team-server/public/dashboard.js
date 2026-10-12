@@ -65,6 +65,7 @@
     newsletter: "Pre-Gen",
     upload: "Klaviyo-Upload",
     translation: "Übersetzung",
+    "worker-errors": "Worker-Fehler",
   };
   // Pipeline stages mirror the ClickUp tags: the trigger tag alone means
   // "markiert"; a state tag or a worker reservation moves a task to "wartet".
@@ -1032,7 +1033,7 @@
       );
   }
   function canComplete(task) {
-    return task && ["blocked", "failed"].includes(task.status) && task.taskVersion;
+    return task && !task.errorUrl && ["blocked", "failed"].includes(task.status) && task.taskVersion;
   }
   function completionButton(task, expanded = false) {
     const button = node("button", expanded ? "button secondary complete-task" : "icon-button complete-task");
@@ -1200,14 +1201,14 @@
       const actions = node("td");
       const actionGroup = node("div", "queue-actions");
       const links = node("div", "task-links");
-      for (const [label, value] of [["ClickUp", task.url], ["Figma", task.figmaUrl]]) {
+      for (const [label, value] of [["Slack", task.errorUrl], ["ClickUp", task.url], ["Figma", task.figmaUrl]]) {
         const href = safeLink(value);
         if (!href) continue;
         const link = node("a", "text-button", `${label} ↗`);
         link.href = href;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
-        link.setAttribute("aria-label", `${label === "Figma" ? "Figma-Board" : "ClickUp"} öffnen: ${task.title || task.id}`);
+        link.setAttribute("aria-label", `${label === "Figma" ? "Figma-Board" : label === "Slack" ? "Fehler in Slack" : "ClickUp"} öffnen: ${task.title || task.id}`);
         links.append(link);
       }
       const detail = node("button", "icon-button", "⋯");
@@ -1401,6 +1402,14 @@
       tags.append(node("span", "workflow-name", tag)),
     );
     const children = [node("p", "", task.id), grid, tags];
+    const errorUrl = safeLink(task.errorUrl);
+    if (errorUrl) {
+      const link = node("a", "button primary", "Fehler in Slack öffnen ↗");
+      link.href = errorUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      children.push(link, node("p", "form-hint", "Nach der Behebung und Entfernung aus #ai-fehler verschwindet dieser Eintrag beim nächsten Abgleich."));
+    }
     const url = safeLink(task.url);
     if (url) {
       const link = node("a", "button primary", "In ClickUp öffnen ↗");

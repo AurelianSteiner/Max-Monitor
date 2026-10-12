@@ -444,6 +444,29 @@ darf den alten Snapshot dagegen ersetzen. Relay-Fehler bestätigen keine
 
 ## Blockierte Aufgaben abhaken
 
+Für die Newsletter-Bridge mit konfiguriertem Fehlerkanal ist `#ai-fehler` die
+gemeinsame Liste offener Fehler. Jeder noch vorhandenen Bot-Fehlermeldung entspricht
+genau ein Eintrag unter „Blockiert“ in Pipeline, Queue und Aufmerksamkeitsliste,
+einschließlich Worker- und Updatefehlern. Aufgabe und Lauf bleiben zugeordnet;
+ein laufender Wiederholungsversuch wird zusätzlich als laufend angezeigt.
+Alte ClickUp-Blockiert-Tags und abgebrochene Tests erzeugen keine zusätzlichen
+offenen Fehler. Die ursprünglichen Quelldaten und die Ereignishistorie bleiben erhalten.
+
+Die Bridge liest den Fehlerkanal vollständig ohne Altersgrenze, einschließlich
+aller Seiten. Nach der Behebung entfernt der Worker seine Fehlermeldung aus Slack;
+der nächste vollständige Abgleich entfernt sie automatisch aus Max Monitor.
+Solche Einträge bieten einen direkten Slack-Link und können im Monitor nicht
+unabhängig abgehakt werden. Bei Quellenfehlern bleibt der letzte bestätigte Bestand
+mit einer sichtbaren Quellenwarnung erhalten. Ein erfolgreich leer gelesener
+Fehlerkanal ergibt null Blockierungen, auch wenn alte ClickUp-Tags stehen bleiben.
+
+Der vollständige Queue-Vertrag enthält dafür optional `blockedErrors`, eine Liste
+von Task-Datensätzen mit Status `blocked`, ID `slack-error:<channel>:<ts>` und
+`errorUrl` als passendem Slack-Permalink. `[]` bestätigt einen leeren Fehlerkanal;
+ein fehlendes Feld bestätigt keinen leeren Kanal. Nach dem ersten solchen Snapshot
+lehnt der Relay erfolgreiche Snapshots ohne Fehlerinventar ab. Die folgenden
+manuellen Erledigungen gelten nur für Quellen ohne synchronisiertes Slack-Inventar.
+
 Queue, Queue-Log und Aufgabendetails bieten für blockierte und fehlgeschlagene
 Aufgaben rechts einen Haken „Als erledigt abhaken“. Die Erledigung wird im Relay
 für das gesamte Team gespeichert. Sie entfernt die Aufgabe aus „Offen“,
