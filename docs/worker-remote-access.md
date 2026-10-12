@@ -57,7 +57,13 @@ Nur den öffentlichen Teil auf dem Hub in
 Freigabe ungeprüft ersetzen. Der Hub-Helfer liest den vorhandenen privaten
 Enrollment-Konfigurationsstand und prüft die Worker-Zuordnung. Deaktivierte
 MacWorker behalten ihren Wartungszugang. Nicht registrierte oder mehrdeutige
-Worker werden abgewiesen. Ein neuer Registereintrag bestätigt noch keinen
+Worker werden abgewiesen. Ältere manuell verbundene Apps werden über ihre bereits
+vorhandene zufällige Gerätekennung zugeordnet. Der Installer liest dafür nur den
+bestehenden Cache `monitor-device-id` neben der konfigurierten Zustandsdatenbank.
+Der Hub speichert diese Kennung mit dem Wartungszugang und prüft sie bei jedem
+Lookup erneut gegen die aktuelle Freigabe. Anzeigenamen erteilen keine Rechte;
+eine andere oder doppelte Gerätekennung wird abgewiesen.
+Ein neuer Registereintrag bestätigt noch keinen
 funktionierenden Fernzugriff.
 
 Vom Wartungs-Mac aus:
@@ -104,23 +110,30 @@ werden; erst nach beendetem Tunnel einen Port neu vergeben. Eine Schlüsselrotat
 muss auf jedem Ziel-Mac durch erneute Installation umgesetzt werden. Das Ersetzen
 der öffentlichen Datei auf dem Hub widerruft bereits eingerichtete Macs nicht.
 
-## Verifizierter Diagnose-Stand vom 12.10.2026, 20:08 Uhr
+## Verifizierter Diagnose-Stand vom 12.10.2026, 20:20 Uhr
 
-Vier Macs sind für SSH und echten Worker-Dateizugriff verifiziert:
+Vier Macs sind für SSH und echten Worker-Dateizugriff verifiziert. Nach dem
+Helfer-Deployment wurden alle vier SSH-Verbindungen erneut erfolgreich geprüft:
 
-| Worker | SSH-Benutzer | Hub-Loopback-Port | Status |
-| --- | --- | --- | --- |
-| `macbook-till-main` | `tillticktucktim` | 23000 | Terminal und Worker-Dateien geprüft |
-| `macworker-5-schwarz` | `claude3` | 23001 | Terminal, Worker-Dateien und Schreiben geprüft |
-| `newsletter-mac-141b2976` | `codex1` | 23002 | Terminal, Worker-Dateien und Schreiben geprüft |
-| `macbook-1` | `tuck2` | 23003 | Terminal, Worker-Dateien und Schreiben geprüft |
+| Mac | Worker | SSH-Benutzer | Hub-Loopback-Port | Status |
+| --- | --- | --- | --- | --- |
+| Till Main | `macbook-till-main` | `tillticktucktim` | 23000 | Terminal und Worker-Dateien geprüft |
+| Mac 5 schwarz | `macworker-5-schwarz` | `claude3` | 23001 | Terminal, Worker-Dateien und Schreiben geprüft |
+| Mac 4 / Newsletter Mac | `newsletter-mac-141b2976` | `codex1` | 23002 | Terminal, Worker-Dateien und Schreiben geprüft |
+| Mac 1 | `macbook-1` | `tuck2` | 23003 | Terminal, Worker-Dateien und Schreiben geprüft |
 
-Bei `macbook-2` fehlt noch die Registrierung; die lokale Installer-Ausgabe ist
-angefragt. `macbook-von-till-main-2` ist auf ausdrücklichen Wunsch des Nutzers von
-diesem Fernzugriff ausgenommen. Das ist keine Deaktivierung seines Workers.
+Bei `macbook-2` fehlt noch die Registrierung. Der gemeldete Installer-Fehler
+`ssh fehlgeschlagen (Exit 1)` wurde eingegrenzt: Die ältere native App wird nur
+über ihre vorhandene Gerätekennung erkannt. Die Gegenprüfung auf dem Hub gab
+ohne diese Kennung `unregistered`, mit der exakten Kennung `enabled` zurück.
+Die korrigierten Helfer liegen seit 20:20 Uhr auf dem Hub; der erneute lokale
+Installer-Lauf und danach SSH-/Dateiverifikation stehen noch aus.
+`macbook-von-till-main-2` ist auf ausdrücklichen Wunsch des Nutzers von diesem
+Fernzugriff ausgenommen. Das ist keine Deaktivierung seines Workers.
 
-Mac 1 hat vier laufende Aufgaben. Der Codex-Mac hat drei laufende und eine
-wartende Aufgabe. Beide Pools sind damit voll. Ihre aktuellen Polls meldeten
+Lokale Diagnose um 20:07 Uhr: Mac 1 hatte vier laufende Aufgaben. Mac 4
+(Newsletter Mac, macOS-Rechnername „MacBook Air von Codex“) hatte drei laufende
+und eine wartende Aufgabe. Beide Pools waren damit voll. Ihre damaligen Polls meldeten
 einen während der Abfrage geänderten ClickUp-Status; die SSH-/Dateiprüfung ist
 unabhängig davon erfolgreich. Mac 2 wurde von der Live-Fleet online mit drei
 aktiven Aufgaben und erlaubter Annahme gemeldet.

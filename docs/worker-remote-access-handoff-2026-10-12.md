@@ -8,7 +8,9 @@ Terminal und Worker-Reparatur festgelegt. Bildschirmzugriff gehört nicht dazu.
 Till hat die macOS-Fernanmeldung auf dem Haupt-Mac freigegeben und dies bestätigt.
 Auch Mac 5 hat die lokale Einrichtung ausgeführt und die korrigierte Installation
 erneut geladen.
-Um 20:07 Uhr hat Till auch Mac 1, Mac 2 und den Codex-Mac als eingerichtet gemeldet.
+Um 20:07 Uhr hat Till auch Mac 1, Mac 2 und Mac 4 (Newsletter Mac) als eingerichtet gemeldet.
+Till stellte danach ausdrücklich klar: Mac 4 ist `newsletter-mac-141b2976`,
+Benutzer `codex1`, macOS-Rechnername „MacBook Air von Codex“.
 Den persönlich genutzten `macbook-von-till-main-2` nimmt er ausdrücklich vom
 Fernzugriff aus. Auf diesem Mac keine Einrichtung verlangen oder ausführen.
 
@@ -63,7 +65,7 @@ Fernzugriff aus. Auf diesem Mac keine Einrichtung verlangen oder ausführen.
   gelesen und entfernt; Code, Profil und Datenbank haben Schreibberechtigung.
   Beide Wartungs-LaunchAgents und Newsletter-Dienste liefen, keine STOP-Dateien,
   Max-Monitor-Freigabe aktiv. Keine lokalen Git-Änderungen: Mac 1 `e14f310`,
-  Codex-Mac `96f7785` zum Zeitpunkt der Prüfung.
+  Mac 4 (Newsletter Mac) `96f7785` zum Zeitpunkt der Prüfung.
 
 Die Runtime-Erweiterung änderte keine Relay-/Queue-Dienste, Mitglieder,
 Inhabertokens oder vorhandene SSH-Zugangsrechte. Vorhandene Dateien wurden
@@ -77,13 +79,30 @@ Entwurfs-PR ist https://github.com/AurelianSteiner/Max-Monitor/pull/44.
 
 Nur `macbook-2` fehlt noch im Fernzugriff-Register; der vollständige Check scheitert
 schon beim Hub-Lookup. Trotz gemeldeter Ausführung ist damit keine erfolgreiche
-Installation belegt. Till wurde um die komplette Textausgabe beim erneuten Start
-des unveränderten Bootstrap-Befehls gebeten. Die Antwort steht noch aus.
+Installation belegt. Till meldete `ssh fehlgeschlagen (Exit 1)`.
+Die Live-Gegenprüfung des Worker-Control-Helfers ergab für `macbook-2` ohne UUID
+`unregistered`, mit `052ae401-0602-4a39-960e-eeeecd8b6cd4` dagegen `enabled`.
+Die native Gerätezeile erhält ihre Worker-ID nur aus Telemetrie; diese darf
+keine Identität für die Aufnahmefreigabe erteilen.
+
+Der Installer liest jetzt denselben vorhandenen `monitor-device-id`-Cache neben
+`config.paths.state_db` wie der produktive Worker. Der Hub bindet diese UUID
+eindeutig an den Wartungszugang und nutzt sie bei jeder erneuten Freigabeprüfung.
+Eine andere UUID oder die Wiederverwendung für einen anderen Zugang scheitert.
+Bestehende Einträge ohne UUID bleiben kompatibel. Die drei aktualisierten Helfer
+wurden um 20:20 Uhr ohne Dienstneustart deployed; Sicherung unter
+`/var/backups/max-monitor/remote-access-device-binding-20261012T182005Z`.
+Nach dem Deployment bestätigten vier erneute `check`-Aufrufe den SSH-Zugang
+zu Till Main, Mac 1, Mac 4 und Mac 5 jeweils mit dem erwarteten Benutzer.
+142 Skript-Tests sowie 3 gezielte Worker-Control-Tests bestanden, darunter 22
+Fernzugriffstests einschließlich alter nativer Gerätebindung und Identitätskonflikten.
+Till wurde nach dem Deployment um erneutes Ausführen desselben Bootstrap-Befehls
+auf Mac 2 gebeten. Dessen lokale Ausführung und der echte Fernzugriff stehen aus.
 Keine bloße Registrierung oder `installed: true` als Zugriffserfolg melden:
 jeden Mac mit `worker-remote.mjs check <exakte-worker-id>` und einem echten
 Dateibefehl prüfen. `macbook-von-till-main-2` bleibt ausdrücklich ausgenommen.
 
-Haupt-Mac, Mac 5, Mac 1 und Codex-Mac sind für Terminal-Wartung einschließlich
+Haupt-Mac, Mac 5, Mac 1 und Mac 4 (Newsletter Mac) sind für Terminal-Wartung einschließlich
 Worker-Dateizugriff verifiziert. Der Fernzugriff verwendet die Rechte des jeweiligen Worker-Benutzers;
 administrative macOS-Aufgaben benötigen weiterhin dessen normale sudo-Freigabe.
 
@@ -94,7 +113,7 @@ mit den geltenden Skill- und Browserprüfungen.
 
 ## Live-Diagnose, 20:08 Uhr
 
-Mac 1 belegt vier laufende Plätze. Der Codex-Mac hat lokal drei laufende und
+Mac 1 belegt vier laufende Plätze. Mac 4 (Newsletter Mac) hat lokal drei laufende und
 einen wartenden Lauf; damit ebenfalls vier belegte Plätze. Beide letzten Polls
 waren aktuell (20:07:34 bzw. 20:07:24 Uhr), meldeten jedoch einen während der
 Abfrage geänderten ClickUp-Status. Einen aktuellen erfolglosen Poll nicht als
@@ -142,8 +161,11 @@ zu bewerten.
 
 ## Nächste Schritte
 
-1. Installer-Ausgabe von Mac 2 auswerten, nur den nachgewiesenen Fehler beheben,
-   dann dessen tatsächlichen SSH- und Dateizugriff prüfen. Till Main 2 ausnehmen.
+1. Tills Rückmeldung zum erneuten Installer-Lauf auf Mac 2 abwarten, danach
+   `node scripts/worker-remote.mjs check macbook-2` und den echten Dateitest
+   `/tmp/max-monitor-worker-diagnose.py` per `connect` ausführen. Falls der lokale
+   Cache fehlt, nur diesen konkreten Fall prüfen; keine UUID aus Namen ableiten
+   oder manuell die Registry befüllen. Till Main 2 ausnehmen.
 2. Falls ein Mac trotz freier Plätze und nutzbarem Claude pausiert, über den
    neuen Zugang den aktiven Produktionspfad, STOP-Zustand, `worker_control`,
    `monitor_admission`, `last_poll`, reservierte Plätze und lokale Logs lesen.

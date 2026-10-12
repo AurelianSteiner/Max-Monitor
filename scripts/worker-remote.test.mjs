@@ -6,7 +6,8 @@ import path from 'node:path';
 import { generateKeyPairSync } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { handle, registryAt, publicKey, validateEntry } from './worker-remote-hub.mjs';
-import { install, uninstall, tunnelArgs, launchAgent, connectionArgs, authorizedLine, updateAuthorized, writePrivate, hubRequest, localHostKey } from './worker-remote.mjs';
+import { install, uninstall, tunnelArgs, launchAgent, connectionArgs, authorizedLine, updateAuthorized, writePrivate, hubRequest, localHostKey, readMonitorDeviceId } from './worker-remote.mjs';
+import control from '../team-server/worker-control.js';
 
 function key() {
   const { publicKey: k } = generateKeyPairSync('ed25519');
@@ -16,6 +17,8 @@ function key() {
 }
 const hostKey = key(), operatorKey = key();
 const entry = { workerId: 'macbook-1', username: 'tuck2', port: 23000, hostKey };
+const deviceId = '052ae401-0602-4a39-960e-eeeecd8b6cd4';
+const otherDeviceId = '26f25289-1136-40d1-a3e6-7fcf7314af88';
 const worker = { workerId: entry.workerId, hubHost: 'root@hub.example.test', identityFile: '/path with space/key', knownHostsFile: '/path with space/hosts' };
 async function fixture(t) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'mm-remote-'));
@@ -67,6 +70,83 @@ test('changed host key/user fails closed without modifying registry', async t =>
   await handle(body, f); const saved = await fs.readFile(f.file, 'utf8');
   for (const patch of [{ hostKey: key() }, { username: 'other' }]) await assert.rejects(handle({ ...body, ...patch }, f), /Identität/);
   assert.equal(await fs.readFile(f.file, 'utf8'), saved);
+});
+
+test('legacy native enrollment requires its UUID and lookup rechecks the stored target identity', async t => {
+  const f = await fixture(t), body = { ...entry, operation: 'enroll' };
+  const members = [{ id: 'member', macWorker: true }];
+  const machines = [{ deviceId, memberId: 'member', workerId: entry.workerId, workerIdSource: 'worker' }];
+  const seen = [];
+  f.permission = async (_, workerId, options) => {
+    seen.push(options.deviceId);
+    return control.controlForWorker(workerId, members, machines, options.deviceId);
+  };
+  await assert.rejects(handle(body, f), /nicht eindeutig/);
+  await assert.rejects(fs.access(f.file));
+  const enrolled = await handle({ ...body, deviceId }, f);
+  assert.equal(enrolled.deviceId, deviceId);
+  assert.equal((await handle({ operation: 'lookup', workerId: entry.workerId }, f)).deviceId, deviceId);
+  assert.deepEqual(seen, [null, deviceId, deviceId]);
+  members[0].macWorker = false;
+  assert.equal((await handle({ operation: 'lookup', workerId: entry.workerId }, f)).workerId, entry.workerId);
+  machines[0].workerId = 'another-mac'; delete machines[0].workerIdSource;
+  await assert.rejects(handle({ operation: 'lookup', workerId: entry.workerId }, f), /nicht eindeutig/);
+});
+
+test('device UUID changes and reuse cannot silently reassign a maintenance port', async t => {
+  const f = await fixture(t), body = { ...entry, operation: 'enroll', deviceId };
+  await handle(body, f);
+  const saved = await fs.readFile(f.file, 'utf8');
+  await assert.rejects(handle({ ...body, deviceId: otherDeviceId }, f), /Identität/);
+  await assert.rejects(handle({ ...body, operation: 'lookup', deviceId: otherDeviceId }, f), /Identität/);
+  await assert.rejects(handle({ ...body, workerId: 'macbook-2', hostKey: key() }, f), /anderen Wartungszugang/);
+  assert.equal(await fs.readFile(f.file, 'utf8'), saved);
+});
+
+test('existing enrollment can add its UUID without changing its pinned host or port', async t => {
+  const f = await fixture(t), body = { ...entry, operation: 'enroll' };
+  await handle(body, f);
+  const added = await handle({ ...body, deviceId }, f);
+  assert.equal(added.deviceId, deviceId); assert.equal(added.hostKey, entry.hostKey); assert.equal(added.port, entry.port);
+  assert.equal(registryAt(f.file).workers[0].deviceId, deviceId);
+});
+
+test('device UUID validation rejects malformed values and duplicate registry bindings', async t => {
+  const f = await fixture(t);
+  for (const value of [null, '', deviceId.toUpperCase(), [deviceId], {}, 123]) {
+    assert.throws(() => validateEntry({ ...entry, deviceId: value }), /Gerätekennung/);
+    await assert.rejects(handle({ ...entry, operation: 'enroll', deviceId: value }, f), /Gerätekennung/);
+  }
+  await fs.writeFile(f.file, JSON.stringify({ schema: 1, workers: [
+    { ...entry, deviceId }, { ...entry, workerId: 'macbook-2', port: 23001, deviceId },
+  ] }), { mode: 0o600 });
+  assert.throws(() => registryAt(f.file), /Doppelte Gerätekennung/);
+});
+
+test('installer reads only a valid existing UUID cache without prompting native preferences', async t => {
+  const f = await fixture(t), file = path.join(f.home, 'monitor-device-id');
+  assert.equal(await readMonitorDeviceId(), null);
+  assert.equal(await readMonitorDeviceId(file), null);
+  await fs.writeFile(file, '\n'); assert.equal(await readMonitorDeviceId(file), null);
+  await fs.writeFile(file, deviceId + '\n'); assert.equal(await readMonitorDeviceId(file), deviceId);
+  const link = path.join(f.home, 'device-link'); await fs.symlink(file, link);
+  await assert.rejects(readMonitorDeviceId(link), /reguläre Datei/);
+  await fs.writeFile(file, 'invalid'); await assert.rejects(readMonitorDeviceId(file), /Gerätekennung/);
+});
+
+test('installer sends the worker UUID through SSH stdin and saves the returned target identity', async t => {
+  const f = await fixture(t), hostKeyFile = path.join(f.home, 'host.pub');
+  await fs.writeFile(hostKeyFile, hostKey);
+  let received;
+  const execute = async (binary, args, options) => {
+    if (!binary.endsWith('/ssh')) return '';
+    received = JSON.parse(options.input);
+    assert.ok(!args.some(arg => arg.includes(deviceId)));
+    return JSON.stringify({ schema: 1, ...entry, deviceId, operatorKey });
+  };
+  await install({ ...f.worker, deviceId }, { home: f.home, uid: 501, platform: 'darwin', username: entry.username, hostKeyFile, preflight: async () => {}, execute });
+  assert.equal(received.deviceId, deviceId);
+  assert.equal(JSON.parse(await fs.readFile(path.join(f.home, '.local/share/max-monitor-remote/profile.json'), 'utf8')).deviceId, deviceId);
 });
 
 test('concurrent enrollment fails without deleting another process lock', async t => {

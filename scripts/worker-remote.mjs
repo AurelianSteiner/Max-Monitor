@@ -7,7 +7,7 @@ import net from 'node:net';
 import { spawn, execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { readWorker, run } from './setup-mac-monitor.mjs';
-import { publicKey, validateEntry, WORKER_ID } from './worker-remote-hub.mjs';
+import { publicKey, validateEntry, WORKER_ID, DEVICE_ID } from './worker-remote-hub.mjs';
 
 const LABEL = 'de.rs.max-monitor.remote';
 const HELPER = 'node /opt/max-monitor/scripts/worker-remote-hub.mjs --stdin';
@@ -59,6 +59,14 @@ async function readable(file) {
   } catch (error) { if (error.code === 'ENOENT') return ''; throw error; }
 }
 
+export async function readMonitorDeviceId(file) {
+  if (!file) return null;
+  const value = (await readable(file)).trim();
+  if (!value) return null;
+  if (!DEVICE_ID.test(value)) throw new Error('Gespeicherte Monitor-Gerätekennung ist ungültig.');
+  return value;
+}
+
 export async function discoverRoot({ home = os.homedir(), exec = execFileSync } = {}) {
   try {
     const plist = JSON.parse(exec('/usr/bin/plutil', ['-convert', 'json', '-o', '-', path.join(home, 'Library/LaunchAgents/de.ruegamer-steiner.ai-newsletter.plist')], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
@@ -108,7 +116,8 @@ export async function install(worker, { home = os.homedir(), username = os.userI
   if (uid === 0) throw new Error('Als angemeldeter Worker-Benutzer ausführen, nicht mit sudo.');
   await preflight(); // No key/registry/launchd changes before macOS permission is granted.
   const hostKey = await localHostKey(hostKeyFile, execute);
-  const entry = await hubRequest(worker, { operation: 'enroll', workerId: worker.workerId, username, hostKey }, execute);
+  const entry = await hubRequest(worker, { operation: 'enroll', workerId: worker.workerId, username, hostKey,
+    ...(worker.deviceId ? { deviceId: worker.deviceId } : {}) }, execute);
   if (!entry.operatorKey) throw new Error('Freigegebener Wartungsschlüssel fehlt.');
   const state = path.join(home, '.local/share/max-monitor-remote');
   const profileFile = path.join(state, 'profile.json');
@@ -193,7 +202,10 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (mode === 'uninstall') { console.log(JSON.stringify(await uninstall())); return; }
   const worker = await readWorker({ workerRoot: root || await discoverRoot(), updateOnly: true });
-  if (mode === 'install') { console.log(JSON.stringify(await install(worker))); return; }
+  if (mode === 'install') {
+    const deviceId = await readMonitorDeviceId(worker.monitorDeviceIdFile);
+    console.log(JSON.stringify(await install({ ...worker, ...(deviceId ? { deviceId } : {}) }))); return;
+  }
   await fs.access(identity);
   const entry = await hubRequest(worker, { operation: 'lookup', workerId });
   const knownHostsFile = path.join(os.homedir(), '.local/share/max-monitor-remote', `${workerId}.known_hosts`);

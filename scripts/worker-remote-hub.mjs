@@ -5,9 +5,11 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { checkWorkerControl } from './check-worker-control.mjs';
 import { loadConfiguration } from './enroll-monitor-worker.mjs';
+import control from '../team-server/worker-control.js';
 
 export const WORKER_ID = /^[a-z0-9][a-z0-9-]{1,40}$/;
 export const USERNAME = /^[a-z_][a-z0-9_-]{0,31}$/i;
+export const DEVICE_ID = control.DEVICE_ID;
 
 export function publicKey(value) {
   if (typeof value !== 'string' || value.length > 512 || /[\r\n\x00]/.test(value)) throw new Error('Ungültiger öffentlicher SSH-Schlüssel.');
@@ -23,7 +25,9 @@ export function publicKey(value) {
 export function validateEntry(value) {
   if (!value || !WORKER_ID.test(value.workerId || '') || !USERNAME.test(value.username || '')
       || !Number.isInteger(value.port) || value.port < 23000 || value.port > 23999) throw new Error('Ungültige Fernzugriffs-Registrierung.');
-  return { workerId: value.workerId, username: value.username, port: value.port, hostKey: publicKey(value.hostKey) };
+  if (value.deviceId !== undefined && (typeof value.deviceId !== 'string' || !DEVICE_ID.test(value.deviceId))) throw new Error('Ungültige Gerätekennung.');
+  return { workerId: value.workerId, username: value.username, port: value.port, hostKey: publicKey(value.hostKey),
+    ...(value.deviceId !== undefined ? { deviceId: value.deviceId } : {}) };
 }
 
 export function registryAt(file) {
@@ -34,6 +38,8 @@ export function registryAt(file) {
     if (registry.schema !== 1 || !Array.isArray(registry.workers)) throw new Error('Ungültiges Fernzugriffs-Register.');
     const workers = registry.workers.map(validateEntry);
     if (new Set(workers.map(v => v.workerId)).size !== workers.length || new Set(workers.map(v => v.port)).size !== workers.length) throw new Error('Doppelte Fernzugriffs-Zuordnung.');
+    const devices = workers.filter(v => v.deviceId).map(v => v.deviceId);
+    if (new Set(devices).size !== devices.length) throw new Error('Doppelte Gerätekennung.');
     return { schema: 1, workers };
   } catch (error) {
     if (error.code === 'ENOENT') return { schema: 1, workers: [] };
@@ -44,13 +50,17 @@ export function registryAt(file) {
 export async function handle(body, { settings = loadConfiguration(), file = '/etc/max-monitor/remote-access.json',
   operatorFile = '/etc/max-monitor/remote-operator.pub', permission = checkWorkerControl } = {}) {
   if (!['enroll', 'lookup'].includes(body?.operation) || !WORKER_ID.test(body?.workerId || '')) throw new Error('Ungültige Fernzugriffs-Anfrage.');
-  const control = await permission(settings, body.workerId);
+  if (body.deviceId !== undefined && (typeof body.deviceId !== 'string' || !DEVICE_ID.test(body.deviceId))) throw new Error('Ungültige Gerätekennung.');
+  const saved = registryAt(file).workers.find(v => v.workerId === body.workerId);
+  if (saved?.deviceId && body.deviceId && saved.deviceId !== body.deviceId) throw new Error('Mac-Identität hat sich geändert; bestehende Zuordnung zuerst prüfen.');
+  // Legacy apps are bound by their existing UUID; display names never grant access.
+  const deviceId = saved?.deviceId || body.deviceId || null;
+  const allowed = await permission(settings, body.workerId, { deviceId });
   // A deliberately disabled worker still needs maintenance access.
-  if (!['enabled', 'disabled'].includes(control.reason)) throw new Error('Worker ist nicht eindeutig im Max Monitor registriert.');
+  if (!['enabled', 'disabled'].includes(allowed.reason)) throw new Error('Worker ist nicht eindeutig im Max Monitor registriert.');
   if (body.operation === 'lookup') {
-    const entry = registryAt(file).workers.find(v => v.workerId === body.workerId);
-    if (!entry) throw new Error('Fernzugriff auf diesem Mac noch nicht eingerichtet.');
-    return { schema: 1, ...entry };
+    if (!saved) throw new Error('Fernzugriff auf diesem Mac noch nicht eingerichtet.');
+    return { schema: 1, ...saved };
   }
   if (!USERNAME.test(body.username || '')) throw new Error('Ungültiger Mac-Benutzer.');
   const hostKey = publicKey(body.hostKey);
@@ -60,13 +70,23 @@ export async function handle(body, { settings = loadConfiguration(), file = '/et
   try {
     const registry = registryAt(file);
     let entry = registry.workers.find(v => v.workerId === body.workerId);
-    if (entry && (entry.hostKey !== hostKey || entry.username !== body.username)) throw new Error('Mac-Identität hat sich geändert; bestehende Zuordnung zuerst prüfen.');
+    if (entry && (entry.hostKey !== hostKey || entry.username !== body.username ||
+        (entry.deviceId && entry.deviceId !== deviceId))) throw new Error('Mac-Identität hat sich geändert; bestehende Zuordnung zuerst prüfen.');
+    if (deviceId && registry.workers.some(v => v.workerId !== body.workerId && v.deviceId === deviceId)) throw new Error('Gerätekennung gehört bereits zu einem anderen Wartungszugang.');
+    let changed = false;
     if (!entry) {
       const used = new Set(registry.workers.map(v => v.port));
       let port = 23000;
       while (used.has(port) && port <= 23999) port++;
-      entry = validateEntry({ workerId: body.workerId, username: body.username, hostKey, port });
+      entry = validateEntry({ workerId: body.workerId, username: body.username, hostKey, port,
+        ...(deviceId ? { deviceId } : {}) });
       registry.workers.push(entry);
+      changed = true;
+    } else if (deviceId && !entry.deviceId) {
+      entry.deviceId = deviceId;
+      changed = true;
+    }
+    if (changed) {
       const temporary = file + `.tmp-${process.pid}`;
       try {
         fs.writeFileSync(temporary, JSON.stringify(registry, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
