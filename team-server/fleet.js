@@ -744,7 +744,7 @@ function createFleetStore(dataDir, now = Date.now) {
     }
     const liveReports = (state.workerReports || []).filter(report => publicReport(report, time).activity?.fresh);
     const slackInventory = Array.isArray(state.queue.blockedErrors);
-    const queueTasks = new Map(state.queue.tasks.filter(task => !slackInventory || !['blocked', 'failed'].includes(task.status))
+    const queueTasks = new Map(state.queue.tasks.filter(task => task.workflow === 'sales' || !slackInventory || !['blocked', 'failed'].includes(task.status))
       .map(task => [task.id, publicTask(task, state.queue.completions)]));
     const activeOwners = new Map();
     for (const report of liveReports) {
@@ -764,8 +764,9 @@ function createFleetStore(dataDir, now = Date.now) {
     }
     if (slackInventory) {
       // Live telemetry may diagnose conflicts, but cannot manufacture extra
-      // pipeline blockers or erase Slack errors for an earlier attempt.
-      for (const [id, task] of queueTasks) if (['blocked', 'failed'].includes(task.status)) queueTasks.delete(id);
+      // pipeline blockers or erase Slack errors for an earlier attempt. Sales
+      // lifecycle states are owned by their job records, not this Slack channel.
+      for (const [id, task] of queueTasks) if (task.workflow !== 'sales' && ['blocked', 'failed'].includes(task.status)) queueTasks.delete(id);
       for (const error of state.queue.blockedErrors) queueTasks.set(error.id, publicTask(error));
     }
     return {
