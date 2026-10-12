@@ -355,8 +355,9 @@ keine Uploads oder Übersetzungen aus.
 
 Sales-Jobs werden im zentralen Hub-Modus aus `sales-newsletter/<Slack-ts>/job.json`
 gelesen, einschließlich HTTP-Shopadressen. `reserved` erscheint als Wartet,
-`running` und `delivery` als Läuft, `blocked` und `aborted` als Blockiert
-(Abbrüche mit „Abgebrochen“), `done` als Fertig mit 100 %. Blockiergründe und
+`running` und `delivery` als Läuft, `blocked` als Blockiert,
+`done` als Fertig mit 100 %. Abgebrochene Versuche (`aborted`) werden nicht
+angezeigt und zählen zu keiner Statusgruppe. Blockiergründe und
 der aktuelle Versuch bleiben zugeordnet. Eine verspätete Worker-Meldung entfernt
 keinen Auftrag; nach 30 Minuten erscheint „Worker-Meldung ausstehend“, bis der
 Hub einen neuen Jobstatus speichert. Nicht lesbare oder unvollständige Sales-Daten
