@@ -2,6 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { validateReport, publicReport } = require("./worker-reports");
 
 const HEARTBEAT_INTERVAL_SECONDS = 60;
 const SILENT_AFTER_MS = 15 * 60 * 1000;
@@ -258,6 +259,7 @@ function validateQueue(body) {
         workerVersion: string(raw.workerVersion, "worker.workerVersion", 80, true),
         workerRevision: string(raw.workerRevision, "worker.workerRevision", 80, true),
         pendingClickup: raw.pendingClickup,
+        acceptingTasks: boolean(raw.acceptingTasks, "worker.acceptingTasks"),
       });
     });
   }
@@ -681,6 +683,7 @@ function createFleetStore(dataDir, now = Date.now) {
         workerVersion: worker.workerVersion,
         workerRevision: worker.workerRevision,
         pendingClickup: worker.pendingClickup,
+        acceptingTasks: worker.acceptingTasks,
       } : {}) };
     });
     for (const worker of workers.values()) {
@@ -695,14 +698,60 @@ function createFleetStore(dataDir, now = Date.now) {
       }
       (machine.workerIssues ||= []).push(issue);
     }
+    for (const machine of machines) {
+      const report = (state.workerReports || []).find(report => report.workerId === machine.workerId);
+      Object.assign(machine, publicReport(report, time));
+      if (machine.activity?.fresh) {
+        machine.lastSeenAt = report.receivedAt;
+        machine.heartbeatAgeSeconds = Math.max(0, (time - Date.parse(report.receivedAt)) / 1000);
+        machine.status = 'online';
+        machine.workerStatus = report.service.running ? 'online' : 'offline';
+        machine.workerLastSeenAt = report.sampledAt;
+        machine.workerHeartbeatAgeSeconds = Math.max(0, (time - Date.parse(report.sampledAt)) / 1000);
+      }
+    }
+    const liveReports = (state.workerReports || []).filter(report => publicReport(report, time).activity?.fresh);
+    const queueTasks = new Map(state.queue.tasks.map(task => [task.id, publicTask(task, state.queue.completions)]));
+    const activeOwners = new Map();
+    for (const report of liveReports) {
+      const active = new Set(report.activity.runs.map(run => run.id));
+      for (const [id, task] of queueTasks) if (task.workerId === report.workerId && ['running', 'queued'].includes(task.status) && !active.has(id)) {
+        queueTasks.set(id, { ...task, workerId: null, phase: 'Worker-Abgleich ausstehend' });
+      }
+      for (const run of report.activity.runs) {
+        const previous = queueTasks.get(run.id);
+        const conflict = activeOwners.has(run.id) && activeOwners.get(run.id) !== report.workerId;
+        activeOwners.set(run.id, report.workerId);
+        queueTasks.set(run.id, { ...previous, ...run, completion: undefined, completedAt: undefined, workerId: conflict ? null : report.workerId,
+          status: conflict ? 'blocked' : run.status, phase: conflict ? 'Mehrere Worker melden denselben Auftrag' : run.status === 'queued' ? 'Reserviert' : 'In Bearbeitung',
+          updatedAt: report.sampledAt, progress: run.progress ?? (['running', 'queued'].includes(previous?.status) ? previous.progress : undefined) });
+      }
+    }
     return {
       schema: 1,
       generatedAt: new Date(time).toISOString(),
       heartbeatIntervalSeconds: HEARTBEAT_INTERVAL_SECONDS,
       machines: machines.sort((a, b) => a.name.localeCompare(b.name)),
-      queue: { tasks: state.queue.tasks.map((task) => publicTask(task, state.queue.completions)), source: { ...source, stale, status: source.error ? "error" : !source.lastSuccessAt ? "unavailable" : stale ? "stale" : "fresh" } },
+      queue: { tasks: [...queueTasks.values()], source: { ...source, stale, status: source.error ? "error" : !source.lastSuccessAt ? "unavailable" : stale ? "stale" : "fresh" } },
       events: [...state.events].reverse().map((entry) => publicMachineEvent(entry, state.machines)),
     };
+  }
+
+  function workerReport(teamId, body) {
+    let report;
+    try { report = validateReport(body, now()); } catch { throw new FleetError(400, 'Ungültiger Worker-Bericht'); }
+    const state = read(teamId);
+    const reports = state.workerReports || [];
+    const previous = reports.find(item => item.workerId === report.workerId);
+    // A delayed response from an earlier agent invocation cannot roll back state.
+    if (previous && Date.parse(previous.sampledAt) > Date.parse(report.sampledAt)) return { accepted: false };
+    state.workerReports = [...reports.filter(item => item.workerId !== report.workerId), report].slice(-MAX_MACHINES);
+    write(teamId, state);
+    notify(teamId);
+    return { accepted: true };
+  }
+  function workerReportStatus(teamId, workerId) {
+    return { workerId, ...publicReport((read(teamId).workerReports || []).find(item => item.workerId === workerId), now()) };
   }
 
   // Called after an owner-authenticated admission check with the worker's own report.
@@ -764,7 +813,7 @@ function createFleetStore(dataDir, now = Date.now) {
     }
   }
 
-  return { heartbeat, updateQueue, completeTask, snapshot, subscribe, removeMember, assertEnrollmentAllowed, linkWorker, notify, savePreview, previewFile };
+  return { heartbeat, updateQueue, workerReport, workerReportStatus, completeTask, snapshot, subscribe, removeMember, assertEnrollmentAllowed, linkWorker, notify, savePreview, previewFile };
 }
 
 module.exports = { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, MAX_PREVIEW_BYTES, validateHeartbeat, validateQueue };

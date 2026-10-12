@@ -17,7 +17,7 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 // AI Newsletter Creation src/jobs.js and src/pre-gen.js: three job kinds, each with
 // its own ClickUp tags and Slack claim event. A job ID is <ClickUp-ID>,
 // <ClickUp-ID>-klaviyo or <ClickUp-ID>-uebersetzung-<language>.
-const CLAIM_EVENTS = { ai_newsletter_claim: 'newsletter', ai_klaviyo_upload_claim: 'klaviyo', ai_translation_claim: 'translation' };
+const CLAIM_EVENTS = { ai_newsletter_claim: 'newsletter', ai_klaviyo_upload_claim: 'klaviyo', ai_translation_claim: 'translation', ai_korrektur_claim: 'correction' };
 const TRANSLATION_LANGUAGES = ['en', 'it', 'fr', 'se', 'sp'];
 // Render previews: one picture per mail, small enough to read like the real mail
 // (600 px = 1x of a 1200 px render) and below the relay's upload limit.
@@ -128,12 +128,15 @@ export function parseClaim(message) {
   if (!Number.isFinite(heartbeat) || heartbeat <= 0) return null;
   // Like the worker: event type and job ID must agree, or the claim belongs to no task.
   const jobId = String(value.task_id);
+  const correction = /^(?:korrektur-)?cu-([A-Za-z0-9_-]+)@\d+-(intern|extern)(?:-file-[a-f0-9]{31,32})?$/.exec(jobId);
   const translation = /^(.+)-uebersetzung-(en|it|fr|se|sp)$/.exec(jobId);
   const upload = /^(.+)-klaviyo$/.exec(jobId);
-  if (kind !== (translation ? 'translation' : upload ? 'klaviyo' : 'newsletter')) return null;
-  return { taskId: translation?.[1] ?? upload?.[1] ?? jobId, runId: String(value.run_id), workerId: String(value.worker),
+  if (kind !== (correction ? 'correction' : translation ? 'translation' : upload ? 'klaviyo' : 'newsletter')) return null;
+  return { taskId: (correction?.[1] ?? translation?.[1] ?? upload?.[1] ?? jobId).replace(/@\d+$/, ''), jobId,
+    runId: String(value.run_id), workerId: String(value.worker),
     state: value.state, heartbeat, ts: String(message.ts),
-    workflow: typeof value.workflow === 'string' ? value.workflow : translation ? `translation-${translation[2]}` : kind };
+    workflow: typeof value.workflow === 'string' ? value.workflow : translation ? `translation-${translation[2]}` : kind,
+    title: displayText(String(message.text ?? '').split('\n')[0].replace(/<[^|>]+\|([^>]+)>/g, '$1').replace(/[*`]/g, ''), 300) };
 }
 
 export async function listClaims(hubFetch, channelId, { now = Date.now(), maxPages = 100, lookbackDays = 60, onMessage = () => {} } = {}) {
@@ -145,12 +148,31 @@ export async function listClaims(hubFetch, channelId, { now = Date.now(), maxPag
       oldest: ((now - lookbackDays * 86400000) / 1000).toFixed(6), ...(cursor ? { cursor } : {}) })) url.searchParams.set(key, String(value));
     const result = await requestJson(hubFetch, url, 'Slack');
     if (!Array.isArray(result.messages)) throw new Error('Slack: Nachrichtenliste fehlt.');
-    for (const message of result.messages) { onMessage(message); const claim = parseClaim(message); if (claim) claims.push(claim); }
+    for (const message of result.messages) { onMessage(message); const claim = parseClaim(message); if (claim) claims.push({ ...claim, channelId }); }
     cursor = result.response_metadata?.next_cursor;
     if (!result.has_more) return claims;
     if (typeof cursor !== 'string' || !cursor) throw new Error('Slack: Cursor fehlt; Reservierungen unvollständig.');
   }
   throw new Error('Slack: Reservierungen unvollständig; bisherige Queue bleibt erhalten.');
+}
+
+export function createClaimReader({ ttlMs = 180000 } = {}) {
+  const cache = new Map();
+  return async (hubFetch, channelId, options) => {
+    const old = cache.get(channelId);
+    if (old && options.now - old.at < ttlMs) {
+      for (const message of old.messages) options.onMessage?.(message);
+      return old.claims;
+    }
+    const messages = [];
+    const claims = await listClaims(hubFetch, channelId, { ...options, onMessage: message => {
+      // Cache only messages that carry a current worker diagnostic.
+      if (parseWorkerIssue(message)) messages.push(message);
+      options.onMessage?.(message);
+    } });
+    cache.set(channelId, { at: options.now, claims, messages });
+    return claims;
+  };
 }
 
 export function parseWorkerIssue(message) {
@@ -246,8 +268,23 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         workerId: claim?.workerId, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
         updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30),
         // Internal only: addRunDetails reads progress and renders of this attempt, then removes it.
-        run: claim ? { id: claim.runId, ts: claim.ts, taskId: task.id } : undefined });
+        run: claim ? { id: claim.runId, ts: claim.ts, taskId: task.id, channelId: claim.channelId } : undefined });
     }
+  }
+  // Revisions come from the approval workflow. They can run while the old
+  // Pre-Gen task remains completed and must be visible independently of its tags.
+  const corrections = new Map();
+  for (const claim of claims.filter(claim => claim.workflow === 'correction' && ['claiming', 'running'].includes(claim.state)
+    && now - claim.heartbeat * 1000 <= staleMinutes * 60000)) {
+    if (!corrections.has(claim.jobId) || Number(claim.ts) < Number(corrections.get(claim.jobId).ts)) corrections.set(claim.jobId, claim);
+  }
+  for (const claim of corrections.values()) {
+    const task = tasks.find(task => task.id === claim.taskId);
+    rows.push({ id: `correction:${claim.jobId}`, title: displayText(task?.name, 300, claim.title || `Korrektur ${claim.taskId}`),
+      url: `https://app.clickup.com/t/${encodeURIComponent(claim.taskId)}`, workflow: 'correction',
+      status: claim.state === 'running' ? 'running' : 'queued', workerId: claim.workerId,
+      phase: claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert', updatedAt,
+      run: { id: claim.runId, ts: claim.ts, taskId: claim.taskId, channelId: claim.channelId } });
   }
   return rows.sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -371,12 +408,19 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
   const running = rows.filter(row => row.status === 'running' && row.run);
   const attempts = rows.filter(row => row.run && row.workflow === 'newsletter' && (['running', 'blocked'].includes(row.status)
     || (row.status === 'completed' && ['running', 'blocked'].includes(previous.get(row.id)?.status))));
-  const [statuses, rendered] = await Promise.all([
-    running.length ? readRunStatuses(hubFetch, channelId, running.map(row => row.run.ts)) : new Map(),
+  const channels = new Map();
+  for (const row of running) {
+    const channel = row.run.channelId || channelId;
+    if (!channels.has(channel)) channels.set(channel, []);
+    channels.get(channel).push(row.run.ts);
+  }
+  const [statusLists, rendered] = await Promise.all([
+    Promise.all([...channels].map(async ([channel, threads]) => [channel, await readRunStatuses(hubFetch, channel, threads)])),
     previews && attempts.length ? previews(attempts.map(row => ({ taskId: row.run.taskId, runId: row.run.id }))).catch(() => null) : new Map(),
   ]);
+  const statuses = new Map(statusLists);
   for (const row of rows) {
-    const status = row.status === 'running' && statuses.get(row.run?.ts);
+    const status = row.status === 'running' && statuses.get(row.run?.channelId || channelId)?.get(row.run?.ts);
     if (status) { row.progress = status.percent; row.step = status.step; }
     const old = previous.get(row.id);
     const list = attempts.includes(row) ? (rendered ? rendered.get(row.run.id) : old?.previews)
@@ -396,6 +440,7 @@ export function parseObservedWorkers(values) {
     const worker = { workerId: value.worker_id, name: value.worker_id, lastSeenAt: new Date(value.seen_at).toISOString(),
       workerVersion: displayText(value.worker_version, 80), workerRevision: displayText(value.worker_revision, 80),
       pendingClickup: Number.isInteger(value.pending_clickup) && value.pending_clickup >= 0 && value.pending_clickup <= 100000 ? value.pending_clickup : undefined };
+    if (typeof value.annahme === 'boolean') worker.acceptingTasks = value.annahme;
     if (!byId.has(worker.workerId) || Date.parse(worker.lastSeenAt) > Date.parse(byId.get(worker.workerId).lastSeenAt)) byId.set(worker.workerId, worker);
   }
   return [...byId.values()];
@@ -443,6 +488,28 @@ export async function readLocalHubFleet(hub, { fleetDirectory = path.join(hub.hu
   return parseObservedWorkers(rows);
 }
 
+export async function readLocalSales(directory, now = Date.now()) {
+  const rows = [];
+  for (const name of await fs.readdir(directory)) {
+    if (!/^\d+\.\d+$/.test(name)) continue;
+    try {
+      const file = path.join(directory, name, 'job.json');
+      const stat = await fs.lstat(file);
+      if (!stat.isFile() || stat.size > 2 * 1024 * 1024) continue;
+      const job = JSON.parse(await fs.readFile(file, 'utf8'));
+      const stamp = job.observed_at || job.updated_at;
+      const seen = typeof stamp === 'number' ? stamp : Date.parse(stamp);
+      if (job.status !== 'running' || !/^[a-z0-9][a-z0-9._-]{0,79}$/i.test(job.worker)
+        || !Number.isFinite(seen) || now - seen > 120000 || seen > now + 30000) continue;
+      const url = new URL(job.url);
+      if (url.protocol !== 'https:' || url.username || url.password) continue;
+      rows.push({ id: `sales:${name}`, title: `Sales · ${url.hostname}`, url: url.href, workflow: 'sales', status: 'running',
+        workerId: job.worker, phase: displayText(job.monitor?.phase, 160, 'Sales-Newsletter in Bearbeitung'), updatedAt: new Date(seen).toISOString() });
+    } catch { /* An incomplete sales report never clears the production queue. */ }
+  }
+  return rows;
+}
+
 export function createLocalHubFetch(hub, { localHub, transport, spawnImpl = spawn, nodeBinary = process.execPath } = {}) {
   if (!/^\/[A-Za-z0-9._/-]+$/.test(String(localHub))) throw new Error('Lokaler Hub-Pfad ist ungültig.');
   // The Newsletter transport creates exactly the same remoteScript and parses
@@ -464,7 +531,7 @@ export function createLocalHubFetch(hub, { localHub, transport, spawnImpl = spaw
   };
 }
 
-export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, now = Date.now() }) {
+export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, claimReader = listClaims, now = Date.now() }) {
   validateWorkflows(workflows);
   const issues = new Map();
   const onMessage = message => {
@@ -478,10 +545,16 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
       const variants = await discoverTags(hubFetch, config.clickup.workspace_id, workflows);
       return { variants, tasks: await listTasks(hubFetch, config.clickup.workspace_id, variants) };
     })(),
-    listClaims(hubFetch, config.slack.channel_id, { now, onMessage }),
+    (async () => {
+      const claims = [];
+      // Sequential reads share Slack's token/rate limit with the actual workers.
+      for (const channel of [...new Set([config.slack.channel_id, ...(config.monitor_channels?.claims || [])])])
+        claims.push(...await claimReader(hubFetch, channel, { now, onMessage, lookbackDays: 7 }));
+      return claims;
+    })(),
     Promise.resolve().then(() => fleetReader(config.hub, fleetDirectory ? { fleetDirectory } : {})),
-    config.fehler?.enabled && config.fehler.channel_id !== config.slack.channel_id
-      ? listClaims(hubFetch, config.fehler.channel_id, { now, onMessage }) : Promise.resolve(),
+    config.monitor_channels?.errors || (config.fehler?.enabled && config.fehler.channel_id !== config.slack.channel_id)
+      ? claimReader(hubFetch, config.monitor_channels?.errors || config.fehler.channel_id, { now, onMessage, lookbackDays: 7 }) : Promise.resolve(),
   ]);
   // Clear resolved notices only after every configured warning channel was read completely.
   const workerIssues = claimResult.status === 'fulfilled' && issueResult.status === 'fulfilled' ? [...issues.values()] : undefined;
@@ -499,6 +572,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl });
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
   await addRunDetails(queue, { hubFetch, channelId: config.slack.channel_id, previews, previousTasks, now });
+  if (salesReader) queue.push(...await salesReader(now));
   return { tasks: queue, workerIssues, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
     name: SOURCE_NAME, lastSuccessAt: new Date(now).toISOString(),
     detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${claims.length} Reservierungen${fleetDetail ? ` · ${fleetDetail}` : ''}`,
@@ -604,6 +678,8 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const { loadConfig } = require(path.join(root, 'src', 'config.js'));
   const transport = require(path.join(root, 'src', 'hub-transport.js'));
   const config = loadConfig(path.join(root, 'config', 'worker.local.json'), { root });
+  try { config.monitor_channels = JSON.parse(await fs.readFile(path.join(root, 'config', 'monitor-channels.json'), 'utf8')); }
+  catch { /* Standalone bridges on older worker installations use their configured channel. */ }
   let figmaBoardUrl;
   try {
     const { PRE_GEN_FILE } = require(path.join(root, 'src', 'pre-gen.js'));
@@ -622,13 +698,15 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     resize: buffer => resizeRender(sharp ??= hubRequire('sharp'), buffer),
     upload: options.dryRun ? async () => {} : (id, data) => uploadPreview(id, data, options) }) : undefined;
   const controller = new AbortController();
+  const claimReader = createClaimReader();
   const stop = () => controller.abort();
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
   try {
     await runSyncLoop(async () => {
       try {
-        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
-          previews, previousTasks: cached?.tasks, ...(options.localHub ? { fleetReader: readLocalHubFleet } : {}) }), cachedSource: cached?.source,
+        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
+          previews, previousTasks: cached?.tasks, ...(options.localHub ? { fleetReader: readLocalHubFleet,
+            salesReader: time => readLocalSales(path.join(options.localHub, 'sales-newsletter'), time).catch(() => []) } : {}) }), cachedSource: cached?.source,
           publish: snapshot => options.dryRun ? console.log(JSON.stringify(snapshot, null, 2)) : publishSnapshot(snapshot, options),
           save: options.dryRun ? undefined : async snapshot => {
             await fs.mkdir(path.dirname(options.cacheFile), { recursive: true, mode: 0o700 });

@@ -503,6 +503,20 @@ const server = http.createServer((req, res) => {
   // The trusted Hub checks this immediately before reserving/starting work.
   // Read current identities, not the filtered dashboard or cached queue source.
   const controlMatch = rest.match(/^\/workers\/([^/]+)\/control$/);
+  const reportMatch = rest.match(/^\/workers\/([^/]+)\/report$/);
+  if (reportMatch && ['POST', 'GET'].includes(req.method)) {
+    if (who.role !== 'super') return send(res, 403, { error: 'Nur der Hub darf direkte Worker-Meldungen übertragen' });
+    if (!WORKER_ID.test(reportMatch[1])) return send(res, 400, { error: 'Ungültige Worker-ID' });
+    if (req.method === 'GET') return send(res, 200, fleet.workerReportStatus(teamId, reportMatch[1]));
+    return readBody(req, (error, raw) => {
+      if (error) return send(res, 413, { error: 'Worker-Meldung zu groß' });
+      let body; try { body = JSON.parse(raw); } catch { return send(res, 400, { error: 'Ungültiges JSON' }); }
+      if (body?.workerId !== reportMatch[1]) return send(res, 400, { error: 'Worker-ID widerspricht dem Bericht' });
+      const permission = controlForWorker(body.workerId, [ownerIdentity(teamId, true), ...readMembers(teamId, true)], fleet.snapshot(teamId).machines);
+      if (!['enabled', 'disabled'].includes(permission.reason)) return send(res, 409, { error: 'Worker ist nicht eindeutig registriert' });
+      return fleetResult(res, () => ({ ok: true, ...fleet.workerReport(teamId, body) }));
+    }, 64 * 1024);
+  }
   if (req.method === "GET" && controlMatch) {
     if (who.role !== "super") return send(res, 403, { error: "nur der Team-Inhaber darf Worker-Freigaben abfragen" });
     if (!WORKER_ID.test(controlMatch[1])) return send(res, 400, { error: "ungültige Worker-ID" });

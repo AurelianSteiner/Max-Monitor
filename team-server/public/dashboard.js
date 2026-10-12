@@ -58,6 +58,8 @@
     failed: "Fehler",
   };
   const workflowNames = {
+    correction: "Korrektur",
+    sales: "Sales",
     "pre-gen": "Pre-Gen",
     pregen: "Pre-Gen",
     newsletter: "Pre-Gen",
@@ -149,6 +151,8 @@
         ? seconds + elapsed : (Date.now() - (timestamp(date) || 0)) / 1000;
       return {
         ...machine,
+        activity: machine.activity ? { ...machine.activity,
+          fresh: machine.activity.fresh && Date.now() - timestamp(machine.activity.sampledAt) <= 45000 } : undefined,
         status: agedStatus(machine.status, age),
         nativeStatus: machine.nativeLastSeenAt
           ? agedStatus(machine.nativeStatus, sourceAge(machine.nativeHeartbeatAgeSeconds, machine.nativeLastSeenAt))
@@ -244,6 +248,7 @@
   }
   function machineDisplayStatus(machine) {
     if (machine.status !== "online") return machine.status || "unknown";
+    if (machine.activity?.fresh && machine.service?.running === false) return "failed";
     if ((machine.workerIssues || []).some(issue => issue.severity === "error")) return "failed";
     if (machine.workerStatus && machine.workerStatus !== "online") return machine.workerStatus;
     if ((machine.workerIssues || []).length) return "blocked";
@@ -251,6 +256,7 @@
     return machine.status;
   }
   function workerFailureReason(machine) {
+    if (machine.activity?.fresh && machine.service?.running === false) return "Worker-Dienst läuft nicht · Wartungsdienst prüft";
     if ((machine.workerIssues || []).length) return machineAttentionReasons(machine)[0];
     if (machine.workerStatus && machine.workerStatus !== "online") return `Worker ${statusNames[machine.workerStatus] || machine.workerStatus}`;
     if (machine.workerId && !machine.workerStatus && machine.telemetrySource !== "worker") return "Worker-Status unbekannt";
@@ -704,10 +710,18 @@
   // Everything this Mac accepted: running work first, then its fresh reservations
   // (the bridge only assigns a queued task to a worker while its claim is live).
   function activeTasks(machine) {
+    if (machine.activity?.fresh) return (machine.activity.runs || []).slice()
+      .sort((a, b) => (a.status !== "running") - (b.status !== "running"));
     return machine.workerId
       ? tasks().filter((task) => task.workerId === machine.workerId && ["running", "queued"].includes(task.status))
         .sort((a, b) => (a.status !== "running") - (b.status !== "running"))
       : [];
+  }
+  function idleLabel(machine) {
+    if (machine.status !== "online") return "—";
+    if (machine.activity?.fresh && machine.activity.state === "idle") return machine.activity.acceptingTasks ? "frei" : "Annahme pausiert";
+    if (machine.acceptingTasks === false) return "Annahme pausiert · Tätigkeit ungeprüft";
+    return "Tätigkeit ungeprüft";
   }
   function batteryText(machine) {
     if (machine.batteryPercent == null) return ["—", ""];
@@ -770,7 +784,7 @@
       const active = activeTasks(machine);
       const taskCell = node("td");
       const current = node("span", failure ? "fleet-task fleet-issue" : active.length ? "fleet-task" : "fleet-task idle",
-        failure || (active.length ? active[0].title || active[0].id : machine.status === "online" ? "frei" : "—"));
+        failure || (active.length ? active[0].title || active[0].id : idleLabel(machine)));
       if (failure) current.title = machineAttentionReasons(machine).join("\n");
       if (active.length && !failure) current.title = active.map((task) => task.title || task.id).join("\n");
       taskCell.append(current);
@@ -843,7 +857,7 @@
       const seenAt = machine.lastSeenAt || machine.receivedAt || machine.seenAt;
       for (const [name, value, hint, tooltip] of [
         ["Akku", battery, source === "Akku" ? "" : source],
-        ["Aufgaben", `${active.length} aktiv`, ""],
+        ["Aufgaben", active.length || machine.activity?.fresh ? `${active.length} aktiv` : "ungeprüft", ""],
         ["Meldung", relative(seenAt).replace(/^vor /, ""), "", exact(seenAt)],
       ]) {
         const datum = node("div");
@@ -886,7 +900,7 @@
           `Newsletter-Worker: ${statusNames[machine.workerStatus] || machine.workerStatus} · ${relative(machine.workerLastSeenAt)}`));
       const bottom = node("div", "machine-bottom");
       const current = node("span", "machine-current", active.length
-        ? `${active[0].status === "queued" ? "Reserviert: " : ""}${active[0].title || active[0].id}` : "Keine laufende Aufgabe");
+        ? `${active[0].status === "queued" ? "Reserviert: " : ""}${active[0].title || active[0].id}` : idleLabel(machine));
       current.title = current.textContent;
       const detail = node("button", "text-button", "Details ↗");
       detail.setAttribute("aria-label", `Details für ${label}`);
@@ -1313,7 +1327,7 @@
   }
   // One line per accepted task: ClickUp titles often contain " · " themselves.
   function workingOn(machine) {
-    const field = detailField("Arbeitet an", "Keiner Aufgabe", true);
+    const field = detailField("Arbeitet an", idleLabel(machine), true);
     const active = activeTasks(machine);
     if (active.length) field.querySelector("strong").replaceChildren(...active.map((task) =>
       node("span", "detail-line", `${task.status === "queued" ? "Reserviert: " : ""}${task.title || task.id}`)));
@@ -1323,6 +1337,10 @@
     const account = (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
     const grid = node("div", "detail-grid");
     grid.append(
+      detailField("Direkte Worker-Meldung", machine.agentLastSeenAt
+        ? `${machine.activity?.fresh ? "Live" : "Veraltet"} · ${exact(machine.agentLastSeenAt)}` : "Wird eingerichtet"),
+      detailField("Wartungsdienst", machine.maintenance
+        ? `${machine.maintenance.ok ? "Geprüft" : "Prüfung fehlgeschlagen"} · ${machine.maintenance.summary}` : "Noch keine Prüfung gemeldet"),
       detailField("macOS-Gerätename", machine.deviceName || (machine.name !== machine.workerId ? machine.name : null) || "Nicht gemeldet"),
       detailField("Erreichbarkeit", statusNames[machine.status] || "Unbekannt"),
       detailField("Betriebsstatus", statusNames[machineDisplayStatus(machine)] || "Unbekannt"),

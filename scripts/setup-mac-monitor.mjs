@@ -617,6 +617,11 @@ export async function main(args = process.argv.slice(2)) {
       return;
     }
     const result = await setup(options);
+    if (!options.check && !options.dryRun) {
+      const { ensureWorkerObserver } = await import('./install-worker-observer.mjs');
+      const observer = await ensureWorkerObserver(options, { runner: run });
+      if (observer.installed) console.log('Worker-Beobachter aktiv; direkte Meldungen alle 15 Sekunden, Wartung jede Minute.');
+    }
     if (options.check && result.loginActionRequired) console.error(result.loginHint);
     if (options.check || options.dryRun) console.log(JSON.stringify(result));
   } catch (error) { console.error(`Max Monitor: ${error.message}`); process.exitCode = 1; }

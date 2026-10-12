@@ -10,11 +10,18 @@ const marker = '  function attentionEntries(';
 assert.ok(source.includes(marker));
 const context = { window: {}, location: { pathname: '/fleet', search: '' }, URLSearchParams, Intl };
 vm.runInNewContext(source.replace(marker,
-  '  globalThis.statusUnderTest = { machineDisplayStatus, workerFailureReason, machineAttentionReasons }; return;\n' + marker), context);
+  '  globalThis.statusUnderTest = { machineDisplayStatus, workerFailureReason, machineAttentionReasons, idleLabel }; return;\n' + marker), context);
 const status = context.statusUnderTest;
 const healthy = () => ({ status: 'online', workerId: 'studio', workerStatus: 'online',
   telemetrySource: 'app', pendingClickup: 0, usageUpdatedAt: new Date().toISOString(),
   limits: [{ kind: 'session', percent: 20 }] });
+
+test('only a fresh, explicitly idle worker is shown as free', () => {
+  assert.equal(status.idleLabel(healthy()), 'Tätigkeit ungeprüft');
+  assert.equal(status.idleLabel({ ...healthy(), acceptingTasks: false }), 'Annahme pausiert · Tätigkeit ungeprüft');
+  assert.equal(status.idleLabel({ ...healthy(), activity: { fresh: true, state: 'idle', acceptingTasks: true } }), 'frei');
+  assert.equal(status.idleLabel({ ...healthy(), activity: { fresh: false, state: 'idle', acceptingTasks: true } }), 'Tätigkeit ungeprüft');
+});
 
 test('pending ClickUp synchronization never turns a reachable worker into a blocked Mac', () => {
   for (const pendingClickup of [0, 1, 100]) {

@@ -12,6 +12,8 @@ final class FleetMonitoringManager: ObservableObject {
     private let store: FleetMonitoringAccountStore
     private var service: ClaudeAPIService?
     private var lastAttemptAt: Date?
+    private var consecutiveFailures = 0
+    private var refreshDelay: TimeInterval = 300
 
     private init() {
         let keychain = KeychainManager.shared
@@ -46,11 +48,15 @@ final class FleetMonitoringManager: ObservableObject {
         errorMessage = nil
         isRefreshing = false
         lastAttemptAt = nil
+        consecutiveFailures = 0
+        refreshDelay = 300
     }
 
     func refresh(force: Bool = false) {
         guard let account = store.account, !isRefreshing else { return }
-        if !force, let lastAttemptAt, Date().timeIntervalSince(lastAttemptAt) < 55 { return }
+        // Device liveness stays every minute; provider usage has its own cadence.
+        if let lastAttemptAt, Date().timeIntervalSince(lastAttemptAt) < refreshDelay,
+           !force || consecutiveFailures > 0 { return }
         lastAttemptAt = Date()
         isRefreshing = true
         if service == nil {
@@ -79,8 +85,12 @@ final class FleetMonitoringManager: ObservableObject {
                 self.usageData = data
                 self.updatedAt = Date()
                 self.errorMessage = nil
+                self.consecutiveFailures = 0
+                self.refreshDelay = 300
             case .failure(let error):
                 self.errorMessage = error.localizedDescription
+                self.consecutiveFailures += 1
+                self.refreshDelay = min(1800, 300 * pow(2, Double(min(self.consecutiveFailures, 3))))
             }
             self.notify()
         }
