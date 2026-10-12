@@ -85,6 +85,11 @@ test('HTTP control follows saved member/owner switches and reassignment without 
   assert.equal((await call('/heartbeat', 'POST', { ...heartbeat, deviceId: legacyDevice, workerId: undefined }, legacy.token)).status, 200);
   const legacyRoute = `/workers/mac-legacy/control?deviceId=${legacyDevice}`;
   assert.equal((await call(legacyRoute)).body.enabled, true);
+  const legacyReport = { ...directReport, workerId: 'mac-legacy', deviceId: legacyDevice, sampledAt: new Date().toISOString() };
+  assert.equal((await call('/workers/mac-legacy/report', 'POST', { ...legacyReport, deviceId: undefined })).status, 409);
+  assert.equal((await call('/workers/mac-legacy/report', 'POST', legacyReport)).body.accepted, true);
+  assert.equal((await call('/fleet')).body.machines.find(m => m.deviceId === legacyDevice).activity.fresh, true);
+  assert.equal((await call('/workers/mac-a/report', 'POST', { ...directReport, deviceId: legacyDevice })).status, 409);
   await call(`/members/${legacy.id}`, 'PATCH', { macWorker: false });
   assert.equal((await call(legacyRoute)).body.enabled, false);
   assert.equal((await call(`/workers/mac-a/control?deviceId=${legacyDevice}`)).body.reason, 'ambiguous');

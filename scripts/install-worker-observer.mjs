@@ -1,5 +1,5 @@
 // The observer source stays in the private newsletter repo. Bootstrap a pinned,
-// verified copy only until the registered worker checkout includes the observer.
+// verified copy until the registered worker checkout includes a compatible observer.
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,8 +8,8 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 export const OBSERVER_SOURCE = Object.freeze({
-  revision: 'f1c0ddcfbed0c68695a882b4e6703459d2e4e116',
-  sha256: '00ce62bd066a12d5784b59e53fb014948a2e3c5a67712aeda2ddbbb9d863c257',
+  revision: '9718015abfc8a8e768e36343252ea912e9a88fb8',
+  sha256: '4e4e9465ab25e56e0ee341a89ba79070863a2d188ae9bac44ea4c508dddc6d94',
 });
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -24,8 +24,14 @@ export async function ensureWorkerObserver(options, {
   const config = (loadConfig || require(path.join(root, 'src/config.js')).loadConfig)(configFile, { root });
   if (config.clickup?.transport !== 'rs_hub' || config.testbetrieb?.nur_aufgaben?.length) return { installed: false };
   let entry = path.join(root, 'src/monitor-agent.js');
-  try { await fs.access(entry); }
-  catch {
+  process.env.MAC_MONITOR_WORKER_ROOT = root;
+  let agent;
+  try {
+    await fs.access(entry);
+    const candidate = loadAgent(entry);
+    if (typeof candidate.deviceIdOf === 'function') agent = candidate;
+  } catch {}
+  if (!agent) {
     const runtime = path.join(home, '.local/share/mac-monitor-agent');
     entry = path.join(runtime, 'agent.cjs');
     let source;
@@ -41,7 +47,6 @@ export async function ensureWorkerObserver(options, {
       await fs.rename(entry + '.tmp', entry);
     }
   }
-  process.env.MAC_MONITOR_WORKER_ROOT = root;
-  const agent = loadAgent(entry);
+  agent ||= loadAgent(entry);
   return agent.installAgent(config, { entry, configFile, home, node, platform });
 }
