@@ -33,15 +33,17 @@ erneut geladen.
   konfigurierte Zustandsdatenbank über SSH erfolgreich gelesen.
 - `check macworker-5-schwarz` bestätigte um 19:48 Uhr die vollständige SSH-Verbindung
   als `claude3` über Port 23001. Worker PID 10102 und Wartungstunnel PID 7417 liefen.
-  Der Zugriff auf Worker-Code, Konfiguration und Zustandsverzeichnis unter
-  `/Users/claude3/Documents/AI Newsletter Creation` wurde jedoch mit `EPERM`
-  abgewiesen. Die Zusatzfreigabe für entfernten Festplattenzugriff wird gerade
-  durch Till geprüft; bis zum echten Dateizugriff keine vollständige
-  Worker-Reparaturfähigkeit melden.
+  Nach Tills Zusatzfreigabe wurde um 19:53 Uhr auch der echte Zugriff auf
+  Worker-Code, Konfiguration und die konfigurierte SQLite-Datenbank unter
+  `/Users/claude3/Documents/AI Newsletter Creation` erfolgreich bestätigt.
+  Im Zustandsverzeichnis wurde eine temporäre private Prüfdatei geschrieben,
+  gelesen und vollständig entfernt. Code, Konfiguration und Datenbank haben
+  Schreibberechtigung. Revision `5f983cf`, keine lokalen Git-Änderungen.
 - Auch auf Mac 5 wurde ausschließlich der Tunnel-Prozess beendet. launchd
   verband automatisch neu (PID 7417 → 11075), danach bestand der vollständige
   SSH-Test erneut. Der Newsletter-Worker blieb PID 10102. Ein erneuter echter
-  Dateitest um 19:51 Uhr ergab weiterhin `EPERM` für alle drei Worker-Pfade.
+  Dateitest um 19:51 Uhr ergab vor der Zusatzfreigabe noch `EPERM` für alle drei
+  Worker-Pfade.
 - Der zuerst scheiternde Mac-5-Tunnel verwendete eine Hub-Prüfdatei im geschützten
   Documents-Ordner. Die korrigierte Installation kopiert die bereits vertrauten
   öffentlichen Pins in das eigene Wartungsverzeichnis. Die strikte SSH-Prüfung
@@ -68,16 +70,31 @@ freigeben und den bereitgestellten Setup-Befehl einmal ausführen. Das lässt si
 über den bisher nur lesenden Monitor-Beobachter nicht ausführen. Keine bloße
 Registrierung oder `installed: true` als Zugriffserfolg melden: jeden Mac mit
 `worker-remote.mjs check <exakte-worker-id>` prüfen.
-Auf Mac 5 ist zusätzlich die Dateifreigabe noch zu verifizieren. Danach den
-aktiven Konfigurationspfad aus dem LaunchAgent lesen, die Konfiguration laden
-und die konfigurierte Datenbank schreibgeschützt auslesen.
+Haupt-Mac und Mac 5 sind für Terminal-Wartung einschließlich Worker-Dateizugriff
+verifiziert. Der Fernzugriff verwendet die Rechte des jeweiligen Worker-Benutzers;
+administrative macOS-Aufgaben benötigen weiterhin dessen normale sudo-Freigabe.
 
 Die allgemeine Monitor-Anzeige „Annahme pausiert“ wurde in diesem Auftrag
 nicht visuell geändert. Der neue Zugang ermöglicht die lokale Diagnose; eine
 präzisere Anzeige der tatsächlichen Sperrgründe bleibt eine eigene UI-Änderung
 mit den geltenden Skill- und Browserprüfungen.
 
-## Live-Diagnose, 19:51 Uhr
+## Live-Diagnose, 19:57 Uhr
+
+Der echte lokale Datenbanktest bestätigte eine erfolgreiche neue Aufgabenabfrage
+um 19:57:08 Uhr (`ok: true`, 73 Einträge). `worker_control` wurde um 19:57:35 Uhr
+erneut als aktiv geprüft; vier laufende Läufe, keine STOP-Datei. Die Annahmepause
+bei vier belegten Plätzen ist beabsichtigt. Der zwischenzeitliche ClickUp-
+Statuskonflikt wurde im nächsten vollständigen Poll wieder erfolgreich gelesen.
+Keine zusätzliche Testaufgabe starten, solange alle vier Plätze belegt sind.
+
+Die Logs erklären die weiteren Worker-Neustarts durch reguläre automatische
+Codeupdates: um 19:53 Uhr wurde `5f983cf` auf `20fc097` aktualisiert und die
+vier aktiven Läufe übernommen. Worker PID 14178 und Wartungstunnel PID 11075
+liefen um 19:57:43 Uhr. Der Wartungstunnel blieb über das Worker-Update hinweg
+erreichbar; kein Eingriff in diesen Update-Prozess war nötig.
+
+Vorherige Fleet-Beobachtung um 19:51 Uhr:
 
 Mac 5 meldete weiterhin vier laufende Aufgaben mit Fortschritt 90 %, 70 %, 72 %
 und 75 %. Der frische Beobachterbericht um 19:50:50 Uhr bestätigt laufende

@@ -104,7 +104,22 @@ werden; erst nach beendetem Tunnel einen Port neu vergeben. Eine Schlüsselrotat
 muss auf jedem Ziel-Mac durch erneute Installation umgesetzt werden. Das Ersetzen
 der öffentlichen Datei auf dem Hub widerruft bereits eingerichtete Macs nicht.
 
-## Verifizierter Diagnose-Stand vom 12.10.2026, 19:27 Uhr
+## Verifizierter Diagnose-Stand vom 12.10.2026, 19:57 Uhr
+
+Haupt-Mac (`macbook-till-main`) und Mac 5 (`macworker-5-schwarz`, Benutzer `claude3`)
+sind über den neuen SSH-Weg erreichbar. Auf beiden wurden Worker-Code,
+Konfiguration und die konfigurierte SQLite-Datenbank per Fernbefehl gelesen.
+Auf Mac 5 wurden außerdem Schreiben, Lesen und Entfernen einer privaten
+temporären Prüfdatei im Zustandsverzeichnis sowie die Schreibberechtigungen
+des bestehenden Codes, Profils und der Datenbank bestätigt.
+
+Mac 5 meldet vier laufende Aufgaben, aktive Max-Monitor-Freigabe und keine
+STOP-Datei. Der neue Poll um 19:57:08 Uhr war erfolgreich. Die Annahmepause
+bei vier belegten Plätzen entspricht der verbindlichen Kapazitätsgrenze.
+Automatisches Wiederverbinden des Wartungstunnels wurde auf beiden Macs
+getestet. Die vier anderen Macs brauchen noch die lokale Einrichtung.
+
+Frühere Fleet-Beobachtung um 19:27 Uhr:
 
 Die Live-Fleet meldete für `macworker-5-schwarz`, `macbook-till-main` und
 `macbook-von-till-main-2` je vier laufende Aufgaben. Eine zusätzliche Annahme ist
