@@ -75,11 +75,10 @@ sie ist jetzt auch im regulären Installer enthalten.
 Der Code ist auf `codex/worker-remote-access` veröffentlicht; der bestehende
 Entwurfs-PR ist https://github.com/AurelianSteiner/Max-Monitor/pull/44.
 
-## Noch offen
+## Mac-2-Registrierung behoben und Auftrag abgeschlossen
 
-Nur `macbook-2` fehlt noch im Fernzugriff-Register; der vollständige Check scheitert
-schon beim Hub-Lookup. Trotz gemeldeter Ausführung ist damit keine erfolgreiche
-Installation belegt. Till meldete `ssh fehlgeschlagen (Exit 1)`.
+Der erste Mac-2-Versuch scheiterte beim Hub-Lookup; Till meldete
+`ssh fehlgeschlagen (Exit 1)`.
 Die Live-Gegenprüfung des Worker-Control-Helfers ergab für `macbook-2` ohne UUID
 `unregistered`, mit `052ae401-0602-4a39-960e-eeeecd8b6cd4` dagegen `enabled`.
 Die native Gerätezeile erhält ihre Worker-ID nur aus Telemetrie; diese darf
@@ -96,13 +95,26 @@ Nach dem Deployment bestätigten vier erneute `check`-Aufrufe den SSH-Zugang
 zu Till Main, Mac 1, Mac 4 und Mac 5 jeweils mit dem erwarteten Benutzer.
 142 Skript-Tests sowie 3 gezielte Worker-Control-Tests bestanden, darunter 22
 Fernzugriffstests einschließlich alter nativer Gerätebindung und Identitätskonflikten.
-Till wurde nach dem Deployment um erneutes Ausführen desselben Bootstrap-Befehls
-auf Mac 2 gebeten. Dessen lokale Ausführung und der echte Fernzugriff stehen aus.
+Till bestätigte den erneuten Installer-Lauf. Um 20:37 Uhr bestanden der echte
+SSH-Check als `probetag2` und die vollständige Dateidiagnose auf `macbook-2`.
+Port 23004, UUID `052ae401-0602-4a39-960e-eeeecd8b6cd4`. Root
+`/Users/probetag2/Documents/AI Newsletter Creation`, Revision `20fc097`, keine
+lokalen Git-Änderungen. Worker-Code, Profil und SQLite lesbar und mit
+Schreibberechtigung; private temporäre Datei geschrieben, gelesen und entfernt.
+
+Anschließend wurde ausschließlich der Wartungstunnel beendet. Um 20:39 Uhr
+bestanden SSH und Dateitest erneut: Tunnel PID 67792 → 68293, Newsletter-Worker
+unverändert PID 45796. Der frische Poll um 20:38:13 Uhr war erfolgreich
+(`ok: true`, 67 Einträge), vier laufende Aufgaben, Freigabe aktiv, keine
+STOP-Datei. Die Annahmepause entspricht der vollen Vier-Plätze-Kapazität.
+Alle fünf beauftragten Macs sind damit tatsächlich für Terminal und
+Worker-Dateiwartung geprüft. Für diese Einrichtung ist kein Nutzerschritt offen.
+Alle GitHub-Checks des Code-Stands `30a9463` bestanden ebenfalls.
 Keine bloße Registrierung oder `installed: true` als Zugriffserfolg melden:
 jeden Mac mit `worker-remote.mjs check <exakte-worker-id>` und einem echten
 Dateibefehl prüfen. `macbook-von-till-main-2` bleibt ausdrücklich ausgenommen.
 
-Haupt-Mac, Mac 5, Mac 1 und Mac 4 (Newsletter Mac) sind für Terminal-Wartung einschließlich
+Haupt-Mac, Mac 1, Mac 2, Mac 4 (Newsletter Mac) und Mac 5 sind für Terminal-Wartung einschließlich
 Worker-Dateizugriff verifiziert. Der Fernzugriff verwendet die Rechte des jeweiligen Worker-Benutzers;
 administrative macOS-Aufgaben benötigen weiterhin dessen normale sudo-Freigabe.
 
@@ -169,18 +181,14 @@ setzt die effektive Annahme bei mehr als drei Minuten altem Poll ebenfalls false
 Aktuelle Heartbeats, Beobachterberichte und vollständige Polls sind getrennt
 zu bewerten.
 
-## Nächste Schritte
+## Künftige Worker-Diagnose
 
-1. Tills Rückmeldung zum erneuten Installer-Lauf auf Mac 2 abwarten, danach
-   `node scripts/worker-remote.mjs check macbook-2` und den echten Dateitest
-   `/tmp/max-monitor-worker-diagnose.py` per `connect` ausführen. Falls der lokale
-   Cache fehlt, nur diesen konkreten Fall prüfen; keine UUID aus Namen ableiten
-   oder manuell die Registry befüllen. Till Main 2 ausnehmen.
-2. Falls ein Mac trotz freier Plätze und nutzbarem Claude pausiert, über den
-   neuen Zugang den aktiven Produktionspfad, STOP-Zustand, `worker_control`,
-   `monitor_admission`, `last_poll`, reservierte Plätze und lokale Logs lesen.
-3. Nur einen nachgewiesenen Defekt reparieren; laufende Aufgaben erhalten und
-   anschließend neuen Poll und Auftragsannahme verifizieren.
+Die Fernzugriff-Einrichtung ist abgeschlossen. Falls ein Mac später trotz freier
+Plätze und nutzbarem Claude pausiert, über den Zugang den aktiven Produktionspfad,
+STOP-Zustand, `worker_control`, `monitor_admission`, `last_poll`, reservierte
+Plätze und lokale Logs prüfen. Nur einen nachgewiesenen Defekt reparieren;
+laufende Aufgaben erhalten und danach neuen Poll und Auftragsannahme bestätigen.
+Till Main 2 bleibt von diesem Wartungszugang ausgenommen.
 
 Der Entwicklungs-Checkout `Documents/AI Newsletter Creation` enthält umfangreiche
 fremde Änderungen; nicht zurücksetzen oder dort beiläufig Worker-Code ändern.

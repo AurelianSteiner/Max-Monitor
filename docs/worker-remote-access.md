@@ -110,10 +110,10 @@ werden; erst nach beendetem Tunnel einen Port neu vergeben. Eine Schlüsselrotat
 muss auf jedem Ziel-Mac durch erneute Installation umgesetzt werden. Das Ersetzen
 der öffentlichen Datei auf dem Hub widerruft bereits eingerichtete Macs nicht.
 
-## Verifizierter Diagnose-Stand vom 12.10.2026, 20:20 Uhr
+## Verifizierter Diagnose-Stand vom 12.10.2026, 20:39 Uhr
 
-Vier Macs sind für SSH und echten Worker-Dateizugriff verifiziert. Nach dem
-Helfer-Deployment wurden alle vier SSH-Verbindungen erneut erfolgreich geprüft:
+Alle fünf gewünschten Macs sind für SSH und echten Worker-Dateizugriff
+verifiziert. Till Main 2 ist auf Nutzerwunsch ausgenommen:
 
 | Mac | Worker | SSH-Benutzer | Hub-Loopback-Port | Status |
 | --- | --- | --- | --- | --- |
@@ -121,15 +121,24 @@ Helfer-Deployment wurden alle vier SSH-Verbindungen erneut erfolgreich geprüft:
 | Mac 5 schwarz | `macworker-5-schwarz` | `claude3` | 23001 | Terminal, Worker-Dateien und Schreiben geprüft |
 | Mac 4 / Newsletter Mac | `newsletter-mac-141b2976` | `codex1` | 23002 | Terminal, Worker-Dateien und Schreiben geprüft |
 | Mac 1 | `macbook-1` | `tuck2` | 23003 | Terminal, Worker-Dateien und Schreiben geprüft |
+| Mac 2 | `macbook-2` | `probetag2` | 23004 | Terminal, Worker-Dateien und Schreiben geprüft |
 
-Bei `macbook-2` fehlt noch die Registrierung. Der gemeldete Installer-Fehler
+Der vorherige Mac-2-Installer-Fehler
 `ssh fehlgeschlagen (Exit 1)` wurde eingegrenzt: Die ältere native App wird nur
 über ihre vorhandene Gerätekennung erkannt. Die Gegenprüfung auf dem Hub gab
 ohne diese Kennung `unregistered`, mit der exakten Kennung `enabled` zurück.
-Die korrigierten Helfer liegen seit 20:20 Uhr auf dem Hub; der erneute lokale
-Installer-Lauf und danach SSH-/Dateiverifikation stehen noch aus.
+Die korrigierten Helfer liegen seit 20:20 Uhr auf dem Hub. Nach dem erneuten
+lokalen Installer-Lauf wurden SSH, Code, Profil, SQLite und Schreiben/Lesen/
+Entfernen einer privaten Prüfdatei auf Mac 2 um 20:37 Uhr bestätigt.
+Die vorhandene Gerätekennung ist eindeutig im Wartungsprofil gespeichert.
 `macbook-von-till-main-2` ist auf ausdrücklichen Wunsch des Nutzers von diesem
 Fernzugriff ausgenommen. Das ist keine Deaktivierung seines Workers.
+
+Mac 2 wurde nach bewusstem Beenden ausschließlich des Wartungstunnels um
+20:39 Uhr erneut erfolgreich geprüft: Tunnel PID 67792 → 68293, Worker PID
+45796 blieb unverändert. Der neue Poll um 20:38:13 Uhr war erfolgreich; vier
+laufende Aufgaben, aktive Freigabe und keine STOP-Datei. Auch dort ist die
+Annahmepause durch den vollen Aufgaben-Pool beabsichtigt.
 
 Lokale Diagnose um 20:07 Uhr: Mac 1 hatte vier laufende Aufgaben. Mac 4
 (Newsletter Mac, macOS-Rechnername „MacBook Air von Codex“) hatte drei laufende
@@ -155,8 +164,8 @@ des bestehenden Codes, Profils und der Datenbank bestätigt.
 Mac 5 meldet vier laufende Aufgaben, aktive Max-Monitor-Freigabe und keine
 STOP-Datei. Der neue Poll um 19:57:08 Uhr war erfolgreich. Die Annahmepause
 bei vier belegten Plätzen entspricht der verbindlichen Kapazitätsgrenze.
-Automatisches Wiederverbinden des Wartungstunnels wurde auf Haupt-Mac und Mac 5
-getestet.
+Automatisches Wiederverbinden des Wartungstunnels wurde auf Haupt-Mac, Mac 5
+und Mac 2 getestet.
 
 Frühere Fleet-Beobachtung um 19:27 Uhr:
 
