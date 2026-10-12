@@ -55,6 +55,13 @@ test('HTTP control follows saved member/owner switches and reassignment without 
   };
   const deviceId = '610be10e-8a00-4e00-b000-000000000072';
   const member = (await call('/workers/enroll', 'POST', { workerId: 'mac-a', deviceId })).body.member;
+  const sampledAt = new Date().toISOString();
+  const directReport = { schema: 1, workerId: 'mac-a', sampledAt,
+    service: { running: true, lastPollAt: sampledAt }, activity: { state: 'idle', acceptingTasks: true, runs: [] } };
+  assert.equal((await call('/workers/mac-a/report', 'POST', directReport, member.token)).status, 403);
+  assert.equal((await call('/workers/mac-a/report', 'POST', directReport)).body.accepted, true);
+  assert.equal((await call('/workers/mac-a/report')).body.activity.fresh, true);
+  assert.equal((await call('/workers/mac-missing/report', 'POST', { ...directReport, workerId: 'mac-missing' })).status, 409);
   assert.equal((await call('/workers/mac-a/control')).body.enabled, true, 'enrollment works before first heartbeat');
   await call(`/members/${member.id}`, 'PATCH', { macWorker: false });
   const disabled = await call('/workers/mac-a/control');

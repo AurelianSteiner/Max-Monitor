@@ -134,6 +134,22 @@ test('a claim counts only when its event type matches the worker job ID', () => 
   assert.equal(parseClaim(jobClaim('ai_newsletter_claim', 'x', 'mac')).workflow, 'newsletter');
 });
 
+test('status attempt IDs normalize to ClickUp IDs for all live job kinds', () => {
+  for (const [event, id, workflow] of [
+    ['ai_newsletter_claim', '86cb61veb@1791802497891', 'newsletter'],
+    ['ai_klaviyo_upload_claim', '86cb61veb@1791802497891-klaviyo', 'klaviyo'],
+    ['ai_translation_claim', '86cb61veb@1791802497891-uebersetzung-en', 'translation-en'],
+    ['ai_korrektur_claim', 'korrektur-cu-86cb61veb@1791802497891-intern-file-b4f04c596092ebf32f72858ee3994969', 'correction'],
+  ]) {
+    const claim = parseClaim(jobClaim(event, id, 'macworker-5-schwarz'));
+    assert.equal(claim.taskId, '86cb61veb');
+    assert.equal(claim.workflow, workflow);
+    const rows = buildQueue([task('86cb61veb', workflow === 'klaviyo' ? ['klaviyo upload · läuft'] : workflow === 'translation-en' ? ['en translation'] : ['pre gen · fertig'])], [claim], DEFAULT_WORKFLOWS, { now });
+    if (workflow === 'correction') assert.equal(rows.find(row => row.workflow === 'correction').workerId, 'macworker-5-schwarz');
+    else if (workflow !== 'newsletter') assert.equal(rows.find(row => row.status === 'running').workerId, 'macworker-5-schwarz');
+  }
+});
+
 test('tag discovery finds every tag the worker sets', async () => {
   const workerTags = ['pre gen.', 'pre gen · wartet', 'pre gen · läuft', 'pre gen · fertig', 'pre gen · blockiert',
     'klaviyo upload', 'klaviyo upload · wartet', 'klaviyo upload · läuft', 'klaviyo upload · fertig', 'klaviyo upload · blockiert',

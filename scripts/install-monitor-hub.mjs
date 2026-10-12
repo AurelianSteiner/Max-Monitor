@@ -5,6 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import net from 'node:net';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { configuration, loadConfiguration, checkEnrollment } from './enroll-monitor-worker.mjs';
 
@@ -15,7 +16,7 @@ const BEGIN = '# MAX MONITOR BEGIN';
 const END = '# MAX MONITOR END';
 const SOURCE_FILES = ['team-server/server.js', 'team-server/fleet.js', 'team-server/enrollment.js', 'team-server/package.json',
   'team-server/public/dashboard.html', 'team-server/public/dashboard.css', 'team-server/public/dashboard.js', 'scripts/enroll-monitor-worker.mjs',
-  'team-server/worker-control.js', 'scripts/check-worker-control.mjs',
+  'team-server/worker-control.js', 'scripts/check-worker-control.mjs', 'team-server/worker-reports.js', 'scripts/report-monitor-worker.mjs',
   'scripts/install-monitor-hub.mjs', 'scripts/install-monitor-hub.sh', 'scripts/newsletter-monitor-bridge.mjs'];
 const defaults = { serverURL: 'https://api.ruegamer-steiner.de/max-monitor', teamId: 'RSMACS01', port: 8941, nodeBinary: '/usr/bin/node' };
 
@@ -169,6 +170,13 @@ export function prepareInstallation({ stageDirectory, nginxConfigPath, workerRoo
   const files = SOURCE_FILES.map((relative) => ({ target: `/opt/max-monitor/${relative}`, content: fs.readFileSync(path.join(sourceRoot, relative)), mode: relative.endsWith('.sh') ? 0o755 : 0o644 }));
   for (const name of ['config.js', 'hub-transport.js', 'pre-gen.js']) {
     files.push({ target: `/opt/max-monitor/newsletter-source/src/${name}`, content: fs.readFileSync(path.join(workerRoot, 'src', name)), mode: 0o644 });
+  }
+  // Copy only the public routing contract, never the worker's local credentials.
+  const channelFile = path.join(workerRoot, 'src', 'slack-kanaele.js');
+  if (fs.existsSync(channelFile)) {
+    const { KANAELE, FEHLER_KANAL } = createRequire(import.meta.url)(channelFile);
+    files.push({ target: '/opt/max-monitor/newsletter-source/config/monitor-channels.json', mode: 0o644,
+      content: JSON.stringify({ claims: Object.values(KANAELE).map(channel => channel.id), errors: FEHLER_KANAL.id }) + '\n' });
   }
   files.push({ target: '/opt/max-monitor/newsletter-source/config/worker.local.json', mode: 0o600,
     content: `${JSON.stringify({ worker_id: 'max-monitor-source', claude: { bin: '/usr/bin/false' } }, null, 2)}\n` });
