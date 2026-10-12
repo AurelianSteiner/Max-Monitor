@@ -415,6 +415,8 @@ Die Kopfzeile zeigt die Versionen aller Skills aus dem neuesten bestätigten RS-
 
 Der Relay behält den neuesten bekannten Stand auch über Neustarts und ältere Mac-Meldungen hinweg. Ohne aktuelle Meldung bzw. nach mehr als drei Minuten ohne erfolgreichen Skill-Abgleich heißt die Referenz „Stand ungeprüft“. „Abgleich x/y“ vergleicht Version und Inhaltsstand jedes Skills mit den installierten Paketen der sichtbaren Macs; fehlende oder veraltete Meldungen zählen niemals als aktuell. Laufende Aufträge behalten ihre fest zugeordneten Pakete.
 
+Der Abgleich pro Mac verwendet die frische zentrale Referenz und dessen direkte Meldung des tatsächlich installierten Pakets. Ein älterer lokaler Git-Abgleich macht einen live bestätigten, identischen Skill-Inhalt nicht veraltet; ohne frische zentrale Referenz oder direkte Meldung bleibt der Stand ungeprüft.
+
 ## Bestehende Macs und Quellenfehler
 
 Neuere Newsletter-Worker schreiben bei ihrer ClickUp-Abfrage bereits einen
