@@ -236,6 +236,7 @@ function validateQueue(body) {
       workerId: string(raw.workerId, "task.workerId", 120, true),
       phase: string(raw.phase, "task.phase", 160, true),
       blockedReason: string(raw.blockedReason, "task.blockedReason", 500, true),
+      errorUrl: string(raw.errorUrl, "task.errorUrl", 2000, true),
       attemptId: string(raw.attemptId, "task.attemptId", 200, true),
       // The worker's live step changes every few minutes; unlike phase it is
       // neither a log event nor part of the completion version.
@@ -266,7 +267,21 @@ function validateQueue(body) {
       });
     });
   }
-  return optionalFields({ tasks, source, observedWorkers, workerIssues });
+  let blockedErrors;
+  if (body.blockedErrors !== undefined) {
+    // Use the same bounds and URL checks as normal tasks, then require the
+    // immutable Slack message identity. An incomplete scan never sends this.
+    blockedErrors = validateQueue({ source: body.source, tasks: body.blockedErrors }).tasks;
+    for (const row of blockedErrors) {
+      const match = /^slack-error:([A-Za-z0-9_-]+):(\d+\.\d+)$/.exec(row.id);
+      let link;
+      try { link = new URL(row.errorUrl); } catch { /* Rejected below. */ }
+      if (!match || row.status !== 'blocked' || link?.protocol !== 'https:' || !link.hostname.endsWith('.slack.com')
+        || link.username || link.password || link.pathname !== `/archives/${match[1]}/p${match[2].replace('.', '')}`)
+        throw new FleetError(400, 'blockedErrors muss offene Slack-Fehlermeldungen mit passendem Permalink enthalten');
+    }
+  }
+  return optionalFields({ tasks, source, observedWorkers, workerIssues, blockedErrors });
 }
 
 function machineStatus(machine, now) {
@@ -575,6 +590,8 @@ function createFleetStore(dataDir, now = Date.now) {
   function updateQueue(teamId, raw) {
     const incoming = validateQueue(raw);
     const state = read(teamId);
+    if (!incoming.source.error && Array.isArray(state.queue.blockedErrors) && incoming.blockedErrors === undefined)
+      throw new FleetError(409, 'Vollständiger Abgleich von #ai-fehler fehlt; bisheriger Fehlerbestand bleibt erhalten.');
     const deleted = new Set(state.deletedWorkers || []);
     if (incoming.observedWorkers) incoming.observedWorkers = incoming.observedWorkers.filter((worker) => !deleted.has(worker.workerId));
     if (incoming.workerIssues) incoming.workerIssues = incoming.workerIssues.filter((issue) => !deleted.has(issue.workerId));
@@ -614,9 +631,18 @@ function createFleetStore(dataDir, now = Date.now) {
       for (const task of state.queue.tasks) {
         if (!incomingIds.has(task.id)) event(state, "task_removed", task.id, task.title, "Aufgabe ist nicht mehr im vollständigen Queue-Snapshot", time, task);
       }
+      if (incoming.blockedErrors !== undefined) {
+        const oldErrors = new Map((state.queue.blockedErrors || []).map(task => [task.id, task]));
+        const newErrors = new Set(incoming.blockedErrors.map(task => task.id));
+        for (const task of incoming.blockedErrors) if (!oldErrors.has(task.id))
+          event(state, 'task_blocked', task.id, task.title, task.blockedReason || task.phase, time, task);
+        for (const task of oldErrors.values()) if (!newErrors.has(task.id))
+          event(state, 'task_removed', task.id, task.title, 'Fehlermeldung steht nicht mehr in #ai-fehler', time, task);
+      }
       if (oldSource.error) event(state, "queue_source_recovered", "queue", incoming.source.name, "Queue-Quelle ist wieder erreichbar", time);
       state.queue = {
         tasks: incoming.tasks,
+        ...(incoming.blockedErrors === undefined ? {} : { blockedErrors: incoming.blockedErrors }),
         completions: (state.queue.completions || []).filter((entry) => {
           const task = incoming.tasks.find((task) => task.id === entry.taskId);
           return task && entry.taskVersion === taskVersion(task);
@@ -644,6 +670,8 @@ function createFleetStore(dataDir, now = Date.now) {
     const taskId = string(raw.taskId, "taskId", 160);
     const version = string(raw.taskVersion, "taskVersion", 64);
     const state = read(teamId);
+    if ((state.queue.blockedErrors || []).some(entry => entry.id === taskId))
+      throw new FleetError(409, 'Dieser Fehler steht noch in #ai-fehler. Erst beheben; der nächste Slack-Abgleich entfernt ihn automatisch.');
     const task = state.queue.tasks.find((entry) => entry.id === taskId);
     if (!task) throw new FleetError(404, "Die Aufgabe ist nicht mehr in der Queue. Aktualisiere die Ansicht.");
     if (version !== taskVersion(task)) throw new FleetError(409, "Die Aufgabe hat sich geändert. Aktualisiere die Ansicht und prüfe den neuen Status.");
@@ -715,7 +743,9 @@ function createFleetStore(dataDir, now = Date.now) {
       }
     }
     const liveReports = (state.workerReports || []).filter(report => publicReport(report, time).activity?.fresh);
-    const queueTasks = new Map(state.queue.tasks.map(task => [task.id, publicTask(task, state.queue.completions)]));
+    const slackInventory = Array.isArray(state.queue.blockedErrors);
+    const queueTasks = new Map(state.queue.tasks.filter(task => !slackInventory || !['blocked', 'failed'].includes(task.status))
+      .map(task => [task.id, publicTask(task, state.queue.completions)]));
     const activeOwners = new Map();
     for (const report of liveReports) {
       const active = new Set(report.activity.runs.map(run => run.id));
@@ -728,9 +758,15 @@ function createFleetStore(dataDir, now = Date.now) {
         activeOwners.set(run.id, report.workerId);
         if (['blocked', 'failed', 'completed'].includes(previous?.status) && Date.parse(previous.updatedAt) > Date.parse(report.sampledAt)) continue;
         queueTasks.set(run.id, { ...previous, ...run, blockedReason: undefined, completion: undefined, completedAt: undefined, workerId: conflict ? null : report.workerId,
-          status: conflict ? 'blocked' : run.status, phase: conflict ? 'Mehrere Worker melden denselben Auftrag' : run.status === 'queued' ? 'Reserviert' : 'In Bearbeitung',
+          status: conflict && !slackInventory ? 'blocked' : run.status, phase: conflict ? 'Mehrere Worker melden denselben Auftrag' : run.status === 'queued' ? 'Reserviert' : 'In Bearbeitung',
           updatedAt: report.sampledAt, progress: run.progress ?? (['running', 'queued'].includes(previous?.status) ? previous.progress : undefined) });
       }
+    }
+    if (slackInventory) {
+      // Live telemetry may diagnose conflicts, but cannot manufacture extra
+      // pipeline blockers or erase Slack errors for an earlier attempt.
+      for (const [id, task] of queueTasks) if (['blocked', 'failed'].includes(task.status)) queueTasks.delete(id);
+      for (const error of state.queue.blockedErrors) queueTasks.set(error.id, publicTask(error));
     }
     return {
       schema: 1,

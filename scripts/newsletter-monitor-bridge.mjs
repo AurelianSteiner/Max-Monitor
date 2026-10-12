@@ -152,7 +152,7 @@ export async function listClaims(hubFetch, channelId, { now = Date.now(), maxPag
   for (let page = 0; page < maxPages; page += 1) {
     const url = new URL('https://slack.com/api/conversations.history');
     for (const [key, value] of Object.entries({ channel: channelId, include_all_metadata: true, limit: 100,
-      oldest: ((now - lookbackDays * 86400000) / 1000).toFixed(6), ...(cursor ? { cursor } : {}) })) url.searchParams.set(key, String(value));
+      ...(lookbackDays === null ? {} : { oldest: ((now - lookbackDays * 86400000) / 1000).toFixed(6) }), ...(cursor ? { cursor } : {}) })) url.searchParams.set(key, String(value));
     const result = await requestJson(hubFetch, url, 'Slack');
     if (!Array.isArray(result.messages)) throw new Error('Slack: Nachrichtenliste fehlt.');
     for (const message of result.messages) { onMessage(message); const claim = parseClaim(message); if (claim) claims.push({ ...claim, channelId }); }
@@ -167,17 +167,18 @@ export function createClaimReader({ ttlMs = 60000 } = {}) {
   const cache = new Map();
   return async (hubFetch, channelId, options) => {
     const old = cache.get(channelId);
-    if (old && options.now - old.at < ttlMs) {
+    if (old && old.lookbackDays === options.lookbackDays && options.now - old.at < ttlMs) {
       for (const message of old.messages) options.onMessage?.(message);
       return old.claims;
     }
     const messages = [];
     const claims = await listClaims(hubFetch, channelId, { ...options, onMessage: message => {
-      // Cache only messages that carry a current worker diagnostic.
-      if (parseWorkerIssue(message)) messages.push(message);
+      // Run errors are inventory too. A warm cache must replay the same errors
+      // as a fresh read, including errors older than the claims lookback.
+      if (message.metadata?.event_type === 'ai_newsletter_fehler' || parseWorkerIssue(message)) messages.push(message);
       options.onMessage?.(message);
     } });
-    cache.set(channelId, { at: options.now, claims, messages });
+    cache.set(channelId, { at: options.now, lookbackDays: options.lookbackDays, claims, messages });
     return claims;
   };
 }
@@ -204,6 +205,47 @@ export function parseWorkerIssue(message) {
   return { id: String(message.ts), workerId: value.worker, stage,
     severity: warning ? 'warning' : 'error', message: displayText(safe, 500, `Worker-Fehler bei ${stage}`),
     reportedAt: new Date(time).toISOString() };
+}
+
+// One row per still-present bot error in #ai-fehler, independent of historical
+// ClickUp tags, claim outcomes and canceled Sales tests. Removing the error in
+// Slack removes this row on the next complete scan. Never synthesize completion.
+export function buildBlockedErrors(messages, channelId, tasks = []) {
+  const rows = new Map();
+  const slackText = text => String(text || '').replace(/<[^|>]+\|([^>]+)>/g, '$1')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  for (const message of messages) {
+    if (message.thread_ts && message.thread_ts !== message.ts) continue;
+    const issue = parseWorkerIssue(message);
+    const value = message.metadata?.event_type === 'ai_newsletter_fehler' ? message.metadata.event_payload : null;
+    if (!value && !issue) continue;
+    const time = Number(message.ts) * 1000;
+    if (!/^\d+\.\d+$/.test(message.ts) || !Number.isFinite(time) || time <= 0 || time > 8640000000000000) throw new Error('Slack: Fehlermeldung ohne gültige Nachrichten-ID.');
+    const text = String(message.text || '');
+    const jobId = String(value?.task_id || '');
+    const correction = /^(?:korrektur-)?cu-([A-Za-z0-9_-]+)@\d+-(?:intern|extern)(?:-file-[a-f0-9]{31,32})?$/.exec(jobId);
+    const translation = /^(.+)-uebersetzung-(en|it|fr|se|sp)$/.exec(jobId);
+    const upload = /^(.+)-klaviyo$/.exec(jobId);
+    const kind = correction ? 'correction' : translation ? `translation-${translation[2]}` : upload ? 'upload' : value?.kind === 'lauf' ? 'newsletter' : 'worker-errors';
+    const taskId = (correction?.[1] || translation?.[1] || upload?.[1] || jobId).replace(/@\d+$/, '');
+    const sourceId = correction ? `correction:${jobId}` : `clickup:${kind}:${taskId}`;
+    const source = tasks.find(task => task.id === sourceId);
+    const taskLink = /<(https:\/\/app\.clickup\.com\/t\/[A-Za-z0-9_-]+)\|([^>]+)>/.exec(text);
+    // Existing worker copies contain a permalink to their original channel.
+    const workspace = /https:\/\/([a-z0-9-]+\.slack\.com)\/archives\//i.exec(text)?.[1] || 'app.slack.com';
+    const errorUrl = `https://${workspace}/archives/${encodeURIComponent(channelId)}/p${message.ts.replace('.', '')}`;
+    const body = text.split('\n').slice(1).join('\n').replace(/^(.*?[Bb]lockiert:)\s*<https:\/\/app\.clickup\.com\/t\/[^>]+>[^\n]*\n/u, '$1\n');
+    const diagnosis = issue?.message || parseBlockedReason(body) || 'Offene Fehlermeldung in #ai-fehler';
+    const company = displayText(slackText(text.split('\n')[0]).replace(/[*`]/g, '').split(' · ').slice(1).join(' · '), 200);
+    const id = `slack-error:${channelId}:${message.ts}`;
+    rows.set(id, { ...source, id, status: 'blocked', workflow: kind.startsWith('translation-') ? 'translation' : kind,
+      title: displayText(slackText(taskLink?.[2] || source?.title || (issue ? `Worker · ${issue.workerId} · ${issue.stage}` : text.split('\n')[0])), 300, 'Fehler in #ai-fehler'),
+      url: taskLink?.[1] || source?.url, errorUrl,
+      company: source?.company || company, workerId: value?.worker || issue?.workerId,
+      phase: 'Offen in #ai-fehler', blockedReason: diagnosis, attemptId: value?.run_id,
+      progress: undefined, updatedAt: new Date(time).toISOString() });
+  }
+  return [...rows.values()];
 }
 
 function taskDate(value, fallback) {
@@ -326,8 +368,9 @@ export function parseBlockedReason(text) {
   const value = String(text ?? '').replace(/[*`]/g, '');
   if (!/^(?:⛔|⚠️?|:warning:|:no_entry:).*?(?:Blockiert|blockiert)/u.test(value)) return null;
   const detail = /(?:^|\n|\.\s+)Grund:?\s*([\s\S]+)/.exec(value)?.[1] || value.replace(/^.*?(?:Blockiert|blockiert):?\s*/u, '');
-  return displayText(detail.split(/\n(?:_?Stand |:stopwatch:|⏱|Dauer |Entwurf:)/)[0]
+  return displayText(detail.split(/\n(?:_?Stand |:stopwatch:|⏱|Dauer |Entwurf:|<https:\/\/[a-z0-9-]+\.slack\.com\/archives\/)/)[0]
     .replace(/<[^|>]+\|([^>]+)>/g, '$1').replace(/\s+at \w[^\n]*$/, '')
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[ENTFERNT]')
     .replace(/\b(?:xox[abposr]-|sk-|gh[opsu]_)[A-Za-z0-9_-]+/g, '[ENTFERNT]')
     .replace(/Bearer\s+\S+/gi, 'Bearer [ENTFERNT]')
     .replace(/((?:api[_-]?key|token|secret|password|passwort)["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, '$1[ENTFERNT]')
@@ -595,6 +638,8 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
     const key = `${issue.workerId}:${issue.stage}:${issue.severity}`;
     if (!issues.has(key) || Date.parse(issue.reportedAt) > Date.parse(issues.get(key).reportedAt)) issues.set(key, issue);
   };
+  const errorChannel = config.monitor_channels?.errors || (config.fehler?.enabled ? config.fehler.channel_id : undefined);
+  const errorMessages = [];
   const [taskResult, claimResult, workerResult, issueResult, salesResult] = await Promise.allSettled([
     (async () => {
       const variants = await discoverTags(hubFetch, config.clickup.workspace_id, workflows);
@@ -608,8 +653,8 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
       return claims;
     })(),
     Promise.resolve().then(() => fleetReader(config.hub, fleetDirectory ? { fleetDirectory } : {})),
-    config.monitor_channels?.errors || (config.fehler?.enabled && config.fehler.channel_id !== config.slack.channel_id)
-      ? claimReader(hubFetch, config.monitor_channels?.errors || config.fehler.channel_id, { now, onMessage, lookbackDays: 7 }) : Promise.resolve(),
+    errorChannel ? claimReader(hubFetch, errorChannel, { now, lookbackDays: null,
+      onMessage: message => { errorMessages.push(message); onMessage(message); } }) : Promise.resolve(),
     Promise.resolve().then(() => salesReader ? salesReader(now) : []),
   ]);
   // Clear resolved notices only after every configured warning channel was read completely.
@@ -629,9 +674,10 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   await addRunDetails(queue, { hubFetch, channelId: config.slack.channel_id, previews, previousTasks, now });
   queue.push(...salesResult.value);
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
-  return { tasks: queue, workerIssues, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
+  const blockedErrors = errorChannel ? buildBlockedErrors(errorMessages, errorChannel, queue) : undefined;
+  return { tasks: queue, ...(blockedErrors === undefined ? {} : { blockedErrors }), workerIssues, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
     name: SOURCE_NAME, lastSuccessAt: new Date(now).toISOString(),
-    detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${claims.length} Reservierungen${fleetDetail ? ` · ${fleetDetail}` : ''}`,
+    detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${claims.length} Reservierungen${blockedErrors ? ` · ${blockedErrors.length} offen in #ai-fehler` : ''}${fleetDetail ? ` · ${fleetDetail}` : ''}`,
   } };
 }
 
