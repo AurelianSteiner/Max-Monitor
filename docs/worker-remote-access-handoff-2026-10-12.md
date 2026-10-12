@@ -1,0 +1,81 @@
+# Worker-Fernzugriff: Übergabe vom 12.10.2026
+
+## Auftrag
+
+Till beauftragt eine dauerhafte Lösung für die erneut als pausiert angezeigte
+Auftragsannahme und echten Fernzugriff auf die Macs. Er hat den Umfang auf
+Terminal und Worker-Reparatur festgelegt. Bildschirmzugriff gehört nicht dazu.
+Till hat die macOS-Fernanmeldung auf dem Haupt-Mac freigegeben und dies bestätigt.
+
+## Fertig und live geprüft
+
+- `scripts/worker-remote-hub.mjs`, `scripts/worker-remote.mjs`,
+  `scripts/setup-worker-remote.sh` und die benötigte Client-Hilfsdatei liegen auf
+  dem bestehenden Hub unter `/opt/max-monitor/scripts/`.
+- Die freigegebene öffentliche Operator-Datei liegt auf dem Hub unter
+  `/etc/max-monitor/remote-operator.pub`. Der private Wartungsschlüssel bleibt
+  auf diesem Mac unter `~/.ssh/max_monitor_remote_ed25519`; nicht ausgeben oder
+  auf andere Macs kopieren.
+- `macbook-till-main` ist im privaten Register `/etc/max-monitor/remote-access.json`
+  als `tillticktucktim`, Loopback-Port 23000, mit geprüftem Hostschlüssel registriert.
+- `de.rs.max-monitor.remote` ist als eigener Benutzer-LaunchAgent installiert.
+  Die stabilen Client-Hilfsdateien liegen unter
+  `~/.local/share/max-monitor-remote/tool/`.
+- `check macbook-till-main` hat zweimal die vollständige Verbindung über den
+  Hub und den erwarteten Benutzer bestätigt, zuletzt nach bewusstem Beenden
+  ausschließlich des Tunnel-Prozesses. launchd verband sich automatisch neu
+  (PID 49076 → 52829); der Newsletter-Dienst blieb PID 4392.
+- Ein realer Fernbefehl hat die produktive Worker-LaunchAgent-Konfiguration
+  über diesen Tunnel ausgelesen. Kein Newsletter-Dienst wurde neu gestartet.
+- 134 Skript-Tests und 66 Relay-Tests bestanden. Nach dem ergänzten Test für
+  macOS-Hostschlüssel bestanden alle 15 Fernzugriffstests plus 11 Hub-Installer-
+  Tests. Bash-Syntaxprüfung und `git diff --check` bestanden.
+
+Die Runtime-Erweiterung änderte keine Relay-/Queue-Dienste, Mitglieder,
+Inhabertokens oder vorhandene SSH-Zugangsrechte. Vorhandene Dateien wurden
+unter `/var/backups/max-monitor/remote-access-20261012T173611Z` gesichert.
+Die Client-Hilfsdatei `setup-mac-monitor.mjs` war vorher nicht im Hub-Bundle;
+sie ist jetzt auch im regulären Installer enthalten.
+
+## Noch offen
+
+Die fünf anderen Macs sind noch nicht für diesen neuen Terminal-Zugang
+registriert. Pro Mac muss der angemeldete Benutzer die macOS-Fernanmeldung
+freigeben und den bereitgestellten Setup-Befehl einmal ausführen. Das lässt sich
+über den bisher nur lesenden Monitor-Beobachter nicht ausführen. Keine bloße
+Registrierung oder `installed: true` als Zugriffserfolg melden: jeden Mac mit
+`worker-remote.mjs check <exakte-worker-id>` prüfen.
+
+Die allgemeine Monitor-Anzeige „Annahme pausiert“ wurde in diesem Auftrag
+nicht visuell geändert. Der neue Zugang ermöglicht die lokale Diagnose; eine
+präzisere Anzeige der tatsächlichen Sperrgründe bleibt eine eigene UI-Änderung
+mit den geltenden Skill- und Browserprüfungen.
+
+## Live-Diagnose, 19:38 Uhr
+
+Alle sechs Macs waren online. Vier laufende Aufgaben wurden jeweils für
+`macbook-till-main`, `macbook-von-till-main-2`, `macworker-5-schwarz` und inzwischen
+auch `newsletter-mac-141b2976` gemeldet. Die Vier-Aufgaben-Grenze ist verbindlich
+und darf nicht gelockert werden. `macbook-1` hatte ein volles Claude-Fünf-Stunden-
+Kontingent bis 20:00 Uhr. `macbook-2` hatte zwei sichtbare Läufe; dessen false-
+Annahmewert ist ohne lokale Logs noch nicht abschließend erklärt. Der Beobachter
+setzt die effektive Annahme bei mehr als drei Minuten altem Poll ebenfalls false.
+Aktuelle Heartbeats, Beobachterberichte und vollständige Polls sind getrennt
+zu bewerten.
+
+## Nächste Schritte
+
+1. Setup auf den übrigen Macs ausführen und jeden tatsächlichen SSH-Zugang prüfen.
+2. Falls ein Mac trotz freier Plätze und nutzbarem Claude pausiert, über den
+   neuen Zugang den aktiven Produktionspfad, STOP-Zustand, `worker_control`,
+   `monitor_admission`, `last_poll`, reservierte Plätze und lokale Logs lesen.
+3. Nur einen nachgewiesenen Defekt reparieren; laufende Aufgaben erhalten und
+   anschließend neuen Poll und Auftragsannahme verifizieren.
+
+Der Entwicklungs-Checkout `Documents/AI Newsletter Creation` enthält umfangreiche
+fremde Änderungen; nicht zurücksetzen oder dort beiläufig Worker-Code ändern.
+Die lokale Produktion läuft aus `~/.local/share/ai-newsletter-production`, nutzt
+aber laut geladenem Profil die Zustandsdatenbank im Entwicklungsverzeichnis.
+Die genaue Datei steht in `config.paths.state_db`; keine Pfade raten.
+
+Einrichtung und Rückbau stehen in [worker-remote-access.md](worker-remote-access.md).
