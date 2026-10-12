@@ -98,6 +98,23 @@ test('source failures and malformed error inventory cannot turn open errors into
   }
 });
 
+test('Sales lifecycle remains visible independently of the Slack error inventory', t => {
+  const { store, directory } = storeFor(t);
+  const sales = ['queued', 'running', 'blocked', 'failed', 'completed'].map((status, i) => ({
+    id: `sales:1791753700.00000${i}`, title: `Sales ${status}`, workflow: 'sales', status,
+    sourceStatus: status === 'blocked' ? 'aborted' : status, updatedAt: new Date(now).toISOString(),
+  }));
+  for (const messages of [[error()], []]) {
+    store.updateQueue('TEAM1234', { source, tasks: sales, blockedErrors: buildBlockedErrors(messages, channel) });
+    const snapshot = createFleetStore(directory, () => now).snapshot('TEAM1234');
+    assert.deepEqual(snapshot.queue.tasks.filter(row => row.workflow === 'sales').map(row => [row.id, row.status]),
+      sales.map(row => [row.id, row.status]));
+    assert.equal(snapshot.queue.tasks.filter(row => row.id.startsWith('slack-error:')).length, messages.length);
+  }
+  store.updateQueue('TEAM1234', { source: { name: source.name, error: 'Slack unavailable' } });
+  assert.equal(store.snapshot('TEAM1234').queue.tasks.filter(row => row.workflow === 'sales').length, sales.length);
+});
+
 test('a retry stays running without erasing its old error until Slack removes that message', t => {
   const { store } = storeFor(t);
   store.updateQueue('TEAM1234', { source, tasks: [task()], blockedErrors: buildBlockedErrors([error()], channel) });
