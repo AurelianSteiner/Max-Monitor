@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { validateReport, publicReport } = require("./worker-reports");
+const { newerSkillRelease } = require("./skill-versions");
 
 const HEARTBEAT_INTERVAL_SECONDS = 60;
 const SILENT_AFTER_MS = 15 * 60 * 1000;
@@ -735,6 +736,9 @@ function createFleetStore(dataDir, now = Date.now) {
       schema: 1,
       generatedAt: new Date(time).toISOString(),
       heartbeatIntervalSeconds: HEARTBEAT_INTERVAL_SECONDS,
+      ...(state.latestSkillRelease ? { skillRelease: { ...state.latestSkillRelease,
+        fresh: (state.workerReports || []).some(report => report.skillRelease?.revision === state.latestSkillRelease.revision
+          && publicReport(report, time).skillRelease?.fresh === true) } } : {}),
       machines: machines.sort((a, b) => a.name.localeCompare(b.name)),
       queue: { tasks: [...queueTasks.values()], source: { ...source, stale, status: source.error ? "error" : !source.lastSuccessAt ? "unavailable" : stale ? "stale" : "fresh" } },
       events: [...state.events].reverse().map((entry) => publicMachineEvent(entry, state.machines)),
@@ -750,6 +754,7 @@ function createFleetStore(dataDir, now = Date.now) {
     // A delayed response from an earlier agent invocation cannot roll back state.
     if (previous && Date.parse(previous.sampledAt) > Date.parse(report.sampledAt)) return { accepted: false };
     state.workerReports = [...reports.filter(item => item.workerId !== report.workerId), report].slice(-MAX_MACHINES);
+    state.latestSkillRelease = newerSkillRelease(state.latestSkillRelease, report.skillRelease);
     write(teamId, state);
     notify(teamId);
     return { accepted: true };

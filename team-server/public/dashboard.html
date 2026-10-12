@@ -13,6 +13,7 @@
   <body>
     <a class="skip-link" href="#main">Zum Inhalt</a>
     <header class="topbar">
+      <div class="topbar-main">
       <button class="brand" type="button" data-view="overview" aria-label="Max Monitor · Übersicht"
         ><span class="brand-mark" aria-hidden="true">M</span
         ><span class="brand-name">Max Monitor</span></button
@@ -49,6 +50,12 @@
         >
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5h6.5M12.5 5h1M2.5 11h1M7 11h6.5" /><circle cx="10.75" cy="5" r="1.75" /><circle cx="5.25" cy="11" r="1.75" /></svg>
         </button>
+      </div>
+      </div>
+      <div class="skill-versions" aria-label="Aktuelle Skill-Versionen">
+        <span id="skill-version-label" class="skill-version-label">Skills · aktueller Stand</span>
+        <ul id="skill-version-list" class="skill-version-list"><li class="skill-version-empty">Noch keine Versionsmeldung</li></ul>
+        <button id="skill-version-compare" class="text-button skill-version-compare" type="button" disabled>Abgleichen</button>
       </div>
     </header>
     <main id="main" tabindex="-1">

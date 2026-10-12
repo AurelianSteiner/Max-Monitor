@@ -8,8 +8,8 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 export const OBSERVER_SOURCE = Object.freeze({
-  revision: '9718015abfc8a8e768e36343252ea912e9a88fb8',
-  sha256: '4e4e9465ab25e56e0ee341a89ba79070863a2d188ae9bac44ea4c508dddc6d94',
+  revision: '5c7cc3f611d35a5cf18398af67e414bc035f9ba3',
+  sha256: 'e779ed1a2a1862f51b83ff7decfcce35675780f9637494b825ef0fb4fc550576',
 });
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -29,7 +29,7 @@ export async function ensureWorkerObserver(options, {
   try {
     await fs.access(entry);
     const candidate = loadAgent(entry);
-    if (typeof candidate.deviceIdOf === 'function') agent = candidate;
+    if (typeof candidate.deviceIdOf === 'function' && typeof candidate.collectSkillRelease === 'function') agent = candidate;
   } catch {}
   if (!agent) {
     const runtime = path.join(home, '.local/share/mac-monitor-agent');
