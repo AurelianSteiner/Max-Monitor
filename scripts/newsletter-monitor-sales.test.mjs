@@ -33,11 +33,20 @@ test('Sales counts include HTTP, all lifecycle states and old terminal jobs thro
   store.updateQueue('SALESTEST', { tasks: rows, source: { name: 'Sales', lastSuccessAt: new Date(now).toISOString() } });
   const saved = store.snapshot('SALESTEST').queue.tasks;
   const count = status => saved.filter(row => row.status === status).length;
-  assert.deepEqual(['running', 'blocked', 'completed', 'queued'].map(count), [3, 2, 1, 1]);
+  assert.deepEqual(['running', 'blocked', 'completed', 'queued'].map(count), [3, 1, 1, 1]);
   assert.equal(saved.find(row => row.url === 'http://cairo.de/').status, 'running');
   assert.equal(saved.find(row => row.sourceStatus === 'done').progress, 100);
   assert.equal(saved.find(row => row.sourceStatus === 'blocked').blockedReason, 'Ergebnisdatei fehlt');
-  assert.equal(saved.find(row => row.sourceStatus === 'aborted').phase, 'Abgebrochen');
+  assert.equal(saved.some(row => row.sourceStatus === 'aborted'), false);
+});
+
+test('aborted attempts leave only the successful Sales job in the relay', async t => {
+  const directory = await fixture(t, [job({ status: 'done' }), ...Array.from({ length: 6 }, () => job({ status: 'aborted' }))]);
+  const store = createFleetStore(path.join(directory, 'relay'), () => now);
+  store.updateQueue('SALESTEST', { tasks: await readLocalSales(directory, now), blockedErrors: [], source: { name: 'Sales' } });
+  const saved = createFleetStore(path.join(directory, 'relay'), () => now).snapshot('SALESTEST').queue.tasks;
+  assert.deepEqual(saved.map(row => [row.id, row.status]), [[`sales:${ts(0)}`, 'completed']]);
+  assert.equal(saved[0].progress, 100);
 });
 
 test('late heartbeats keep the same Sales job visible until its persisted state changes', async t => {

@@ -574,8 +574,8 @@ export async function readLocalHubFleet(hub, { fleetDirectory = path.join(hub.hu
 
 export async function readLocalSales(directory, now = Date.now()) {
   const rows = [];
-  const statuses = { reserved: 'queued', running: 'running', delivery: 'running', blocked: 'blocked', aborted: 'blocked', done: 'completed' };
-  const phases = { reserved: 'Reserviert', running: 'In Bearbeitung', delivery: 'PDF-Upload', blocked: 'Sales blockiert', aborted: 'Abgebrochen', done: 'Fertig' };
+  const statuses = { reserved: 'queued', running: 'running', delivery: 'running', blocked: 'blocked', done: 'completed' };
+  const phases = { reserved: 'Reserviert', running: 'In Bearbeitung', delivery: 'PDF-Upload', blocked: 'Sales blockiert', done: 'Fertig' };
   let names;
   try { names = await fs.readdir(directory); }
   catch { throw new Error('Sales-Jobablage ist nicht lesbar; bisheriger Queue-Stand bleibt erhalten.'); }
@@ -586,6 +586,7 @@ export async function readLocalSales(directory, now = Date.now()) {
       const stat = await fs.lstat(file);
       if (!stat.isFile() || stat.size > 2 * 1024 * 1024) throw new Error('Ungültige Jobdatei');
       const job = JSON.parse(await fs.readFile(file, 'utf8'));
+      if (job.status === 'aborted') continue;
       const status = Object.hasOwn(statuses, job.status) ? statuses[job.status] : undefined;
       const stamp = job.observed_at || job.updated_at || job.created_at;
       const seen = typeof stamp === 'number' ? stamp : Date.parse(stamp);
@@ -593,7 +594,7 @@ export async function readLocalSales(directory, now = Date.now()) {
         || !Number.isFinite(seen) || seen > now + 30000) throw new Error('Ungültiger Jobstatus');
       const url = new URL(job.url);
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Ungültige Shopadresse');
-      const blockedReason = status === 'blocked' ? displayText(job.reason, 500, job.status === 'aborted' ? 'Sales-Lauf wurde abgebrochen' : 'Sales-Lauf ist blockiert') : undefined;
+      const blockedReason = status === 'blocked' ? displayText(job.reason, 500, 'Sales-Lauf ist blockiert') : undefined;
       // Job state is authoritative. A missing heartbeat must never remove accepted work.
       const awaitingWorker = ['queued', 'running'].includes(status) && now - seen > 30 * 60000;
       rows.push({ id: `sales:${name}`, title: `Sales · ${url.hostname}`, url: url.href, workflow: 'sales', status,
