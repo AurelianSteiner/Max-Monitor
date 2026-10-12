@@ -138,6 +138,11 @@ einen während der Abfrage geänderten ClickUp-Status; die SSH-/Dateiprüfung is
 unabhängig davon erfolgreich. Mac 2 wurde von der Live-Fleet online mit drei
 aktiven Aufgaben und erlaubter Annahme gemeldet.
 
+Erneute echte Dateiprüfung auf Mac 4 um 20:21:55 Uhr: Code, Konfiguration und
+SQLite zugänglich, Schreibtest erfolgreich, beide Dienste laufen. Der neue Poll
+um 20:21:47 Uhr war erfolgreich. Weiterhin drei laufende plus eine wartende
+Aufgabe, aktive Freigabe und keine STOP-Datei; die vier Plätze sind belegt.
+
 Vorherige lokale Diagnose auf Mac 5 um 19:57 Uhr:
 
 Haupt-Mac (`macbook-till-main`) und Mac 5 (`macworker-5-schwarz`, Benutzer `claude3`)

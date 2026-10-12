@@ -111,6 +111,16 @@ nicht visuell geändert. Der neue Zugang ermöglicht die lokale Diagnose; eine
 präzisere Anzeige der tatsächlichen Sperrgründe bleibt eine eigene UI-Änderung
 mit den geltenden Skill- und Browserprüfungen.
 
+## Erneute Live-Prüfung von Mac 4, 20:21 Uhr
+
+Mac 4 (`newsletter-mac-141b2976`, `codex1`) wurde um 20:21:55 Uhr nochmals über
+SSH und den echten Dateidiagnose-Befehl geprüft: Code, Konfiguration und SQLite
+lesbar und mit Schreibberechtigung; private temporäre Datei geschrieben, gelesen
+und entfernt. Worker PID 82271, Tunnel PID 96170, Revision `96f7785`, keine lokalen
+Git-Änderungen. Der neue Poll um 20:21:47 Uhr war erfolgreich (`ok: true`, 68
+Einträge), Freigabe aktiv, keine STOP-Datei. Drei laufende und eine wartende
+Aufgabe belegen alle vier Plätze; die Annahmepause ist damit korrekt.
+
 ## Live-Diagnose, 20:08 Uhr
 
 Mac 1 belegt vier laufende Plätze. Mac 4 (Newsletter Mac) hat lokal drei laufende und
