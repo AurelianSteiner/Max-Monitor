@@ -234,6 +234,8 @@ function validateQueue(body) {
       sourceStatus: string(raw.sourceStatus, "task.sourceStatus", 120, true),
       workerId: string(raw.workerId, "task.workerId", 120, true),
       phase: string(raw.phase, "task.phase", 160, true),
+      blockedReason: string(raw.blockedReason, "task.blockedReason", 500, true),
+      attemptId: string(raw.attemptId, "task.attemptId", 200, true),
       // The worker's live step changes every few minutes; unlike phase it is
       // neither a log event nor part of the completion version.
       step: string(raw.step, "task.step", 160, true),
@@ -360,7 +362,7 @@ function withLinkedWorker(machine, links) {
 // A completion belongs to one blocking state, not every future attempt of a task.
 function taskVersion(task) {
   return crypto.createHash("sha256").update(JSON.stringify([
-    task.status, task.phase || null, task.workerId || null, task.sourceStatus || null,
+    task.status, task.phase || null, task.workerId || null, task.sourceStatus || null, task.attemptId || null, task.blockedReason || null,
   ])).digest("hex");
 }
 
@@ -722,7 +724,8 @@ function createFleetStore(dataDir, now = Date.now) {
         const previous = queueTasks.get(run.id);
         const conflict = activeOwners.has(run.id) && activeOwners.get(run.id) !== report.workerId;
         activeOwners.set(run.id, report.workerId);
-        queueTasks.set(run.id, { ...previous, ...run, completion: undefined, completedAt: undefined, workerId: conflict ? null : report.workerId,
+        if (['blocked', 'failed', 'completed'].includes(previous?.status) && Date.parse(previous.updatedAt) > Date.parse(report.sampledAt)) continue;
+        queueTasks.set(run.id, { ...previous, ...run, blockedReason: undefined, completion: undefined, completedAt: undefined, workerId: conflict ? null : report.workerId,
           status: conflict ? 'blocked' : run.status, phase: conflict ? 'Mehrere Worker melden denselben Auftrag' : run.status === 'queued' ? 'Reserviert' : 'In Bearbeitung',
           updatedAt: report.sampledAt, progress: run.progress ?? (['running', 'queued'].includes(previous?.status) ? previous.progress : undefined) });
       }

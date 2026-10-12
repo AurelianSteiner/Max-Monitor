@@ -37,3 +37,33 @@ test('local active runs replace old completed tags in the live queue without inv
     assert.equal(current.status, 'running'); assert.equal(current.workerId, 'mac-1'); assert.equal(current.progress, undefined);
   } finally { fs.rmSync(directory, { recursive:true,force:true }); }
 });
+
+test('blocked corrections survive idle reports and restart, but a newer live attempt clears the old diagnosis', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'blocked-corrections-'));
+  let clock = now;
+  const source = { name: 'test', lastSuccessAt: new Date(now).toISOString() };
+  const correction = { id: 'correction:job', title: 'Warm Up Kampagne', workflow: 'correction', status: 'blocked',
+    workerId: 'mac-1', phase: 'Korrektur blockiert', blockedReason: 'Wochenfassung fehlt', attemptId: 'old', updatedAt: new Date(now).toISOString() };
+  try {
+    let store = createFleetStore(directory, () => clock);
+    store.updateQueue('TEAM1234', { source, tasks: [correction] });
+    store.workerReport('TEAM1234', report());
+    store = createFleetStore(directory, () => clock);
+    let row = store.snapshot('TEAM1234').queue.tasks[0];
+    assert.equal(row.status, 'blocked'); assert.equal(row.workerId, 'mac-1'); assert.equal(row.blockedReason, 'Wochenfassung fehlt');
+    assert.equal(store.workerReportStatus('TEAM1234', 'mac-1').activity.state, 'idle');
+    const version = row.taskVersion;
+    store.completeTask('TEAM1234', { role: 'super' }, { taskId: row.id, taskVersion: version });
+    store.updateQueue('TEAM1234', { source, tasks: [{ ...correction, attemptId: 'new' }] });
+    row = store.snapshot('TEAM1234').queue.tasks[0];
+    assert.equal(row.status, 'blocked'); assert.notEqual(row.taskVersion, version);
+    clock += 1000;
+    store.workerReport('TEAM1234', { ...report(), sampledAt: new Date(clock).toISOString(), activity: { state: 'busy', acceptingTasks: true,
+      runs: [{ id: correction.id, runId: 'retry', title: correction.title, workflow: 'correction', status: 'running' }] } });
+    row = store.snapshot('TEAM1234').queue.tasks[0];
+    assert.equal(row.status, 'running'); assert.equal(row.blockedReason, undefined);
+    // A cached active report cannot overwrite a later confirmed block.
+    store.updateQueue('TEAM1234', { source, tasks: [{ ...correction, updatedAt: new Date(clock + 1000).toISOString() }] });
+    assert.equal(store.snapshot('TEAM1234').queue.tasks[0].status, 'blocked');
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});

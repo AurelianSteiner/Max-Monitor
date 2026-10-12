@@ -132,11 +132,18 @@ export function parseClaim(message) {
   const translation = /^(.+)-uebersetzung-(en|it|fr|se|sp)$/.exec(jobId);
   const upload = /^(.+)-klaviyo$/.exec(jobId);
   if (kind !== (correction ? 'correction' : translation ? 'translation' : upload ? 'klaviyo' : 'newsletter')) return null;
+  const text = String(message.text ?? '');
+  const link = /<([^|>]+)\|([^>]+)>/.exec(text.split('\n')[1] || '');
+  let url;
+  try { const candidate = new URL(link?.[1]); if (candidate.protocol === 'https:' && !candidate.username && !candidate.password && candidate.href.length <= 2000) url = candidate.href; } catch { /* Optional task link. */ }
+  const reactions = (Array.isArray(message.reactions) ? message.reactions : []).map(item => item?.name);
   return { taskId: (correction?.[1] ?? translation?.[1] ?? upload?.[1] ?? jobId).replace(/@\d+$/, ''), jobId,
     runId: String(value.run_id), workerId: String(value.worker),
     state: value.state, heartbeat, ts: String(message.ts),
     workflow: typeof value.workflow === 'string' ? value.workflow : translation ? `translation-${translation[2]}` : kind,
-    title: displayText(String(message.text ?? '').split('\n')[0].replace(/<[^|>]+\|([^>]+)>/g, '$1').replace(/[*`]/g, ''), 300) };
+    outcome: reactions.includes('x') ? 'blocked' : reactions.includes('white_check_mark') ? 'completed' : undefined,
+    url, company: kind === 'correction' ? displayText(text.split('\n')[0].replace(/^\*?Korrektur\s*·\s*/, '').replace(/[*`]/g, ''), 200) : undefined,
+    title: displayText((link?.[2] || text.split('\n')[0].replace(/[*`]/g, '')).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 300) };
 }
 
 export async function listClaims(hubFetch, channelId, { now = Date.now(), maxPages = 100, lookbackDays = 60, onMessage = () => {} } = {}) {
@@ -156,7 +163,7 @@ export async function listClaims(hubFetch, channelId, { now = Date.now(), maxPag
   throw new Error('Slack: Reservierungen unvollständig; bisherige Queue bleibt erhalten.');
 }
 
-export function createClaimReader({ ttlMs = 180000 } = {}) {
+export function createClaimReader({ ttlMs = 60000 } = {}) {
   const cache = new Map();
   return async (hubFetch, channelId, options) => {
     const old = cache.get(channelId);
@@ -274,16 +281,31 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
   // Revisions come from the approval workflow. They can run while the old
   // Pre-Gen task remains completed and must be visible independently of its tags.
   const corrections = new Map();
-  for (const claim of claims.filter(claim => claim.workflow === 'correction' && ['claiming', 'running'].includes(claim.state)
-    && now - claim.heartbeat * 1000 <= staleMinutes * 60000)) {
-    if (!corrections.has(claim.jobId) || Number(claim.ts) < Number(corrections.get(claim.jobId).ts)) corrections.set(claim.jobId, claim);
+  for (const claim of claims.filter(claim => claim.workflow === 'correction' && claim.state !== 'withdrawn')) {
+    if (!corrections.has(claim.jobId)) corrections.set(claim.jobId, []);
+    corrections.get(claim.jobId).push(claim);
   }
-  for (const claim of corrections.values()) {
+  for (const attempts of corrections.values()) {
+    attempts.sort((a, b) => Number(b.ts) - Number(a.ts));
+    let claim = attempts[0];
+    // A newer retry supersedes an old failure; simultaneous live claims still
+    // use the worker's earliest-reservation rule. Withdrawn contenders never win.
+    if (['claiming', 'running'].includes(claim.state)) {
+      const ended = attempts.find(item => !['claiming', 'running'].includes(item.state));
+      const candidates = attempts.filter(item => ['claiming', 'running'].includes(item.state) && (!ended || Number(item.ts) > Number(ended.ts)));
+      claim = candidates.filter(item => now - item.heartbeat * 1000 <= staleMinutes * 60000).at(-1) || candidates[0];
+    }
+    if (claim.state === 'released' && claim.outcome !== 'completed') continue;
+    const active = ['claiming', 'running'].includes(claim.state);
+    const fresh = now - claim.heartbeat * 1000 <= staleMinutes * 60000;
+    const status = active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : 'blocked' : claim.outcome || 'blocked';
+    const phase = active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : 'Worker meldet sich nicht mehr'
+      : status === 'completed' ? 'Korrektur abgeschlossen' : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
     const task = tasks.find(task => task.id === claim.taskId);
-    rows.push({ id: `correction:${claim.jobId}`, title: displayText(task?.name, 300, claim.title || `Korrektur ${claim.taskId}`),
-      url: `https://app.clickup.com/t/${encodeURIComponent(claim.taskId)}`, workflow: 'correction',
-      status: claim.state === 'running' ? 'running' : 'queued', workerId: claim.workerId,
-      phase: claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert', updatedAt,
+    rows.push({ id: `correction:${claim.jobId}`, title: displayText(claim.title || task?.name, 300, `Korrektur ${claim.taskId}`),
+      url: claim.url || (claim.taskId !== claim.jobId ? `https://app.clickup.com/t/${encodeURIComponent(claim.taskId)}` : undefined), workflow: 'correction',
+      company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.workerId, attemptId: claim.runId,
+      phase, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
       run: { id: claim.runId, ts: claim.ts, taskId: claim.taskId, channelId: claim.channelId } });
   }
   return rows.sort((a, b) => a.id.localeCompare(b.id));
@@ -300,6 +322,18 @@ export function parseRunStatus(text) {
   return step ? { percent: Number(match[1]), step } : null;
 }
 
+export function parseBlockedReason(text) {
+  const value = String(text ?? '').replace(/[*`]/g, '');
+  if (!/^(?:⛔|⚠️?|:warning:|:no_entry:).*?(?:Blockiert|blockiert)/u.test(value)) return null;
+  const detail = /(?:^|\n|\.\s+)Grund:?\s*([\s\S]+)/.exec(value)?.[1] || value.replace(/^.*?(?:Blockiert|blockiert):?\s*/u, '');
+  return displayText(detail.split(/\n(?:_?Stand |:stopwatch:|⏱|Dauer |Entwurf:)/)[0]
+    .replace(/<[^|>]+\|([^>]+)>/g, '$1').replace(/\s+at \w[^\n]*$/, '')
+    .replace(/\b(?:xox[abposr]-|sk-|gh[opsu]_)[A-Za-z0-9_-]+/g, '[ENTFERNT]')
+    .replace(/Bearer\s+\S+/gi, 'Bearer [ENTFERNT]')
+    .replace(/((?:api[_-]?key|token|secret|password|passwort)["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, '$1[ENTFERNT]')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 500) || null;
+}
+
 export async function readRunStatuses(hubFetch, channelId, threads, { concurrency = 4 } = {}) {
   const pending = [...new Set(threads)];
   const statuses = new Map();
@@ -312,7 +346,8 @@ export async function readRunStatuses(hubFetch, channelId, threads, { concurrenc
         const result = await requestJson(hubFetch, url, 'Slack');
         // Only the worker's own bot reply counts, never a person writing in the thread.
         const found = (Array.isArray(result.messages) ? result.messages : [])
-          .filter(message => message?.ts !== ts && message?.bot_id).map(message => parseRunStatus(message.text)).filter(Boolean);
+          .filter(message => message?.ts !== ts && message?.bot_id).map(message => parseRunStatus(message.text)
+            || (parseBlockedReason(message.text) ? { blockedReason: parseBlockedReason(message.text) } : null)).filter(Boolean);
         if (found.length) statuses.set(ts, found.at(-1));
       } catch { /* Progress is optional: the task simply stays "In Bearbeitung". */ }
     }
@@ -405,7 +440,8 @@ export function createRenderPreviews({ localHub, upload, openDatabase, resize, r
 // backfilled for tasks that finished before this monitor saw them run.
 export async function addRunDetails(rows, { hubFetch, channelId, previews, previousTasks = [], now = Date.now() }) {
   const previous = new Map((Array.isArray(previousTasks) ? previousTasks : []).map(row => [row?.id, row]));
-  const running = rows.filter(row => row.status === 'running' && row.run);
+  const running = rows.filter(row => row.run && (row.status === 'running' || (row.status === 'blocked' && row.workflow === 'correction'
+    && !(previous.get(row.id)?.attemptId === row.attemptId && previous.get(row.id)?.blockedReason))));
   const attempts = rows.filter(row => row.run && row.workflow === 'newsletter' && (['running', 'blocked'].includes(row.status)
     || (row.status === 'completed' && ['running', 'blocked'].includes(previous.get(row.id)?.status))));
   const channels = new Map();
@@ -420,9 +456,14 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
   ]);
   const statuses = new Map(statusLists);
   for (const row of rows) {
-    const status = row.status === 'running' && statuses.get(row.run?.channelId || channelId)?.get(row.run?.ts);
-    if (status) { row.progress = status.percent; row.step = status.step; }
     const old = previous.get(row.id);
+    const status = statuses.get(row.run?.channelId || channelId)?.get(row.run?.ts);
+    if (row.status === 'running' && status?.percent !== undefined) { row.progress = status.percent; row.step = status.step; }
+    if (row.status === 'blocked' && row.workflow === 'correction') {
+      row.blockedReason = status?.blockedReason || (old?.attemptId === row.attemptId && old.blockedReason
+        ? parseBlockedReason(`:warning: blockiert: ${old.blockedReason}`) : undefined);
+      if (row.blockedReason) row.phase = 'Korrektur blockiert';
+    }
     const list = attempts.includes(row) ? (rendered ? rendered.get(row.run.id) : old?.previews)
       : row.status === 'completed' && old?.status === 'completed' ? old.previews : undefined;
     const kept = Array.isArray(list) ? list.filter(entry => now - Date.parse(entry?.renderedAt) <= PREVIEW_RETENTION_MS) : [];
