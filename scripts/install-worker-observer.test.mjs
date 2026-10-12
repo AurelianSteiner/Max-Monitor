@@ -14,7 +14,7 @@ async function fixture(t) {
   t.after(() => previousRoot === undefined ? delete process.env.MAC_MONITOR_WORKER_ROOT : process.env.MAC_MONITOR_WORKER_ROOT = previousRoot);
   const dependencies = { home, platform: 'darwin', node: '/registered/node',
     loadConfig: (file, { root }) => { calls.push({ file, root }); return { root, clickup: { transport: 'rs_hub' } }; },
-    loadAgent: entry => ({ deviceIdOf: () => undefined, installAgent: (_config, options) => { calls.push({ entry, ...options }); return { installed: true }; } }),
+    loadAgent: entry => ({ deviceIdOf: () => undefined, collectSkillRelease: () => undefined, installAgent: (_config, options) => { calls.push({ entry, ...options }); return { installed: true }; } }),
     runner: () => { throw Error('unexpected download'); } };
   return { home, workerRoot, calls, dependencies };
 }

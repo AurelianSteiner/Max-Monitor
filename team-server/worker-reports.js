@@ -1,6 +1,7 @@
 // Direct local observations. No provider credentials or arbitrary log output.
 const ID = /^[a-z0-9][a-z0-9._-]{0,79}$/i;
 const { DEVICE_ID } = require('./worker-control');
+const { validateSkillRelease, skillReleaseFresh } = require('./skill-versions');
 const FRESH_MS = 45000;
 function validateReport(raw, now = Date.now()) {
   const fail = () => { throw new Error('Ungültiger Worker-Bericht'); };
@@ -36,6 +37,7 @@ function validateReport(raw, now = Date.now()) {
   if (maintenance && typeof maintenance.ok !== 'boolean') fail();
   return { schema: 1, workerId: raw.workerId, deviceId: raw.deviceId, sampledAt: new Date(at).toISOString(), receivedAt: new Date(now).toISOString(),
     workerVersion: text(raw.workerVersion, 80), workerRevision: text(raw.workerRevision, 80),
+    skillRelease: validateSkillRelease(raw.skillRelease, now),
     service: { running: raw.service.running, lastPollAt: date(raw.service.lastPollAt) },
     activity: { state: raw.activity.state, acceptingTasks: raw.activity.acceptingTasks, runs },
     maintenance: maintenance ? { ok: maintenance.ok, checkedAt: date(maintenance.checkedAt), summary: text(maintenance.summary, 300, true) } : undefined,
@@ -45,6 +47,7 @@ function publicReport(report, now = Date.now()) {
   if (!report) return {};
   const fresh = now - Date.parse(report.sampledAt) <= FRESH_MS && now - Date.parse(report.receivedAt) <= FRESH_MS;
   return { agentLastSeenAt: report.receivedAt, agentStatus: fresh ? 'online' : 'silent',
-    activity: { ...report.activity, fresh, sampledAt: report.sampledAt }, service: report.service, maintenance: report.maintenance };
+    activity: { ...report.activity, fresh, sampledAt: report.sampledAt }, service: report.service, maintenance: report.maintenance,
+    ...(report.skillRelease ? { skillRelease: { ...report.skillRelease, fresh: fresh && skillReleaseFresh(report.skillRelease, now) } } : {}) };
 }
 module.exports = { validateReport, publicReport, FRESH_MS, ID };

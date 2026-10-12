@@ -508,9 +508,92 @@
       }
     }
   }
+  const skillNames = {
+    "content-creation": "Erstellung", "figma-translate": "Übersetzung", "newsletter-korrektur": "Korrektur",
+    "rs-klaviyo-upload": "Klaviyo", "figma-slicer-verlinkung": "Slicer", "rs-sales-newsletter": "Sales",
+    "rs-kundentexte-einsetzen": "Kundentexte", "rs-briefing": "Briefing", "figma-library-rollout": "Library",
+    "rs-kunden-onboarding": "Kundenstart", "macworker-onboarding": "Mac-Setup",
+  };
+  function latestSkills() {
+    return Array.isArray(snapshot?.skillRelease?.items) ? snapshot.skillRelease.items : [];
+  }
+  function skillsFresh(release, reportedAt = null) {
+    const checked = timestamp(release?.checkedAt);
+    const report = reportedAt ? timestamp(reportedAt) : Date.now();
+    return release?.fresh === true && checked !== null && Date.now() - checked <= 180000
+      && report !== null && Date.now() - report <= 45000;
+  }
+  function compareSkills(machine) {
+    const installed = machine.skillRelease;
+    if (!installed) return { state: "unknown", label: "Nicht gemeldet", differences: [] };
+    const known = new Map(installed.items.map(item => [item.id, item]));
+    const differences = latestSkills().filter(item => known.get(item.id)?.tree !== item.tree || known.get(item.id)?.version !== item.version)
+      .map(item => `${skillNames[item.id] || item.id}: ${known.get(item.id)?.version || "fehlt"} → ${item.version}`);
+    if (!skillsFresh(snapshot?.skillRelease) || !skillsFresh(installed, machine.agentLastSeenAt))
+      return { state: "unknown", label: "Stand ungeprüft", differences };
+    return { state: differences.length ? "pending" : "current", label: differences.length ? "Update ausstehend" : "Aktuell", differences };
+  }
+  function skillDetails() {
+    const focusedWorker = document.activeElement?.dataset.skillWorker;
+    const scrollTop = $("detail-body").scrollTop;
+    const release = snapshot?.skillRelease;
+    const description = node("p", "form-hint", "Neuester bestätigter RS-Skills-Stand für neue Aufträge. Laufende Aufträge behalten ihr fest zugeordnetes Skill-Paket.");
+    const source = node("p", "form-hint", release ? `Skill-Abgleich: ${exact(release.checkedAt)} · ${skillsFresh(release) ? "aktuell" : "Stand ungeprüft"}` : "Noch keine Versionsmeldung.");
+    const versions = node("ul", "skill-version-list");
+    for (const item of latestSkills()) {
+      const row = node("li", "", skillNames[item.id] || item.id);
+      row.title = item.id; row.append(node("strong", "", item.version)); versions.append(row);
+    }
+    const list = node("ul", "skill-comparison-list");
+    for (const machine of machines()) {
+      const result = compareSkills(machine);
+      const row = node("li");
+      const head = node("div", "skill-comparison-head");
+      const link = node("button", "text-button", machine.workerId || machine.name);
+      link.dataset.skillWorker = machine.workerId || machine.id;
+      link.type = "button"; link.addEventListener("click", () => machineDetails(machine));
+      const state = node("span", "skill-comparison-state", result.label); state.dataset.state = result.state;
+      head.append(link, state); row.append(head);
+      if (result.differences.length) row.append(node("p", "form-hint", result.differences.join(" · ")));
+      row.append(node("p", "form-hint", machine.skillRelease ? `Zuletzt abgeglichen: ${exact(machine.skillRelease.checkedAt)}` : "Dieser Mac hat noch keinen installierten Skill-Stand gemeldet."));
+      list.append(row);
+    }
+    openDetail("Skill-Versionen", [description, source, versions, list]);
+    $("detail-body").scrollTop = scrollTop;
+    if (focusedWorker) [...list.querySelectorAll("button")].find(button => button.dataset.skillWorker === focusedWorker)?.focus({ preventScroll: true });
+  }
+  function renderSkillVersions(devices) {
+    const release = snapshot?.skillRelease;
+    const items = latestSkills();
+    const fresh = skillsFresh(release);
+    const list = $("skill-version-list");
+    const signature = JSON.stringify(items);
+    if (list.dataset.signature !== signature) {
+      const order = Object.keys(skillNames);
+      list.replaceChildren(...items.slice().sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)).map(item => {
+        const row = node("li", "", skillNames[item.id] || item.id); row.title = item.id;
+        row.append(node("strong", "", item.version)); return row;
+      }));
+      if (!items.length) list.append(node("li", "skill-version-empty", "Noch keine Versionsmeldung"));
+      list.dataset.signature = signature;
+    }
+    $("skill-version-label").textContent = fresh ? "Skills · aktueller Stand" : "Skills · Stand ungeprüft";
+    $("skill-version-label").title = release ? `RS-Skills · geprüft ${exact(release.checkedAt)}` : "Versionsmeldungen werden automatisch geladen.";
+    const checked = devices.map(compareSkills);
+    const current = checked.filter(item => item.state === "current").length;
+    const pending = checked.some(item => item.state === "pending");
+    const button = $("skill-version-compare");
+    button.disabled = !items.length;
+    button.textContent = items.length ? `Abgleich ${current}/${devices.length} ↗` : "Abgleichen";
+    button.dataset.state = pending ? "pending" : checked.some(item => item.state === "unknown") ? "unknown" : "current";
+    button.setAttribute("aria-label", `Skill-Versionen abgleichen: ${current} von ${devices.length} Macs aktuell`);
+    if ($("detail-dialog").open && $("detail-title").textContent === "Skill-Versionen") skillDetails();
+  }
+
   function render() {
     const items = tasks();
     const devices = machines();
+    renderSkillVersions(devices);
     const attention = attentionEntries(devices, items);
     const openCount = items.filter(isOpen).length;
     $("nav-queue").textContent = snapshot ? numberFormat.format(openCount) : "—";
@@ -1846,6 +1929,7 @@
       button.addEventListener("click", () => button.closest("dialog").close()),
     );
   $("detail-dialog").addEventListener("close", () => { openTask = null; });
+  $("skill-version-compare").addEventListener("click", skillDetails);
   $("connection-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     stopLive();
