@@ -5,6 +5,22 @@ const { createFleetStore } = require('../fleet');
 const now = Date.now();
 const report = () => ({ schema: 1, workerId: 'mac-1', sampledAt: new Date(now).toISOString(),
   service: { running: true, lastPollAt: new Date(now).toISOString() }, activity: { state: 'idle', acceptingTasks: true, runs: [] } });
+
+test('automatic pauses keep their owner and pause reason through idle telemetry until a new attempt starts', () => {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'paused-queue-'));
+  try {
+    const store=createFleetStore(dir,()=>now);
+    store.updateQueue('TEAM1234',{source:{name:'test',lastSuccessAt:new Date(now).toISOString()},tasks:[
+      {id:'clickup:newsletter:a',title:'Mail',workflow:'newsletter',status:'queued',workerId:'mac-1',phase:'Pausiert · automatische Fortsetzung',attemptId:'old',updatedAt:new Date(now).toISOString()}
+    ]});
+    store.workerReport('TEAM1234',report());
+    let row=store.snapshot('TEAM1234').queue.tasks[0];
+    assert.equal(row.status,'queued');assert.equal(row.phase,'Pausiert · automatische Fortsetzung');assert.equal(row.workerId,'mac-1');
+    store.workerReport('TEAM1234',{...report(),activity:{state:'busy',acceptingTasks:true,runs:[{id:row.id,runId:'next',title:'Mail',workflow:'newsletter',status:'running'}]}});
+    row=store.snapshot('TEAM1234').queue.tasks[0];
+    assert.equal(row.status,'running');assert.equal(row.phase,'In Bearbeitung');
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
 test('direct observations expire in 45 seconds and cannot claim idle without local evidence', () => {
   const accepted = validateReport(report(), now);
   assert.equal(publicReport(accepted, now + 44000).activity.fresh, true);
