@@ -529,7 +529,11 @@
     const known = new Map(installed.items.map(item => [item.id, item]));
     const differences = latestSkills().filter(item => known.get(item.id)?.tree !== item.tree || known.get(item.id)?.version !== item.version)
       .map(item => `${skillNames[item.id] || item.id}: ${known.get(item.id)?.version || "fehlt"} → ${item.version}`);
-    if (!skillsFresh(snapshot?.skillRelease) || !skillsFresh(installed, machine.agentLastSeenAt))
+    // The live observer rereads the installed immutable package. Its local Git
+    // sync may be older while another Mac confirms the central reference now.
+    const observedAt = timestamp(machine.agentLastSeenAt);
+    const observedFresh = machine.agentStatus === "online" && observedAt !== null && Date.now() - observedAt <= 45000;
+    if (!skillsFresh(snapshot?.skillRelease) || !observedFresh)
       return { state: "unknown", label: "Stand ungeprüft", differences };
     return { state: differences.length ? "pending" : "current", label: differences.length ? "Update ausstehend" : "Aktuell", differences };
   }
