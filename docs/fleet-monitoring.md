@@ -339,7 +339,7 @@ Standardmäßig werden diese Workflows erkannt:
 
 | Workflow | Start-Tags | Status-Tags |
 | --- | --- | --- |
-| `newsletter` (Pre-Gen) | `pre gen.` | `pre gen · wartet`, `pre gen · läuft`, `pre gen · blockiert`, `pre gen · fertig` |
+| `newsletter` (Pre-Gen) | `pre gen.` | `pre gen · wartet`, `pre gen · läuft`, `pre gen · pausiert`, `pre gen · blockiert`, `pre gen · fertig` |
 | `upload` (Klaviyo-Upload) | `klaviyo upload` | `klaviyo upload · wartet`, `klaviyo upload · läuft`, `klaviyo upload · blockiert`, `klaviyo upload · fertig` |
 | `translation-en` … `translation-sp` (Übersetzung) | `en translation` (auch `en translations`), ebenso `it`, `fr`, `se`, `sp` | `<sprache> translation · blockiert`, `<sprache> translation · fertig` |
 

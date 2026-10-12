@@ -29,11 +29,11 @@ const PREVIEW_RETENTION_MS = 7 * 86400000;
 
 export const DEFAULT_WORKFLOWS = [
   { id: 'newsletter', triggerTags: ['pre gen.'], claimWorkflow: 'newsletter', stateTags: {
-    queued: ['pre gen · wartet'], running: ['pre gen · läuft'],
+    queued: ['pre gen · wartet', 'pre gen · pausiert'], running: ['pre gen · läuft'],
     blocked: ['pre gen · blockiert'], completed: ['pre gen · fertig'],
   } },
   { id: 'upload', triggerTags: ['klaviyo upload'], claimWorkflow: 'klaviyo', stateTags: {
-    queued: ['klaviyo upload · wartet'], running: ['klaviyo upload · läuft'],
+    queued: ['klaviyo upload · wartet', 'klaviyo upload · pausiert'], running: ['klaviyo upload · läuft'],
     blocked: ['klaviyo upload · blockiert'], completed: ['klaviyo upload · fertig'],
   } },
   // One job per language; its start tag stays until "· fertig" or "· blockiert".
@@ -140,8 +140,9 @@ export function parseClaim(message) {
   return { taskId: (correction?.[1] ?? translation?.[1] ?? upload?.[1] ?? jobId).replace(/@\d+$/, ''), jobId,
     runId: String(value.run_id), workerId: String(value.worker),
     state: value.state, heartbeat, ts: String(message.ts),
+    ...(value.paused === true ? { paused: true } : {}),
     workflow: typeof value.workflow === 'string' ? value.workflow : translation ? `translation-${translation[2]}` : kind,
-    outcome: reactions.includes('x') ? 'blocked' : reactions.includes('white_check_mark') ? 'completed' : undefined,
+    outcome: value.paused === true && value.state === 'final' ? 'queued' : reactions.includes('x') ? 'blocked' : reactions.includes('white_check_mark') ? 'completed' : undefined,
     url, company: kind === 'correction' ? displayText(text.split('\n')[0].replace(/^\*?Korrektur\s*·\s*/, '').replace(/[*`]/g, ''), 200) : undefined,
     title: displayText((link?.[2] || text.split('\n')[0].replace(/[*`]/g, '')).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 300) };
 }
@@ -293,16 +294,19 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       const matches = claims.filter(claim => claim.taskId === task.id && claim.workflow === (workflow.claimWorkflow ?? workflow.id));
       const active = matches.filter(claim => ['claiming', 'running'].includes(claim.state)).sort((a, b) => Number(a.ts) - Number(b.ts));
       const fresh = active.find(claim => now - claim.heartbeat * 1000 <= staleMinutes * 60000);
-      const previous = ['completed', 'blocked', 'failed'].includes(status)
+      const pausedTag = tags.some(name => / · pausiert$/i.test(name) && Object.values(workflow.stateTags || {}).flat().some(tag => normalizeTag(tag) === normalizeTag(name)));
+      const previous = ['completed', 'blocked', 'failed'].includes(status) || pausedTag
         ? matches.filter(item => item.state === 'final').sort((a, b) => Number(b.ts) - Number(a.ts))[0] : undefined;
       const claim = fresh ?? active[0] ?? previous;
       let phase;
-      if (status !== 'completed' && status !== 'failed' && status !== 'blocked') {
+      if (pausedTag && !fresh) { status = 'queued'; phase = 'Pausiert · automatische Fortsetzung'; }
+      if ((!pausedTag || fresh) && status !== 'completed' && status !== 'failed' && status !== 'blocked') {
         if (fresh) { status = fresh.state === 'running' ? 'running' : 'queued'; phase = fresh.state === 'running' ? 'In Bearbeitung' : 'Reserviert'; }
         else if (active.length) { status = 'blocked'; phase = 'Worker meldet sich nicht mehr'; }
         else if (status === 'running') { phase = 'Läuft laut ClickUp; Worker-Zuordnung fehlt'; }
       }
-      if (status === 'blocked' && !phase) phase = 'Blockiert oder pausiert';
+      if (pausedTag && fresh) phase = 'Pausiert · automatische Fortsetzung';
+      if (status === 'blocked' && !phase) phase = 'Blockiert';
       let url = `https://app.clickup.com/t/${encodeURIComponent(task.id)}`;
       try {
         const candidate = new URL(task.url);
@@ -341,7 +345,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
     const active = ['claiming', 'running'].includes(claim.state);
     const fresh = now - claim.heartbeat * 1000 <= staleMinutes * 60000;
     const status = active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : 'blocked' : claim.outcome || 'blocked';
-    const phase = active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : 'Worker meldet sich nicht mehr'
+    const phase = claim.paused && !active ? 'Pausiert · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : 'Worker meldet sich nicht mehr'
       : status === 'completed' ? 'Korrektur abgeschlossen' : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
     const task = tasks.find(task => task.id === claim.taskId);
     rows.push({ id: `correction:${claim.jobId}`, title: displayText(claim.title || task?.name, 300, `Korrektur ${claim.taskId}`),

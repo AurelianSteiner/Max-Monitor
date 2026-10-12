@@ -20,6 +20,22 @@ const claimMessage = (state = 'running', overrides = {}) => ({ ts: '1791373200.0
   event_type: 'ai_newsletter_claim', event_payload: { task_id: 'a', run_id: 'run-1', worker: 'newsletter-mac-1', state, heartbeat: now / 1000 - 60, ...overrides },
 } });
 
+test('automatic repair pauses remain waiting in the queue for PreGen, upload and correction', () => {
+  const paused = parseClaim(claimMessage('final', { paused: true }));
+  const rows = buildQueue([task('a', ['pre gen · pausiert'])], [paused], DEFAULT_WORKFLOWS, { now });
+  assert.equal(rows[0].status, 'queued');
+  assert.equal(rows[0].phase, 'Pausiert · automatische Fortsetzung');
+  assert.equal(rows[0].workerId, 'newsletter-mac-1');
+  const upload = buildQueue([task('a', ['klaviyo upload · pausiert'])], [], DEFAULT_WORKFLOWS, { now });
+  assert.equal(upload[0].status, 'queued');
+  assert.equal(upload[0].phase, 'Pausiert · automatische Fortsetzung');
+  const correction = parseClaim({ ...claimMessage('final', { task_id:'korrektur-cu-a@1000-intern',paused:true }),
+    metadata:{event_type:'ai_korrektur_claim',event_payload:{task_id:'korrektur-cu-a@1000-intern',run_id:'r',worker:'newsletter-mac-1',state:'final',heartbeat:now/1000,paused:true}} });
+  const corrected = buildQueue([task('a')], [correction], DEFAULT_WORKFLOWS, { now }).find(row=>row.workflow==='correction');
+  assert.equal(corrected.status, 'queued');
+  assert.equal(corrected.phase, 'Pausiert · automatische Fortsetzung');
+});
+
 test('tag discovery uses actual spelling from all spaces and recognizes punctuation', async () => {
   const called = [];
   const variants = await discoverTags(async target => {

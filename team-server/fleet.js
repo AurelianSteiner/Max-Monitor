@@ -749,16 +749,19 @@ function createFleetStore(dataDir, now = Date.now) {
     const activeOwners = new Map();
     for (const report of liveReports) {
       const active = new Set(report.activity.runs.map(run => run.id));
-      for (const [id, task] of queueTasks) if (task.workerId === report.workerId && ['running', 'queued'].includes(task.status) && !active.has(id)) {
+      for (const [id, task] of queueTasks) if (task.workerId === report.workerId && ['running', 'queued'].includes(task.status) && !active.has(id)
+        && task.phase !== 'Pausiert · automatische Fortsetzung') {
         queueTasks.set(id, { ...task, workerId: null, phase: 'Worker-Abgleich ausstehend' });
       }
       for (const run of report.activity.runs) {
         const previous = queueTasks.get(run.id);
+        if (previous?.phase === 'Pausiert · automatische Fortsetzung' && previous.attemptId === run.runId
+          && Date.parse(previous.updatedAt) > Date.parse(report.sampledAt)) continue;
         const conflict = activeOwners.has(run.id) && activeOwners.get(run.id) !== report.workerId;
         activeOwners.set(run.id, report.workerId);
         if (['blocked', 'failed', 'completed'].includes(previous?.status) && Date.parse(previous.updatedAt) > Date.parse(report.sampledAt)) continue;
         queueTasks.set(run.id, { ...previous, ...run, blockedReason: undefined, completion: undefined, completedAt: undefined, workerId: conflict ? null : report.workerId,
-          status: conflict && !slackInventory ? 'blocked' : run.status, phase: conflict ? 'Mehrere Worker melden denselben Auftrag' : run.status === 'queued' ? 'Reserviert' : 'In Bearbeitung',
+          status: conflict && !slackInventory ? 'blocked' : run.status, phase: conflict ? 'Mehrere Worker melden denselben Auftrag' : /^Pausiert:/i.test(run.step || '') ? 'Pausiert · automatische Fortsetzung' : run.status === 'queued' ? 'Reserviert' : 'In Bearbeitung',
           updatedAt: report.sampledAt, progress: run.progress ?? (['running', 'queued'].includes(previous?.status) ? previous.progress : undefined) });
       }
     }
