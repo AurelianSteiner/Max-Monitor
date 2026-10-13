@@ -211,7 +211,7 @@ export function parseWorkerIssue(message) {
 // One row per still-present bot error in #ai-fehler, independent of historical
 // ClickUp tags, claim outcomes and canceled Sales tests. Removing the error in
 // Slack removes this row on the next complete scan. Never synthesize completion.
-export function buildBlockedErrors(messages, channelId, tasks = []) {
+export function buildBlockedErrors(messages, channelId, tasks = [], { manualUploadIds = new Set() } = {}) {
   const rows = new Map();
   const slackText = text => String(text || '').replace(/<[^|>]+\|([^>]+)>/g, '$1')
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -229,6 +229,7 @@ export function buildBlockedErrors(messages, channelId, tasks = []) {
     const upload = /^(.+)-klaviyo$/.exec(jobId);
     const kind = correction ? 'correction' : translation ? `translation-${translation[2]}` : upload ? 'upload' : value?.kind === 'lauf' ? 'newsletter' : 'worker-errors';
     const taskId = (correction?.[1] || translation?.[1] || upload?.[1] || jobId).replace(/@\d+$/, '');
+    if (kind === 'upload' && manualUploadIds.has(taskId)) continue;
     const sourceId = correction ? `correction:${jobId}` : `clickup:${kind}:${taskId}`;
     const source = tasks.find(task => task.id === sourceId);
     const taskLink = /<(https:\/\/app\.clickup\.com\/t\/[A-Za-z0-9_-]+)\|([^>]+)>/.exec(text);
@@ -291,6 +292,10 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       for (const name of ['queued', 'running', 'failed', 'blocked', 'completed']) {
         if ((workflow.stateTags?.[name] ?? []).some(tag => normalized.has(normalizeTag(tag)))) status = name;
       }
+      // Manual uploads belong to the PM backlog, outside the automated queue.
+      // Retain completed upload evidence and all other work on the same task.
+      if ((workflow.claimWorkflow ?? workflow.id) === 'klaviyo'
+        && normalized.has(normalizeTag('manuell')) && status !== 'completed') continue;
       const matches = claims.filter(claim => claim.taskId === task.id && claim.workflow === (workflow.claimWorkflow ?? workflow.id));
       const active = matches.filter(claim => ['claiming', 'running'].includes(claim.state)).sort((a, b) => Number(Boolean(a.paused && a.portable)) - Number(Boolean(b.paused && b.portable)) || Number(a.ts) - Number(b.ts));
       const fresh = active.find(claim => now - claim.heartbeat * 1000 <= staleMinutes * 60000);
@@ -683,7 +688,8 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   await addRunDetails(queue, { hubFetch, channelId: config.slack.channel_id, previews, previousTasks, now });
   queue.push(...salesResult.value);
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
-  const blockedErrors = errorChannel ? buildBlockedErrors(errorMessages, errorChannel, queue) : undefined;
+  const manualUploadIds = new Set(tasks.filter(task => (task.tags || []).some(tag => normalizeTag(typeof tag === 'string' ? tag : tag.name) === normalizeTag('manuell'))).map(task => task.id));
+  const blockedErrors = errorChannel ? buildBlockedErrors(errorMessages, errorChannel, queue, { manualUploadIds }) : undefined;
   return { tasks: queue, ...(blockedErrors === undefined ? {} : { blockedErrors }), workerIssues, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
     name: SOURCE_NAME, lastSuccessAt: new Date(now).toISOString(),
     detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${claims.length} Reservierungen${blockedErrors ? ` · ${blockedErrors.length} offen in #ai-fehler` : ''}${fleetDetail ? ` · ${fleetDetail}` : ''}`,
