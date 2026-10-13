@@ -137,12 +137,18 @@ export function parseClaim(message) {
   let url;
   try { const candidate = new URL(link?.[1]); if (candidate.protocol === 'https:' && !candidate.username && !candidate.password && candidate.href.length <= 2000) url = candidate.href; } catch { /* Optional task link. */ }
   const reactions = (Array.isArray(message.reactions) ? message.reactions : []).map(item => item?.name);
+  // Completed corrections replace the parent text and need no separate reaction.
+  // Only the terminal label of this exact claim can confirm completion.
+  const terminalLine = text.split('\n')[1] || '';
+  const completed = kind === 'correction' && value.state === 'final' && /^(?:✅|:white_check_mark:)\s*Fertig:/u.test(terminalLine);
+  const awaitingPm = kind === 'correction' && value.state === 'final' && reactions.includes('question');
   return { taskId: (correction?.[1] ?? translation?.[1] ?? upload?.[1] ?? jobId).replace(/@\d+$/, ''), jobId,
     runId: String(value.run_id), workerId: String(value.worker),
     state: value.state, heartbeat, ts: String(message.ts),
     ...(value.paused === true ? { paused: true, ...(value.portable === true ? { portable: true } : {}) } : {}),
     workflow: typeof value.workflow === 'string' ? value.workflow : translation ? `translation-${translation[2]}` : kind,
-    outcome: value.paused === true && value.state === 'final' ? 'queued' : reactions.includes('x') ? 'blocked' : reactions.includes('white_check_mark') ? 'completed' : undefined,
+    outcome: completed ? 'completed' : value.paused === true && value.state === 'final' ? 'queued' : reactions.includes('x') ? 'blocked' : reactions.includes('white_check_mark') ? 'completed' : undefined,
+    awaitingPm,
     url, company: kind === 'correction' ? displayText(text.split('\n')[0].replace(/^\*?Korrektur\s*·\s*/, '').replace(/[*`]/g, ''), 200) : undefined,
     title: displayText((link?.[2] || text.split('\n')[0].replace(/[*`]/g, '')).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 300) };
 }
@@ -349,12 +355,13 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
     const fresh = now - claim.heartbeat * 1000 <= staleMinutes * 60000;
     const status = claim.paused ? 'queued' : active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : 'blocked' : claim.outcome || 'blocked';
     const phase = claim.paused && claim.portable ? 'Pausiert · vorne in der zentralen Queue' : claim.paused ? active ? 'Pausiert · wartet außerhalb der Worker-Plätze' : 'Pausiert · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : 'Worker meldet sich nicht mehr'
-      : status === 'completed' ? 'Korrektur abgeschlossen' : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
+      : status === 'completed' ? 'Korrektur abgeschlossen' : claim.awaitingPm ? 'PM-Rückfrage offen'
+        : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
     const task = tasks.find(task => task.id === claim.taskId);
     rows.push({ id: `correction:${claim.jobId}`, title: displayText(claim.title || task?.name, 300, `Korrektur ${claim.taskId}`),
       url: claim.url || (claim.taskId !== claim.jobId ? `https://app.clickup.com/t/${encodeURIComponent(claim.taskId)}` : undefined), workflow: 'correction',
       company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId,
-      phase, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
+      phase, progress: status === 'completed' ? 100 : undefined, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
       run: { id: claim.runId, ts: claim.ts, taskId: claim.taskId, channelId: claim.channelId } });
   }
   return rows.sort((a, b) => a.id.localeCompare(b.id));
@@ -384,6 +391,13 @@ export function parseBlockedReason(text) {
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 500) || null;
 }
 
+function parsePmQuestion(text) {
+  const lines = String(text ?? '').split('\n');
+  if (!/^\*?Unklar\s*[–—-]\s*bitte hier antworten\*?/.test(lines[0])) return null;
+  const questions = lines.slice(1).map(line => /^\s*•\s*Unklar\s*·\s*Kommentar\s+\d+\s*\(.*?\):\s*(.+)$/.exec(line)?.[1]).filter(Boolean);
+  return questions.length ? parseBlockedReason(`:warning: blockiert: ${questions.join(' · ')}`) : null;
+}
+
 export async function readRunStatuses(hubFetch, channelId, threads, { concurrency = 4 } = {}) {
   const pending = [...new Set(threads)];
   const statuses = new Map();
@@ -397,6 +411,7 @@ export async function readRunStatuses(hubFetch, channelId, threads, { concurrenc
         // Only the worker's own bot reply counts, never a person writing in the thread.
         const found = (Array.isArray(result.messages) ? result.messages : [])
           .filter(message => message?.ts !== ts && message?.bot_id).map(message => parseRunStatus(message.text)
+            || (parsePmQuestion(message.text) ? { pmQuestion: parsePmQuestion(message.text) } : null)
             || (parseBlockedReason(message.text) ? { blockedReason: parseBlockedReason(message.text) } : null)).filter(Boolean);
         if (found.length) statuses.set(ts, found.at(-1));
       } catch { /* Progress is optional: the task simply stays "In Bearbeitung". */ }
@@ -510,9 +525,11 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
     const status = statuses.get(row.run?.channelId || channelId)?.get(row.run?.ts);
     if (row.status === 'running' && status?.percent !== undefined) { row.progress = status.percent; row.step = status.step; }
     if (row.status === 'blocked' && row.workflow === 'correction') {
-      row.blockedReason = status?.blockedReason || (old?.attemptId === row.attemptId && old.blockedReason
+      row.blockedReason = status?.pmQuestion || status?.blockedReason || (old?.attemptId === row.attemptId && old.blockedReason
         ? parseBlockedReason(`:warning: blockiert: ${old.blockedReason}`) : undefined);
-      if (row.blockedReason) row.phase = 'Korrektur blockiert';
+      if (status?.pmQuestion || row.phase === 'PM-Rückfrage offen'
+        || (old?.attemptId === row.attemptId && old.phase === 'PM-Rückfrage offen' && row.blockedReason)) row.phase = 'PM-Rückfrage offen';
+      else if (row.blockedReason) row.phase = 'Korrektur blockiert';
     }
     const list = attempts.includes(row) ? (rendered ? rendered.get(row.run.id) : old?.previews)
       : row.status === 'completed' && old?.status === 'completed' ? old.previews : undefined;

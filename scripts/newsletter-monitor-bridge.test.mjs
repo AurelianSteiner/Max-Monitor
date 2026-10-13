@@ -215,6 +215,56 @@ test('blocked correction diagnosis comes from its own bot thread and is cached o
   assert.equal(changed[0].blockedReason, undefined);
 });
 
+test('a terminal correction marked Fertig in its parent is completed without a reaction', () => {
+  const message = { ts: '1791862331.952979', text: '*Korrektur · Happy dogs*\n:white_check_mark: Fertig: <https://app.clickup.com/t/86cb1enj9|Sortimentsvorstellung Trockenfutter>',
+    metadata: { event_type: 'ai_korrektur_claim', event_payload: { task_id: 'korrektur-cu-86cb1enj9@1791813435889-extern',
+      run_id: 'finished-retry', worker: 'macbook-till-main', state: 'final', heartbeat: now / 1000 } } };
+  const parsed = parseClaim(message);
+  const row = buildQueue([], [parsed], DEFAULT_WORKFLOWS, { now })[0];
+  assert.equal(row.status, 'completed'); assert.equal(row.progress, 100);
+  assert.equal(row.phase, 'Korrektur abgeschlossen'); assert.equal(row.attemptId, 'finished-retry');
+  assert.equal(parseClaim({ ...message, reactions: [{ name: 'x' }] }).outcome, 'completed', 'the current terminal label supersedes an old failure reaction');
+  assert.equal(parseClaim({ ...message, metadata: { ...message.metadata, event_payload: { ...message.metadata.event_payload, state: 'running' } } }).outcome, undefined);
+  assert.equal(parseClaim({ ...message, text: '*Korrektur · Fertig*\n:repeat: Fortsetzung: Fertig' }).outcome, undefined);
+  assert.equal(parseClaim({ ...message, text: '*Korrektur · Happy dogs*\n✅ Fertig: <https://app.clickup.com/t/86cb1enj9|Trockenfutter>' }).outcome, 'completed');
+});
+
+test('open PM questions show the exact bot question and survive cache reads only for the same attempt', async () => {
+  const message = { ts: '123.001', text: '*Korrektur · Baumax*\n:repeat: Fortsetzung: <https://app.clickup.com/t/task|Rüttelplatte>', reactions: [{ name: 'question' }],
+    metadata: { event_type: 'ai_korrektur_claim', event_payload: { task_id: 'korrektur-cu-task@123-extern',
+      run_id: 'pm-question', worker: 'mac-2', state: 'final', heartbeat: now / 1000 } } };
+  const claim = { ...parseClaim(message), channelId: 'correction-channel' };
+  const question = 'Gilt „NUR HVP und VP25/50“ auch für VP10/31, VP12/35 und VP16/44?';
+  const rows = () => buildQueue([], [claim], DEFAULT_WORKFLOWS, { now });
+  let calls = 0;
+  const fetcher = async () => { calls++; return response({ ok: true, messages: [
+    { ts: message.ts, bot_id: 'worker-bot', text: message.text },
+    { ts: '123.002', bot_id: 'worker-bot', text: ':question: Unklar: 1 Punkt braucht eine Antwort.' },
+    { ts: '123.003', bot_id: 'worker-bot', text: `*Unklar – bitte hier antworten* (der Bot setzt die Antwort um)\n• Unklar · Kommentar 1 („Dieses Foto zeigt eine RVP-Rüttelplatte…“): ${question}` },
+    { ts: '123.004', text: '*Unklar – bitte hier antworten*\n• Unklar · Kommentar 1 („Mensch“): Falsche menschliche Frage?' },
+  ] }); };
+  const first = await addRunDetails(rows(), { hubFetch: fetcher });
+  assert.equal(first[0].status, 'blocked'); assert.equal(first[0].phase, 'PM-Rückfrage offen');
+  assert.equal(first[0].blockedReason, question);
+  const cached = await addRunDetails(rows(), { hubFetch: fetcher, previousTasks: first });
+  assert.equal(calls, 1); assert.equal(cached[0].blockedReason, question); assert.equal(cached[0].phase, 'PM-Rückfrage offen');
+  const retry = buildQueue([], [{ ...claim, runId: 'new-attempt', awaitingPm: false }], DEFAULT_WORKFLOWS, { now });
+  const next = await addRunDetails(retry, { hubFetch: async () => { throw Error('temporary outage'); }, previousTasks: first });
+  assert.equal(next[0].blockedReason, undefined); assert.equal(next[0].phase, 'Korrekturabschluss noch nicht bestätigt');
+  const completed = buildQueue([], [{ ...claim, outcome: 'completed', awaitingPm: false }], DEFAULT_WORKFLOWS, { now });
+  await addRunDetails(completed, { hubFetch: fetcher, previousTasks: first });
+  assert.equal(completed[0].status, 'completed'); assert.equal(completed[0].blockedReason, undefined);
+});
+
+test('PM question details redact credentials and do not turn an unrelated thread message into a question', async () => {
+  const make = () => ({ id: 'correction:job', workflow: 'correction', status: 'blocked', attemptId: 'one',
+    run: { id: 'one', ts: '123.001', channelId: 'correction-channel' } });
+  const read = text => addRunDetails([make()], { hubFetch: async () => response({ ok: true, messages: [{ ts: '123.002', bot_id: 'bot', text }] }) });
+  const result = await read('*Unklar – bitte hier antworten*\n• Unklar · Kommentar 3 („Module“): token=secret123 Welche Module?');
+  assert.equal(result[0].phase, 'PM-Rückfrage offen'); assert.match(result[0].blockedReason, /ENTFERNT/); assert.doesNotMatch(result[0].blockedReason, /secret123/);
+  assert.equal((await read('Hinweis: Unklar\n• Unklar · Kommentar 3 („Module“): Fremde Frage?'))[0].blockedReason, undefined);
+});
+
 test('tag discovery finds every tag the worker sets', async () => {
   const workerTags = ['pre gen.', 'pre gen · wartet', 'pre gen · läuft', 'pre gen · fertig', 'pre gen · blockiert',
     'klaviyo upload', 'klaviyo upload · wartet', 'klaviyo upload · läuft', 'klaviyo upload · fertig', 'klaviyo upload · blockiert',
