@@ -140,7 +140,7 @@ export function parseClaim(message) {
   return { taskId: (correction?.[1] ?? translation?.[1] ?? upload?.[1] ?? jobId).replace(/@\d+$/, ''), jobId,
     runId: String(value.run_id), workerId: String(value.worker),
     state: value.state, heartbeat, ts: String(message.ts),
-    ...(value.paused === true ? { paused: true } : {}),
+    ...(value.paused === true ? { paused: true, ...(value.portable === true ? { portable: true } : {}) } : {}),
     workflow: typeof value.workflow === 'string' ? value.workflow : translation ? `translation-${translation[2]}` : kind,
     outcome: value.paused === true && value.state === 'final' ? 'queued' : reactions.includes('x') ? 'blocked' : reactions.includes('white_check_mark') ? 'completed' : undefined,
     url, company: kind === 'correction' ? displayText(text.split('\n')[0].replace(/^\*?Korrektur\s*·\s*/, '').replace(/[*`]/g, ''), 200) : undefined,
@@ -292,7 +292,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         if ((workflow.stateTags?.[name] ?? []).some(tag => normalized.has(normalizeTag(tag)))) status = name;
       }
       const matches = claims.filter(claim => claim.taskId === task.id && claim.workflow === (workflow.claimWorkflow ?? workflow.id));
-      const active = matches.filter(claim => ['claiming', 'running'].includes(claim.state)).sort((a, b) => Number(a.ts) - Number(b.ts));
+      const active = matches.filter(claim => ['claiming', 'running'].includes(claim.state)).sort((a, b) => Number(Boolean(a.paused && a.portable)) - Number(Boolean(b.paused && b.portable)) || Number(a.ts) - Number(b.ts));
       const fresh = active.find(claim => now - claim.heartbeat * 1000 <= staleMinutes * 60000);
       const pausedTag = tags.some(name => / · pausiert$/i.test(name) && Object.values(workflow.stateTags || {}).flat().some(tag => normalizeTag(tag) === normalizeTag(name)));
       const previous = ['completed', 'blocked', 'failed'].includes(status) || pausedTag
@@ -307,6 +307,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       }
       if (pausedTag && fresh) phase = 'Pausiert · automatische Fortsetzung';
       if (claim?.paused === true && ['claiming', 'running'].includes(claim.state)) { status = 'queued'; phase = 'Pausiert · wartet außerhalb der Worker-Plätze'; }
+      if(claim?.paused && claim.portable){status='queued';phase='Pausiert · vorne in der zentralen Queue';}
       if (status === 'blocked' && !phase) phase = 'Blockiert';
       let url = `https://app.clickup.com/t/${encodeURIComponent(task.id)}`;
       try {
@@ -319,7 +320,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         sourceStatus: displayText(typeof task.status === 'string' ? task.status : task.status?.status, 120),
         company: task.folder?.hidden ? undefined : displayText(task.folder?.name, 200),
         figmaUrl: taskFigmaLink(task) || ((workflow.claimWorkflow ?? workflow.id) === 'newsletter' ? figmaLink(figmaBoardUrl) : undefined),
-        workerId: claim?.workerId, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
+        workerId: claim?.paused && claim.portable ? undefined : claim?.workerId, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
         updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30),
         // Internal only: addRunDetails reads progress and renders of this attempt, then removes it.
         run: claim ? { id: claim.runId, ts: claim.ts, taskId: task.id, channelId: claim.channelId } : undefined });
@@ -339,19 +340,20 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
     // use the worker's earliest-reservation rule. Withdrawn contenders never win.
     if (['claiming', 'running'].includes(claim.state)) {
       const ended = attempts.find(item => !['claiming', 'running'].includes(item.state));
-      const candidates = attempts.filter(item => ['claiming', 'running'].includes(item.state) && (!ended || Number(item.ts) > Number(ended.ts)));
+      const executing = attempts.some(item => ['claiming','running'].includes(item.state) && !(item.paused && item.portable));
+      const candidates = attempts.filter(item => ['claiming', 'running'].includes(item.state) && (!executing || !(item.paused && item.portable)) && (!ended || Number(item.ts) > Number(ended.ts)));
       claim = candidates.filter(item => now - item.heartbeat * 1000 <= staleMinutes * 60000).at(-1) || candidates[0];
     }
     if (claim.state === 'released' && claim.outcome !== 'completed') continue;
     const active = ['claiming', 'running'].includes(claim.state);
     const fresh = now - claim.heartbeat * 1000 <= staleMinutes * 60000;
     const status = claim.paused ? 'queued' : active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : 'blocked' : claim.outcome || 'blocked';
-    const phase = claim.paused ? active ? 'Pausiert · wartet außerhalb der Worker-Plätze' : 'Pausiert · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : 'Worker meldet sich nicht mehr'
+    const phase = claim.paused && claim.portable ? 'Pausiert · vorne in der zentralen Queue' : claim.paused ? active ? 'Pausiert · wartet außerhalb der Worker-Plätze' : 'Pausiert · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : 'Worker meldet sich nicht mehr'
       : status === 'completed' ? 'Korrektur abgeschlossen' : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
     const task = tasks.find(task => task.id === claim.taskId);
     rows.push({ id: `correction:${claim.jobId}`, title: displayText(claim.title || task?.name, 300, `Korrektur ${claim.taskId}`),
       url: claim.url || (claim.taskId !== claim.jobId ? `https://app.clickup.com/t/${encodeURIComponent(claim.taskId)}` : undefined), workflow: 'correction',
-      company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.workerId, attemptId: claim.runId,
+      company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId,
       phase, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
       run: { id: claim.runId, ts: claim.ts, taskId: claim.taskId, channelId: claim.channelId } });
   }
