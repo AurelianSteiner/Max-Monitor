@@ -98,3 +98,19 @@ test('the correction upgrade preserves completion signatures of existing ordinar
     assert.equal(createFleetStore(directory, () => now).snapshot('TEAM1234').queue.tasks[0].status, 'completed');
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
+
+test('parked queue work keeps its session owner while fresh worker telemetry counts replacement work', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'parked-worker-queue-'));
+  try {
+    const store = createFleetStore(dir, () => now);
+    const phase = 'Pausiert · wartet außerhalb der Worker-Plätze';
+    store.updateQueue('TEAM1234', { source: { name: 'test' }, tasks: [
+      { id: 'clickup:newsletter:a', title: 'Paused mail', workflow: 'newsletter', status: 'queued', workerId: 'mac-1', phase, attemptId: 'same', updatedAt: new Date(now).toISOString() },
+    ] });
+    store.workerReport('TEAM1234', { ...report(), activity: { state: 'busy', acceptingTasks: true,
+      runs: [{ id: 'clickup:newsletter:b', runId: 'replacement', title: 'Replacement', workflow: 'newsletter', status: 'running' }] } });
+    const paused = store.snapshot('TEAM1234').queue.tasks.find(row => row.id === 'clickup:newsletter:a');
+    assert.deepEqual([paused.status, paused.phase, paused.workerId, paused.attemptId], ['queued', phase, 'mac-1', 'same']);
+    assert.equal(store.workerReportStatus('TEAM1234', 'mac-1').activity.runs.length, 1);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

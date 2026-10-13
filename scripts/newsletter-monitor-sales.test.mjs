@@ -95,3 +95,14 @@ test('a failed Sales read preserves the last full relay queue and cache', async 
   assert.deepEqual(store.snapshot('SALESTEST').queue.tasks, before);
   assert.match(store.snapshot('SALESTEST').queue.source.error, /Sales-Job/);
 });
+
+test('paused Sales work remains queued with its owner and resumes the same attempt', async t => {
+  const directory = await fixture(t, [job({ monitor: { paused: true } })]);
+  const [paused] = await readLocalSales(directory, now);
+  assert.equal(paused.status, 'queued');
+  assert.equal(paused.phase, 'Pausiert · wartet außerhalb der Worker-Plätze');
+  await fs.writeFile(path.join(directory, ts(0), 'job.json'), JSON.stringify(job({ monitor: { paused: false } })));
+  const [resumed] = await readLocalSales(directory, now);
+  assert.equal(resumed.status, 'running');
+  assert.equal(resumed.attemptId, paused.attemptId);
+});

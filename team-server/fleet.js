@@ -750,12 +750,12 @@ function createFleetStore(dataDir, now = Date.now) {
     for (const report of liveReports) {
       const active = new Set(report.activity.runs.map(run => run.id));
       for (const [id, task] of queueTasks) if (task.workerId === report.workerId && ['running', 'queued'].includes(task.status) && !active.has(id)
-        && task.phase !== 'Pausiert · automatische Fortsetzung') {
+        && !['Pausiert · automatische Fortsetzung', 'Pausiert · wartet außerhalb der Worker-Plätze'].includes(task.phase)) {
         queueTasks.set(id, { ...task, workerId: null, phase: 'Worker-Abgleich ausstehend' });
       }
       for (const run of report.activity.runs) {
         const previous = queueTasks.get(run.id);
-        if (previous?.phase === 'Pausiert · automatische Fortsetzung' && previous.attemptId === run.runId
+        if (['Pausiert · automatische Fortsetzung', 'Pausiert · wartet außerhalb der Worker-Plätze'].includes(previous?.phase) && previous.attemptId === run.runId
           && Date.parse(previous.updatedAt) > Date.parse(report.sampledAt)) continue;
         const conflict = activeOwners.has(run.id) && activeOwners.get(run.id) !== report.workerId;
         activeOwners.set(run.id, report.workerId);

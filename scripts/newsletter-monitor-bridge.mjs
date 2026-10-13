@@ -306,6 +306,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         else if (status === 'running') { phase = 'Läuft laut ClickUp; Worker-Zuordnung fehlt'; }
       }
       if (pausedTag && fresh) phase = 'Pausiert · automatische Fortsetzung';
+      if (claim?.paused === true && ['claiming', 'running'].includes(claim.state)) { status = 'queued'; phase = 'Pausiert · wartet außerhalb der Worker-Plätze'; }
       if (status === 'blocked' && !phase) phase = 'Blockiert';
       let url = `https://app.clickup.com/t/${encodeURIComponent(task.id)}`;
       try {
@@ -344,8 +345,8 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
     if (claim.state === 'released' && claim.outcome !== 'completed') continue;
     const active = ['claiming', 'running'].includes(claim.state);
     const fresh = now - claim.heartbeat * 1000 <= staleMinutes * 60000;
-    const status = active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : 'blocked' : claim.outcome || 'blocked';
-    const phase = claim.paused && !active ? 'Pausiert · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : 'Worker meldet sich nicht mehr'
+    const status = claim.paused ? 'queued' : active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : 'blocked' : claim.outcome || 'blocked';
+    const phase = claim.paused ? active ? 'Pausiert · wartet außerhalb der Worker-Plätze' : 'Pausiert · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : 'Worker meldet sich nicht mehr'
       : status === 'completed' ? 'Korrektur abgeschlossen' : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
     const task = tasks.find(task => task.id === claim.taskId);
     rows.push({ id: `correction:${claim.jobId}`, title: displayText(claim.title || task?.name, 300, `Korrektur ${claim.taskId}`),
@@ -591,7 +592,8 @@ export async function readLocalSales(directory, now = Date.now()) {
       if (!stat.isFile() || stat.size > 2 * 1024 * 1024) throw new Error('Ungültige Jobdatei');
       const job = JSON.parse(await fs.readFile(file, 'utf8'));
       if (job.status === 'aborted') continue;
-      const status = Object.hasOwn(statuses, job.status) ? statuses[job.status] : undefined;
+      const paused = ['reserved', 'running', 'delivery'].includes(job.status) && job.monitor?.paused === true;
+      const status = Object.hasOwn(statuses, job.status) ? paused ? 'queued' : statuses[job.status] : undefined;
       const stamp = job.observed_at || job.updated_at || job.created_at;
       const seen = typeof stamp === 'number' ? stamp : Date.parse(stamp);
       if (!status || !/^[a-z0-9][a-z0-9._-]{0,79}$/i.test(job.worker)
@@ -603,7 +605,7 @@ export async function readLocalSales(directory, now = Date.now()) {
       const awaitingWorker = ['queued', 'running'].includes(status) && now - seen > 30 * 60000;
       rows.push({ id: `sales:${name}`, title: `Sales · ${url.hostname}`, url: url.href, workflow: 'sales', status,
         sourceStatus: job.status, workerId: job.worker, attemptId: displayText(job.owner, 200),
-        phase: awaitingWorker ? 'Worker-Meldung ausstehend' : phases[job.status],
+        phase: paused ? 'Pausiert · wartet außerhalb der Worker-Plätze' : awaitingWorker ? 'Worker-Meldung ausstehend' : phases[job.status],
         ...(blockedReason ? { blockedReason } : {}), ...(status === 'completed' ? { progress: 100 } : {}),
         updatedAt: new Date(seen).toISOString() });
     } catch {

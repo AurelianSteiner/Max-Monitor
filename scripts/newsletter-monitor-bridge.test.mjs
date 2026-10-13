@@ -631,3 +631,20 @@ test('preview uploads go to the relay with the token in the header only', async 
   assert.deepEqual([calls[0][1].method, calls[0][1].redirect, calls[0][1].headers.Authorization, calls[0][1].headers['Content-Type']], ['PUT', 'error', 'Bearer secret', 'image/jpeg']);
   await assert.rejects(uploadPreview('a'.repeat(64), Buffer.from('jpeg'), { relayUrl: 'https://api.example.test', teamId: 'DEMO1234', token: 'secret', fetchImpl: async () => ({ ok: false, status: 413 }) }), /413/);
 });
+
+test('paused active claims stay in the central queue for every workflow', () => {
+  for (const [event, jobId, workflow, tags] of [
+    ['ai_newsletter_claim', 'a', 'newsletter', ['pre gen · läuft']],
+    ['ai_klaviyo_upload_claim', 'a-klaviyo', 'upload', ['klaviyo upload · läuft']],
+    ['ai_translation_claim', 'a-uebersetzung-en', 'translation', ['en translation']],
+    ['ai_korrektur_claim', 'korrektur-cu-a@1000-intern', 'correction', []],
+  ]) {
+    const message = claimMessage('running', { task_id: jobId, paused: true });
+    message.metadata.event_type = event;
+    const rows = buildQueue([task('a', tags)], [parseClaim(message)], DEFAULT_WORKFLOWS, { now });
+    const row = rows.find(row => row.workflow === workflow);
+    assert.ok(row, workflow); assert.equal(row.status, 'queued', workflow);
+    assert.equal(row.phase, 'Pausiert · wartet außerhalb der Worker-Plätze', workflow);
+    assert.equal(row.workerId, 'newsletter-mac-1', 'session ownership remains visible');
+  }
+});
