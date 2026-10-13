@@ -20,6 +20,18 @@ const claimMessage = (state = 'running', overrides = {}) => ({ ts: '1791373200.0
   event_type: 'ai_newsletter_claim', event_payload: { task_id: 'a', run_id: 'run-1', worker: 'newsletter-mac-1', state, heartbeat: now / 1000 - 60, ...overrides },
 } });
 
+test('manual uploads leave the automation queue while completed uploads and PreGen stay visible', () => {
+  const rows = buildQueue([
+    task('manual', ['manuell', 'klaviyo upload · läuft', 'pre gen · fertig']),
+    task('done', ['manuell', 'klaviyo upload · fertig']),
+    task('auto', ['klaviyo upload · pausiert']),
+  ], [], DEFAULT_WORKFLOWS, { now });
+  assert.equal(rows.some(r => r.id === 'clickup:upload:manual'), false);
+  assert.equal(rows.find(r => r.id === 'clickup:newsletter:manual').status, 'completed');
+  assert.equal(rows.find(r => r.id === 'clickup:upload:done').status, 'completed');
+  assert.equal(rows.find(r => r.id === 'clickup:upload:auto').status, 'queued');
+});
+
 test('automatic repair pauses remain waiting in the queue for PreGen, upload and correction', () => {
   const paused = parseClaim(claimMessage('final', { paused: true }));
   const rows = buildQueue([task('a', ['pre gen · pausiert'])], [paused], DEFAULT_WORKFLOWS, { now });
