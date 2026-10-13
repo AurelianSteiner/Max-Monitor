@@ -293,7 +293,11 @@ export async function nativeCodeUnchanged(from, to, runner = run) {
       'scripts/newsletter-monitor-bridge.test.mjs','scripts/install-worker-observer.mjs',
       'scripts/install-worker-observer.test.mjs','scripts/install-monitor-hub.mjs',
       'scripts/install-monitor-hub.test.mjs','scripts/release.sh']);
+    // Node test files are not compiled into the native bundle. Treating a new
+    // regression test as Swift input forced old worker toolchains to rebuild
+    // an unchanged, already published app on every minute check.
     return changed.every(file => file.startsWith('team-server/') || scripts.has(file) ||
+      (file.startsWith('scripts/') && /\.(?:test|spec)\.[cm]?js$/.test(file)) ||
       file === 'README.md' || file === 'releases/worker-native.json' || file === 'appcast.xml' || file.startsWith('docs/'));
   } catch { return false; }
 }
