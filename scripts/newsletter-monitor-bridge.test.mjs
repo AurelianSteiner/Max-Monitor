@@ -648,3 +648,19 @@ test('paused active claims stay in the central queue for every workflow', () => 
     assert.equal(row.workerId, 'newsletter-mac-1', 'session ownership remains visible');
   }
 });
+
+test('portable pauses have central priority without a Mac binding and actual execution wins over the saved origin', () => {
+  for(const [event,jobId,workflow,tags] of [
+    ['ai_newsletter_claim','a','newsletter',['pre gen · läuft']],
+    ['ai_klaviyo_upload_claim','a-klaviyo','upload',['klaviyo upload · läuft']],
+    ['ai_translation_claim','a-uebersetzung-en','translation',['en translation']],
+    ['ai_korrektur_claim','korrektur-cu-a@1000-intern','correction',[]],
+  ]){
+    const old=claimMessage('running',{task_id:jobId,paused:true,portable:true});old.metadata.event_type=event;
+    const paused=buildQueue([task('a',tags)],[parseClaim(old)],DEFAULT_WORKFLOWS,{now}).find(row=>row.workflow===workflow);
+    assert.equal(paused.status,'queued');assert.equal(paused.workerId,undefined);assert.equal(paused.phase,'Pausiert · vorne in der zentralen Queue');
+    const fresh=claimMessage('running',{task_id:jobId,worker:'new-mac',run_id:'adopted'});fresh.metadata.event_type=event;fresh.ts=String(Number(old.ts)+1);
+    const running=buildQueue([task('a',tags)],[parseClaim(old),parseClaim(fresh)],DEFAULT_WORKFLOWS,{now}).find(row=>row.workflow===workflow);
+    assert.equal(running.status,'running');assert.equal(running.workerId,'new-mac');
+  }
+});
