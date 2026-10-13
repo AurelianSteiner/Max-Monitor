@@ -243,12 +243,15 @@ test('worker artifact download verifies content, preserves tampered caches, and 
   assert.equal(calls.filter(([cmd])=>cmd === 'gh').length,count);
 });
 
-test('only helper, relay and documentation changes can reuse a verified native app', async () => {
+test('helper, relay, Node tests and documentation changes can reuse a verified native app', async () => {
   const before = 'a'.repeat(40), after = 'b'.repeat(40);
   const diff = files => async () => files.join('\n');
   assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/setup-mac-monitor.mjs','team-server/fleet.js'])),true);
   assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/install-worker-observer.mjs',
     'scripts/install-worker-observer.test.mjs','scripts/install-monitor-hub.mjs'])),true);
+  assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/blocked-error-inventory.test.mjs',
+    'scripts/newsletter-monitor-sales.test.mjs','scripts/new-regression.spec.cjs'])),true);
+  assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/new-runtime.mjs'])),false);
   assert.equal(await nativeCodeUnchanged(before,after,diff(['Usage4Claude/Helpers/FleetReporter.swift'])),false);
   assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/build_without_xcode.sh'])),false);
   assert.equal(await nativeCodeUnchanged(undefined,after,diff([])),false);
