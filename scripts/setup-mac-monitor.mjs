@@ -109,7 +109,8 @@ export async function readWorker(options) {
   const hub = config.hub;
   if (!/^[A-Za-z0-9_.@:-]+$/.test(hub.ssh_host)) throw new Error('Ungültiger Hub-Host.');
   return { workerId: config.worker_id, hubHost: hub.ssh_host,
-    identityFile: homePath(hub.identity_file), knownHostsFile: hub.known_hosts_file };
+    identityFile: homePath(hub.identity_file), knownHostsFile: hub.known_hosts_file,
+    monitorDeviceIdFile: config.paths?.state_db ? path.join(path.dirname(config.paths.state_db), 'monitor-device-id') : undefined };
 }
 
 export function hubArguments(worker, options, check = false) {

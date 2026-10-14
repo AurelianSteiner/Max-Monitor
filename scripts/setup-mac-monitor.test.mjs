@@ -130,12 +130,14 @@ test('background monitor reads the exact registered worker profile instead of as
   const root = path.join(directory,'worker'), profile = path.join(directory,'profiles','machine.json');
   await fs.mkdir(path.join(root,'src'),{recursive:true}); await fs.mkdir(path.dirname(profile),{recursive:true});
   await fs.writeFile(path.join(root,'src/config.js'),"exports.loadConfig=file=>JSON.parse(require('fs').readFileSync(file,'utf8'));");
-  await fs.writeFile(profile,JSON.stringify({worker_id:'mac-real',hub:{ssh_host:'root@hub.example.test',identity_file:'~/.ssh/worker',known_hosts_file:'/safe/known_hosts'}}));
+  const database = path.join(directory, 'separate state', 'worker.sqlite');
+  await fs.writeFile(profile,JSON.stringify({worker_id:'mac-real',paths:{state_db:database},hub:{ssh_host:'root@hub.example.test',identity_file:'~/.ssh/worker',known_hosts_file:'/safe/known_hosts'}}));
   const previous = process.env.MAX_MONITOR_WORKER_CONFIG;
   try {
     process.env.MAX_MONITOR_WORKER_CONFIG=profile;
     const result=await readWorker({workerRoot:root,updateOnly:true});
     assert.equal(result.workerId,'mac-real'); assert.equal(result.hubHost,'root@hub.example.test');
+    assert.equal(result.monitorDeviceIdFile,path.join(path.dirname(database),'monitor-device-id'));
   } finally {
     if(previous === undefined) delete process.env.MAX_MONITOR_WORKER_CONFIG; else process.env.MAX_MONITOR_WORKER_CONFIG=previous;
   }
