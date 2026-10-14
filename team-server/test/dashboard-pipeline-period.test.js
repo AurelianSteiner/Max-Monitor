@@ -16,7 +16,7 @@ function dashboard(search = '') {
 }
 const { tasksInPeriod } = dashboard();
 const ids = (items, now) => Array.from(tasksInPeriod(items, 'today', Date.parse(now)), item => item.id);
-const task = (id, updatedAt, extra = {}) => ({ id, updatedAt, status: 'queued', ...extra });
+const task = (id, updatedAt, extra = {}) => ({ id, updatedAt, completedAt: updatedAt, status: 'completed', ...extra });
 
 test('pipeline starts with today while ordinary queue navigation retains the full queue', () => {
   assert.equal(dashboard().pipelinePeriod, 'today');
@@ -50,13 +50,22 @@ test('manual completion belongs to its completion day, even when the source time
     { status: 'completed', completedAt: '2026-10-14T08:00:00Z' }),
   task('finished-yesterday', '2026-10-14T09:00:00Z',
     { status: 'completed', completedAt: '2026-10-13T08:00:00Z' }),
-  task('automated-today', '2026-10-14T08:00:00Z', { status: 'completed' }),
-  task('reopened', '2026-10-14T10:00:00Z', { completedAt: '2026-10-12T08:00:00Z' })];
-  assert.deepEqual(ids(items, '2026-10-14T12:00:00Z'), ['finished-today', 'automated-today', 'reopened']);
+  task('undated-finished', '2026-10-14T08:00:00Z', { completedAt: undefined }),
+  task('reopened', '2026-10-14T10:00:00Z', { status: 'running', completedAt: '2026-10-12T08:00:00Z' })];
+  assert.deepEqual(ids(items, '2026-10-14T12:00:00Z'), ['finished-today', 'reopened']);
 });
 
 test('undated or invalid tasks are excluded from today and retained in overall statistics', () => {
   const items = [task('old', '2026-10-01T12:00:00Z'), task('missing'), task('invalid', 'invalid')];
   assert.deepEqual(ids(items, '2026-10-14T12:00:00Z'), []);
   assert.equal(tasksInPeriod(items, 'all', Date.parse('2026-10-14T12:00:00Z')), items);
+});
+
+
+test('open tasks from older days remain visible and source edits never move historic completions to today', () => {
+  const items = [task('old-open', '2026-10-01T12:00:00Z', {status:'queued'}),
+    task('old-finished-updated-today','2026-10-14T09:00:00Z',{completedAt:'2026-10-12T12:00:00Z'}),
+    task('unknown-finish-updated-today','2026-10-14T09:00:00Z',{completedAt:undefined}),
+    task('verified-today','2026-10-10T09:00:00Z',{completedAt:'2026-10-14T12:00:00Z'})];
+  assert.deepEqual(ids(items,'2026-10-14T12:30:00Z'),['old-open','verified-today']);
 });

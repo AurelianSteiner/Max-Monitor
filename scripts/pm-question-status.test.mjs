@@ -19,8 +19,8 @@ test('all production kinds show their actual unanswered questions, including upl
     ['upload','klaviyo'], ['translation','translation','clickup:translation-en:t1','EN']]) {
     const current = row(workflow, id ? { id } : {});
     applyPmQuestions([current], { sets: [set(stage, { language })] });
-    assert.equal(current.status, 'clarification');
-    assert.equal(current.phase, 'Klärung nötig');
+    assert.equal(current.status, 'queued');
+    assert.equal(current.phase, 'Wartet · PM-Rückfrage');
     assert.equal(current.blockedReason, 'Q3: Gutscheincode?');
     assert.equal(current.attemptId, 'run1');
   }
@@ -53,7 +53,7 @@ test('accepted current answers show queued continuation while capacity is occupi
 
 test('a retired historical question set cannot hide the active replacement on the same source run', () => {
   const current=row();applyPmQuestions([current],{sets:[set('klaviyo',{id:'retired',questions:[{id:'Q3',status:'replaced'}]}),set()]});
-  assert.equal(current.status,'clarification');assert.equal(current.blockedReason,'Q3: Gutscheincode?');
+  assert.equal(current.status,'queued');assert.equal(current.blockedReason,'Q3: Gutscheincode?');
 });
 
 test('the monitor reads the durable journal without modifying it and uses the authoritative job state', t => {

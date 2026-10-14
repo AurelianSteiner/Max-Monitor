@@ -71,7 +71,7 @@
     running: "Läuft",
     blocked: "Blockiert",
     clarification: "Klärung nötig",
-    completed: "Fertig",
+    completed: "Erledigt",
     failed: "Fehler",
   };
   const workflowNames = {
@@ -93,14 +93,15 @@
     ["running", "Läuft", "running"],
     ["clarification", "Klärung nötig", "clarification"],
     ["blocked", "Blockiert", "blocked"],
-    ["completed", "Fertig", "completed"],
+    ["completed", "Erledigt", "completed"],
     ["failed", "Fehler", "failed"],
   ];
   const timeFormat = new Intl.DateTimeFormat("de-DE", {
     dateStyle: "short",
     timeStyle: "short",
+    timeZone: "Europe/Berlin",
   });
-  const clockFormat = new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" });
+  const clockFormat = new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" });
   const numberFormat = new Intl.NumberFormat("de-DE");
   const dayFormat = new Intl.DateTimeFormat("de-DE", { dateStyle: "short", timeZone: "Europe/Berlin" });
   function setSync(text, state) {
@@ -124,9 +125,7 @@
     if (period !== "today") return items;
     const today = productionDay(now);
     return items.filter((task) => {
-      const time = task.status === "completed" && task.completedAt
-        ? task.completedAt : task.updatedAt;
-      return productionDay(time) === today;
+      return task.status !== "completed" || productionDay(task.completedAt) === today;
     });
   }
   function node(tag, className, value) {
@@ -161,7 +160,24 @@
     );
   }
   function workflow(value) {
-    return workflowNames[value] || value || "Workflow";
+    const key = typeof value === "object" ? workflowKey(value) : value;
+    const [base, kind] = String(key || "").split(":");
+    const label = workflowNames[base] || base || "Workflow";
+    return kind ? `${label} · ${{ newsletter: "Newsletter", flow: "Flows", popup: "Pop-ups", unknown: "Art unbekannt" }[kind] || kind}` : ["newsletter", "upload", "translation"].includes(base) ? `${label} · Alle Auftragsarten` : label;
+  }
+  function workflowKey(task) {
+    return ["newsletter", "upload", "translation"].includes(task.workflow)
+      ? `${task.workflow}:${task.contentKind || "unknown"}` : task.workflow;
+  }
+  function matchesWorkflow(task, filter) {
+    return !filter || task.workflow === filter || workflowKey(task) === filter;
+  }
+  function completionLabel(task) {
+    if (task.status !== "completed") return statusNames[stageOf(task)] || task.status;
+    if (task.completion === "manual") return "Manuell erledigt";
+    if (task.completedAt) return "Fertig";
+    if (task.workflow === "sales") return "Erledigt laut Sales-Auftrag";
+    return task.completionSource === "review" ? "An Review übergeben" : "Erledigt laut ClickUp";
   }
   function safeLink(value) {
     try {
@@ -693,7 +709,7 @@
     $("worker-filter").hidden = !workerFilter;
     $("worker-filter-label").textContent = `Aufgaben für ${workerFilter}`;
     $("queue-period-filter").hidden = queuePeriod !== "today";
-    $("queue-period-label").textContent = `Heute · ${productionDay(Date.now())}`;
+    $("queue-period-label").textContent = `Offen + heute abgeschlossen · ${productionDay(Date.now())}`;
     document.querySelectorAll("[data-pipeline-period]").forEach((button) => {
       const selected = button.dataset.pipelinePeriod === pipelinePeriod;
       button.classList.toggle("selected", selected);
@@ -710,7 +726,7 @@
     $("workflow").replaceChildren(node("option", "", "Alle Workflows"));
     $("workflow").firstChild.value = "";
     const workflowValues = [
-      ...new Set(items.map((x) => x.workflow).filter(Boolean)),
+      ...new Set(items.map(workflowKey).filter(Boolean)),
     ].sort();
     if (selectedWorkflow && !workflowValues.includes(selectedWorkflow))
       workflowValues.push(selectedWorkflow);
@@ -742,21 +758,23 @@
     items = tasksInPeriod(items, pipelinePeriod);
     const groups = new Map();
     for (const task of items) {
-      const name = workflow(task.workflow);
-      if (!groups.has(name)) groups.set(name, { value: task.workflow || "", tasks: [] });
+      const name = workflow(task);
+      if (!groups.has(name)) groups.set(name, { value: workflowKey(task) || "", tasks: [] });
       groups.get(name).tasks.push(task);
     }
     const flowOrder = ["Pre-Gen", "Klaviyo-Upload", "Übersetzung"];
-    const order = (name) => (flowOrder.includes(name) ? flowOrder.indexOf(name) : flowOrder.length);
+    const order = (name) => { const base = name.split(" · ")[0]; return flowOrder.includes(base) ? flowOrder.indexOf(base) : flowOrder.length; };
     const flows = [...groups.entries()].sort(([a], [b]) => order(a) - order(b) || a.localeCompare(b));
     const open = items.filter(isOpen).length;
     const done = items.length - open;
+    const unknown = items.filter(task => task.status === "completed" && !task.completedAt).length;
+    const manual = items.filter(task => task.completion === "manual").length;
     $("pipeline-summary").textContent = snapshot
-      ? `${pipelinePeriod === "today" ? productionDay(Date.now()) : "Gesamt"} · ${numberFormat.format(open)} offen · ${numberFormat.format(done)} fertig`
+      ? `${pipelinePeriod === "today" ? productionDay(Date.now()) : "Gesamt"} · ${numberFormat.format(open)} offen · ${numberFormat.format(done - unknown - manual)} fertig${manual ? ` · ${manual} manuell erledigt` : ""}${unknown ? ` · ${unknown} ohne Abschlussdatum` : ""}`
       : "—";
     $("pipeline-summary").title = pipelinePeriod === "today"
-      ? "Aufgaben mit letzter Änderung heute · Tagesgrenze: Europe/Berlin. Bei manuell abgehakten Aufgaben zählt der Abschlusszeitpunkt."
-      : "Alle Aufgaben der Queue";
+      ? "Alle offenen Aufgaben und belegte Abschlüsse von heute · Tagesgrenze: Europe/Berlin. ClickUp-Änderungen verschieben keinen Abschluss."
+      : "Alle Aufgaben. Fertig zählt belegte Abschlüsse; manuell erledigte Aufgaben und fehlende Abschlussdaten stehen gesondert.";
     if (!flows.length) {
       $("pipeline").replaceChildren(node("div", "empty-state", snapshot?.queue?.source?.lastSuccessAt
         ? pipelinePeriod === "today" && tasks().length
@@ -769,7 +787,7 @@
       const counts = new Map(stages.map(([key]) => [key, 0]));
       for (const task of group.tasks) counts.set(stageOf(task), (counts.get(stageOf(task)) || 0) + 1);
       const shown = stages.filter(([key]) => (key !== "failed" || counts.get("failed") > 0)
-        && (key !== "clarification" || ["newsletter", "correction"].includes(group.value) || counts.get(key) > 0));
+        && (key !== "clarification" || ["newsletter", "correction"].includes(group.value.split(":")[0]) || counts.get(key) > 0));
       const max = Math.max(1, ...shown.map(([key]) => counts.get(key)));
       const flow = node("div", "flow");
       const head = node("div", "flow-head");
@@ -840,7 +858,7 @@
         : entry.reasons[0];
       const detail = node("small", "", reason);
       detail.title = entry.reasons.join(" · ");
-      button.append(dot, label, node("span", "kind", task ? workflow(entity.workflow) : "Mac"), detail);
+      button.append(dot, label, node("span", "kind", task ? workflow(entity) : "Mac"), detail);
       button.setAttribute("aria-label", `${title}: ${entry.reasons.join(", ")}`);
       button.addEventListener("click", () => (task ? taskDetails(entity) : machineDetails(entity)));
       item.append(button);
@@ -1148,7 +1166,7 @@
         )
           return false;
         if (workerFilter && task.workerId !== workerFilter) return false;
-        if (workflowFilter && task.workflow !== workflowFilter) return false;
+        if (!matchesWorkflow(task, workflowFilter)) return false;
         return (
           !needle ||
           [task.title, task.id, task.company, task.workerId, workerName(task.workerId, ""), workerNames.get(task.workerId), task.url, task.blockedReason, task.phase, task.step, ...(task.tags || [])]
@@ -1306,14 +1324,16 @@
         titleCell.append(company);
       }
       titleCell.append(node("span", "task-id", task.id));
+      if (task.status === "completed") titleCell.append(node("span", "task-completion-time",
+        task.completedAt ? `Abgeschlossen ${exact(task.completedAt)}` : "Abschlussdatum unbekannt"));
       const category = node("td");
-      const workflowLabel = node("span", "workflow-name", workflow(task.workflow));
+      const workflowLabel = node("span", "workflow-name", workflow(task));
       workflowLabel.dataset.workflow = task.workflow || "";
       workflowLabel.title = workflowLabel.textContent;
       category.append(workflowLabel);
       const state = node("td");
       const status = badge(stageOf(task));
-      if (task.completion === "manual") status.lastChild.textContent = "Erledigt";
+      status.lastChild.textContent = completionLabel(task);
       state.append(status);
       const assigned = node("td");
       const assignment = node("div", "progress");
@@ -1335,9 +1355,10 @@
         assigned.append(phase);
       }
       const updated = node("td");
-      const time = node("time", "row-time", relative(task.updatedAt));
-      time.title = exact(task.updatedAt);
-      if (timestamp(task.updatedAt)) time.dateTime = task.updatedAt;
+      const stamp = task.status === "completed" ? task.completedAt : task.updatedAt;
+      const time = node("time", "row-time", stamp ? relative(stamp) : "Datum unbekannt");
+      time.title = `${task.status === "completed" ? "Abschluss" : "Aktualisiert"}: ${exact(stamp)}`;
+      if (timestamp(stamp)) time.dateTime = stamp;
       updated.append(time);
       const actions = node("td");
       const actionGroup = node("div", "queue-actions");
@@ -1522,8 +1543,8 @@
     const salesStatuses = { reserved: "Reserviert", running: "Läuft", delivery: "PDF-Upload", blocked: "Blockiert", aborted: "Abgebrochen", done: "Fertig" };
     grid.append(
       detailField("Unternehmen", task.company || "Nicht hinterlegt"),
-      detailField("Workflow", workflow(task.workflow)),
-      detailField("Status", task.completion === "manual" ? "Manuell erledigt" : statusNames[stageOf(task)] || task.status),
+      detailField("Workflow", workflow(task)),
+      detailField("Status", completionLabel(task)),
       detailField("Worker", workerName(task.workerId, "Noch nicht zugewiesen")),
       detailField(
         "Fortschritt",
@@ -1572,7 +1593,8 @@
       link.rel = "noopener noreferrer";
       children.push(link);
     }
-    if (task.completion === "manual") grid.append(detailField("Abgehakt", exact(task.completedAt)));
+    if (task.status === "completed") grid.append(detailField(task.completion === "manual" ? "Manuell abgehakt" : "Abgeschlossen", exact(task.completedAt)),
+      detailField("Abschlussbeleg", task.completedAt ? task.completion === "manual" ? "Manuell im Monitor bestätigt" : "Erfolgreicher Auftragsabschluss" : "Kein belegtes Abschlussdatum; zählt nicht als heute fertig", true));
     if (canComplete(task)) children.push(completionButton(task, true));
     if (!task.previews?.length) {
       openDetail(task.title || task.id, children);
@@ -1809,7 +1831,7 @@
           type: task ? "task" : "machine",
           title: task ? entity.title || entity.id : workerName(entity.workerId, entity.name),
           id: task ? entity.id : entity.workerId || entity.deviceId,
-          kind: task ? workflow(entity.workflow) : "Mac",
+          kind: task ? workflow(entity) : "Mac",
           workerId: entity.workerId,
           at: task ? entity.updatedAt : entity.receivedAt || entity.lastSeenAt,
           status: task ? entity.status : machineDisplayStatus(entity),

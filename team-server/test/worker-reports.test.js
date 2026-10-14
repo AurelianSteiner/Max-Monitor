@@ -15,7 +15,7 @@ test('automatic pauses keep their owner and pause reason through idle telemetry 
     ]});
     store.workerReport('TEAM1234',report());
     let row=store.snapshot('TEAM1234').queue.tasks[0];
-    assert.equal(row.status,'queued');assert.equal(row.phase,'Pausiert · automatische Fortsetzung');assert.equal(row.workerId,'mac-1');
+    assert.equal(row.status,'paused');assert.equal(row.phase,'Pausiert · automatische Fortsetzung');assert.equal(row.workerId,'mac-1');
     store.workerReport('TEAM1234',{...report(),activity:{state:'busy',acceptingTasks:true,runs:[{id:row.id,runId:'next',title:'Mail',workflow:'newsletter',status:'running'}]}});
     row=store.snapshot('TEAM1234').queue.tasks[0];
     assert.equal(row.status,'running');assert.equal(row.phase,'In Bearbeitung');
@@ -110,7 +110,7 @@ test('parked queue work keeps its session owner while fresh worker telemetry cou
     store.workerReport('TEAM1234', { ...report(), activity: { state: 'busy', acceptingTasks: true,
       runs: [{ id: 'clickup:newsletter:b', runId: 'replacement', title: 'Replacement', workflow: 'newsletter', status: 'running' }] } });
     const paused = store.snapshot('TEAM1234').queue.tasks.find(row => row.id === 'clickup:newsletter:a');
-    assert.deepEqual([paused.status, paused.phase, paused.workerId, paused.attemptId], ['queued', phase, 'mac-1', 'same']);
+    assert.deepEqual([paused.status, paused.phase, paused.workerId, paused.attemptId], ['paused', phase, 'mac-1', 'same']);
     assert.equal(store.workerReportStatus('TEAM1234', 'mac-1').activity.runs.length, 1);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -77,7 +77,7 @@
           <header class="panel-head pipeline-head">
             <h2 id="pipeline-heading">Pipeline</h2>
             <div id="pipeline-period" class="status-tabs pipeline-period" role="group" aria-label="Zeitraum der Pipeline">
-              <button type="button" class="tab selected" data-pipeline-period="today" aria-pressed="true" title="Aufgaben mit letzter Änderung heute · Europe/Berlin">Heute</button>
+              <button type="button" class="tab selected" data-pipeline-period="today" aria-pressed="true" title="Alle offenen Aufgaben und belegte Abschlüsse von heute · Europe/Berlin">Offen + heute fertig</button>
               <button type="button" class="tab" data-pipeline-period="all" aria-pressed="false">Gesamt</button>
             </div>
             <span id="pipeline-summary" class="panel-meta" aria-live="polite">—</span>
@@ -154,7 +154,7 @@
             ><button class="tab" data-status="paused" aria-pressed="false">
               Pausiert <span id="paused-count">0</span></button
             ><button class="tab" data-status="completed" aria-pressed="false">
-              Fertig <span id="completed-count">0</span></button
+              Erledigt <span id="completed-count">0</span></button
             ><button class="tab" data-status="all" aria-pressed="false">
               Alle <span id="all-count">0</span></button>
           </div>
@@ -192,7 +192,7 @@
                 <th scope="col">Workflow</th>
                 <th scope="col">Status</th>
                 <th scope="col">Mac / Fortschritt</th>
-                <th scope="col">Aktualisiert</th>
+                <th scope="col">Abschluss / Änderung</th>
                 <th scope="col" class="queue-links-heading">Aktionen</th>
               </tr>
             </thead>

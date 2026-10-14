@@ -1,3 +1,4 @@
+// Matches deployed policy: unanswered PM work waits centrally; its reason stays visible.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
@@ -29,7 +30,7 @@ test('PM questions and missing access are clarification; false classification an
   ];
   store.updateQueue(team, queue(cases.map(value => task(value))));
   const rows = store.snapshot(team).queue.tasks;
-  assert.deepEqual(rows.map(row => row.status), ['clarification', 'clarification', 'clarification', 'blocked', 'blocked', 'blocked', 'blocked', 'clarification', 'clarification']);
+  assert.deepEqual(rows.map(row => row.status), ['queued', 'queued', 'queued', 'blocked', 'blocked', 'blocked', 'blocked', 'queued', 'queued']);
   assert.equal(rows.length, cases.length);
   assert.ok(rows.every(row => !row.completion));
 });
@@ -41,7 +42,7 @@ test('journal clarification is superseded only by a fresh technical failure of t
   const error={...current,id:'slack-error:CERROR:1791921600.123456',status:'blocked',phase:'Blockiert',
     blockedReason:'HTTP 429 beim Upload',errorUrl:'https://app.slack.com/archives/CERROR/p1791921600123456'};
   for(const older of [{...error,updatedAt:new Date(now-20000).toISOString()},{...error,attemptId:'old'}]){
-    store.updateQueue(team,{...queue([current]),blockedErrors:[older]});assert.equal(store.snapshot(team).queue.tasks[0].status,'clarification');
+    store.updateQueue(team,{...queue([current]),blockedErrors:[older]});assert.equal(store.snapshot(team).queue.tasks[0].status,'queued');
   }
   store.updateQueue(team,{...queue([current]),blockedErrors:[{...error,updatedAt:new Date(now).toISOString()}]});
   assert.equal(store.snapshot(team).queue.tasks[0].status,'blocked');
@@ -55,16 +56,16 @@ test('reviewed clarification survives sync and restart, keeps source tags, and e
   const body = { taskId: current.id, taskVersion: current.taskVersion, reason: 'Angebot und Produktlink beim PM offen' };
   let notifications = 0;
   store.subscribe(team, () => notifications++);
-  assert.equal(store.clarifyTask(team, { member: { id: 'admin' } }, body).status, 'clarification');
+  assert.equal(store.clarifyTask(team, { member: { id: 'admin' } }, body).status, 'queued');
   assert.equal(notifications, 1);
   store.updateQueue(team, queue([original]));
-  assert.equal(createFleetStore(directory, () => now).snapshot(team).queue.tasks[0].status, 'clarification');
+  assert.equal(createFleetStore(directory, () => now).snapshot(team).queue.tasks[0].status, 'queued');
   const saved = JSON.parse(fs.readFileSync(path.join(directory, team, 'fleet.json')));
   assert.equal(saved.queue.tasks[0].status, 'blocked');
   assert.deepEqual(saved.queue.tasks[0].tags, ['pre gen · blockiert']);
   assert.equal(saved.queue.clarifications[0].clarifiedBy, 'admin');
   store.updateQueue(team, { source: { name: 'ClickUp', error: 'Unavailable' } });
-  assert.equal(store.snapshot(team).queue.tasks[0].status, 'clarification');
+  assert.equal(store.snapshot(team).queue.tasks[0].status, 'queued');
   store.updateQueue(team, queue([task({ attemptId: 'new' })]));
   assert.equal(store.snapshot(team).queue.tasks[0].status, 'blocked');
   assert.throws(() => store.clarifyTask(team, {}, body), error => error.status === 409);
@@ -102,7 +103,7 @@ test('removing the Slack diagnostic copy does not reopen a recorded human clarif
   const current = store.snapshot(team).queue.tasks[0];
   store.clarifyTask(team, {}, { taskId: current.id, taskVersion: current.taskVersion, reason: 'Gestaltungsfreigabe offen' });
   store.updateQueue(team, { ...queue([original]), blockedErrors: [] });
-  assert.equal(store.snapshot(team).queue.tasks[0].status, 'clarification');
+  assert.equal(store.snapshot(team).queue.tasks[0].status, 'queued');
   assert.equal(store.snapshot(team).queue.tasks[0].blockedReason, 'Gestaltungsfreigabe offen');
   assert.equal(store.snapshot(team).queue.errors.length, 0);
 });
@@ -129,6 +130,6 @@ test('clarification HTTP endpoint is authenticated and restricted to admins', as
   assert.equal((await request('/fleet/tasks/clarification', 'POST', body, null)).status, 401);
   assert.equal((await request('/fleet/tasks/clarification', 'POST', body, viewer.token)).status, 403);
   assert.equal((await request('/fleet/tasks/clarification', 'POST', { ...body, taskVersion: 'stale' })).status, 409);
-  assert.equal((await request('/fleet/tasks/clarification', 'POST', body)).body.task.status, 'clarification');
-  assert.equal((await request('/fleet')).body.queue.tasks[0].status, 'clarification');
+  assert.equal((await request('/fleet/tasks/clarification', 'POST', body)).body.task.status, 'queued');
+  assert.equal((await request('/fleet')).body.queue.tasks[0].status, 'queued');
 });

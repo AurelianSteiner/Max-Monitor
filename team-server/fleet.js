@@ -227,6 +227,9 @@ function validateQueue(body) {
       id,
       title: string(raw.title, "task.title", 300),
       workflow: string(raw.workflow, "task.workflow", 80),
+      contentKind: ["newsletter", "flow", "popup"].includes(raw.contentKind) ? raw.contentKind : undefined,
+      completedAt: timestamp(raw.completedAt, "task.completedAt", true),
+      completionSource: ["slack", "clickup", "review", "sales"].includes(raw.completionSource) ? raw.completionSource : undefined,
       status,
       tags: [...new Set(tags.map((tag) => string(tag, "task.tag", 80)))],
       url,
@@ -387,7 +390,7 @@ function publicTask(task, completions = []) {
   const version = taskVersion(task);
   const completion = completions.find((entry) => entry.taskId === task.id && entry.taskVersion === version);
   return completion
-    ? { ...task, taskVersion: version, status: "completed", phase: "Manuell erledigt", completion: "manual", completedAt: completion.completedAt }
+    ? { ...task, taskVersion: version, status: "completed", phase: "Manuell erledigt", completion: "manual", completionSource: "manual", completedAt: completion.completedAt }
     : { ...task, taskVersion: version };
 }
 
@@ -404,6 +407,7 @@ function currentTask(task) {
     "designrevisionextern", "klaviyoupload", "golive",
   ].includes(normalize(task.sourceStatus))) {
     return { ...task, status: "completed", phase: "Pre-Gen abgeschlossen · " + task.sourceStatus,
+      completionSource: task.completedAt ? task.completionSource : "review",
       workerId: null, progress: 100, blockedReason: undefined, errorUrl: undefined };
   }
   const prefix = { newsletter: "pregen", upload: "klaviyoupload" }[task.workflow];

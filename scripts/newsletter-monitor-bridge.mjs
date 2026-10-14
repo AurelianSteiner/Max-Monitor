@@ -146,7 +146,8 @@ export function parseClaim(message) {
   const awaitingPm = kind === 'correction' && value.state === 'final' && reactions.includes('question');
   return { taskId: (correction?.[1] ?? translation?.[1] ?? upload?.[1] ?? jobId).replace(/@\d+$/, ''), jobId,
     runId: String(value.run_id), workerId: String(value.worker),
-    state: value.state, heartbeat, ts: String(message.ts),
+    state: value.state, heartbeat, completionTimestampKnown: Number.isFinite(Number(value.heartbeat)) && Number(value.heartbeat) > 0,
+    ts: String(message.ts),
     ...(value.paused === true ? { paused: true, ...(value.portable === true ? { portable: true } : {}) } : {}),
     workflow: typeof value.workflow === 'string' ? value.workflow : translation ? `translation-${translation[2]}` : kind,
     outcome: completed ? 'completed' : value.paused === true && value.state === 'final' ? 'queued' : reactions.includes('x') ? 'blocked' : reactions.includes('white_check_mark') ? 'completed' : undefined,
@@ -290,6 +291,28 @@ function taskFigmaLink(task) {
   return undefined;
 }
 
+export function contentKind(task, claims = []) {
+  const name = `${task.name || ''} ${task.list?.name || ''}`;
+  if (/pop[ -]?up/i.test(name)) return 'popup';
+  const flow = (task.custom_fields || []).some(field => /flow.*type/i.test(field.name || '')
+    && field.value !== null && field.value !== undefined && field.value !== '');
+  if (flow || /\bflows?\b/i.test(task.name || '')
+    || (/\bflows?\b/i.test(task.list?.name || '') && !/newsletter/i.test(task.list?.name || '')))
+    return 'flow';
+  if (claims.some(claim => claim.channelId === 'C0C8FQMKW3B' || claim.channelId === 'C0C8FQNUZKK')) return 'flow';
+  if (claims.some(claim => claim.channelId === 'C0C8DMEKJQJ')) return 'popup';
+  return 'newsletter';
+}
+
+export function completionEvidence(claims) {
+  const latest = claims.filter(claim => claim.state !== 'withdrawn')
+    .sort((a, b) => Number(b.ts) - Number(a.ts))[0];
+  if (!latest || latest.completionTimestampKnown === false || !['final', 'released'].includes(latest.state) || latest.outcome !== 'completed') return {};
+  const time = Number(latest.heartbeat) * 1000;
+  if (!Number.isFinite(time) || time <= 0) return {};
+  return { completedAt: new Date(time).toISOString(), completionSource: 'slack' };
+}
+
 export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, figmaBoardUrl } = {}) {
   const updatedAt = new Date(now).toISOString();
   const rows = [];
@@ -328,7 +351,11 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       } catch { /* Use the canonical ClickUp task link. */ }
       const name = displayText(task.name, 300, task.id);
       const title = workflow.titleSuffix ? `${displayText(name, 300 - workflow.titleSuffix.length - 3)} · ${workflow.titleSuffix}` : name;
+      const evidence = completionEvidence(matches);
       rows.push({ id: `clickup:${workflow.id}:${task.id}`, title, url, workflow: workflow.queueWorkflow ?? workflow.id, status,
+        contentKind: contentKind(task, matches),
+        ...evidence,
+        completionSource: evidence.completionSource || (status === 'completed' ? 'clickup' : undefined),
         sourceStatus: displayText(typeof task.status === 'string' ? task.status : task.status?.status, 120),
         company: task.folder?.hidden ? undefined : displayText(task.folder?.name, 200),
         figmaUrl: taskFigmaLink(task) || ((workflow.claimWorkflow ?? workflow.id) === 'newsletter' ? figmaLink(figmaBoardUrl) : undefined),
@@ -368,6 +395,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       url: claim.url || (claim.taskId !== claim.jobId ? `https://app.clickup.com/t/${encodeURIComponent(claim.taskId)}` : undefined), workflow: 'correction',
       company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId,
       phase, progress: status === 'completed' ? 100 : undefined, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
+      ...completionEvidence([claim]),
       run: { id: claim.runId, ts: claim.ts, taskId: claim.taskId, channelId: claim.channelId } });
   }
   return rows.sort((a, b) => a.id.localeCompare(b.id));
@@ -620,6 +648,8 @@ export async function readLocalSales(directory, now = Date.now()) {
       const paused = ['reserved', 'running', 'delivery'].includes(job.status) && job.monitor?.paused === true;
       const status = Object.hasOwn(statuses, job.status) ? paused ? 'queued' : statuses[job.status] : undefined;
       const stamp = job.observed_at || job.updated_at || job.created_at;
+      const finished = job.completed_at || job.finished_at || job.done_at || job.delivered_at;
+      const finishedTime = typeof finished === 'number' ? finished : Date.parse(finished);
       const seen = typeof stamp === 'number' ? stamp : Date.parse(stamp);
       if (!status || !/^[a-z0-9][a-z0-9._-]{0,79}$/i.test(job.worker)
         || !Number.isFinite(seen) || seen > now + 30000) throw new Error('Ungültiger Jobstatus');
@@ -631,7 +661,7 @@ export async function readLocalSales(directory, now = Date.now()) {
       rows.push({ id: `sales:${name}`, title: `Sales · ${url.hostname}`, url: url.href, workflow: 'sales', status,
         sourceStatus: job.status, workerId: job.worker, attemptId: displayText(job.owner, 200),
         phase: paused ? 'Pausiert · wartet außerhalb der Worker-Plätze' : awaitingWorker ? 'Worker-Meldung ausstehend' : phases[job.status],
-        ...(blockedReason ? { blockedReason } : {}), ...(status === 'completed' ? { progress: 100 } : {}),
+        ...(blockedReason ? { blockedReason } : {}), ...(status === 'completed' ? { progress: 100, ...(Number.isFinite(finishedTime) ? { completedAt: new Date(finishedTime).toISOString(), completionSource: 'sales' } : {}) } : {}),
         updatedAt: new Date(seen).toISOString() });
     } catch {
       throw new Error(`Sales-Job ${name} konnte nicht vollständig gelesen werden; bisheriger Queue-Stand bleibt erhalten.`);

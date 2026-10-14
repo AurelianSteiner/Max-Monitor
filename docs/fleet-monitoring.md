@@ -90,6 +90,24 @@ ein Figma-Board-URL-Feld der Aufgabe. Ohne Aufgabenlink öffnet Pre-Gen das Test
 aus `PRE_GEN_FILE` der eingerichteten Newsletter-Quelle. Für Uploads ohne Figma-Link
 wird kein Board geraten. Alte Aufgaben ohne diese optionalen Angaben bleiben nutzbar.
 
+## Tageszahlen und Abschlussbelege
+
+Die Pipeline zeigt unter **Offen + heute fertig** sämtliche aktuell offenen
+Aufträge und ausschließlich belegte Abschlüsse des aktuellen Berliner Kalendertags.
+Ein Klick auf einen Balken verwendet denselben Zeitraum und dieselbe Auftragsart
+in der Queue. **Gesamt** enthält zusätzlich die historischen erledigten Aufträge.
+Newsletter, Flows und Pop-ups werden je Workflow getrennt angezeigt und gefiltert.
+
+Automatische Abschlüsse verwenden den gespeicherten erfolgreichen Slack-Auftragsabschluss;
+manuell abgehakte Aufgaben ihren bestätigten Monitor-Abschluss. Spätere Änderungen
+in ClickUp verschieben keinen Abschluss in einen anderen Tag. Ein neuer laufender
+oder fehlgeschlagener Versuch übernimmt keinen Erfolgsbeleg seines Vorgängers.
+Review-Übergaben und Fertig-Tags ohne Erfolgsbeleg bleiben mit ihrer Herkunft und
+**unbekanntem Abschlussdatum** sichtbar, zählen aber nicht als heute fertig.
+Übersicht, Queue, Aufgaben-Details und mobile Zeilen verwenden diese Angaben
+übereinstimmend. Die Gesamtzusammenfassung nennt manuelle Erledigungen und fehlende
+Abschlussdaten gesondert.
+
 ## Live-Abgleich
 
 Die zentrale Newsletter-Brücke liest ClickUp-Aufgaben und die tatsächlichen

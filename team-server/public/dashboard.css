@@ -406,6 +406,7 @@ button.task-title { max-width: 100%; padding: 0; border: 0; background: none; fo
 .task-drafts { color: var(--ink-2); font-weight: 500; }
 .task-company { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-id { display: none; }
+.task-completion-time { display: none; font-size: 11px; color: var(--muted); }
 .workflow-name { display: inline-block; max-width: 100%; padding: 2px 7px; border-radius: 5px; background: var(--sunken); color: var(--ink-2); font-size: 11px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workflow-name[data-workflow="newsletter"],
 .workflow-name[data-workflow="pregen"],
@@ -543,6 +544,9 @@ dialog.wide { max-width: 1060px; }
   .search input { width: 200px; }
 }
 @media (max-width: 760px) {
+  .panel-head.pipeline-head { grid-template-columns: minmax(0, 1fr); }
+  .pipeline-period { justify-self: start; max-width: 100%; }
+  .task-completion-time { display: block; margin-top: 4px; }
   .topbar { padding: 10px 16px; }
   .topbar-main { flex-wrap: wrap; gap: 8px 12px; padding: 0; }
   .skill-versions { padding: 10px 0 0; gap: 6px 12px; }
