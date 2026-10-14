@@ -210,7 +210,7 @@ main:focus { outline: none; }
 }
 .bar-tip {
   position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%);
-  padding: 5px 8px; border-radius: 6px; white-space: nowrap; pointer-events: none;
+  padding: 5px 8px; border-radius: 6px; white-space: normal; width: max-content; max-width: 140px; pointer-events: none;
   background: var(--primary); color: var(--primary-ink); font-size: 11px; font-weight: 500;
   opacity: 0; transition: opacity 120ms; z-index: 2;
 }

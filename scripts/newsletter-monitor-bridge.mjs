@@ -313,6 +313,20 @@ export function completionEvidence(claims) {
   return { completedAt: new Date(time).toISOString(), completionSource: 'slack' };
 }
 
+export function retainCompletionDates(rows, previousTasks = [], claims = []) {
+  const previousById = new Map(previousTasks.map(task => [task.id, task]));
+  for (const row of rows) {
+    const previous = previousById.get(row.id);
+    if (row.status !== 'completed' || row.completedAt || previous?.status !== 'completed'
+      || previous.completionSource !== 'slack' || !previous.completedAt) continue;
+    const workflow = row.workflow === 'upload' ? 'klaviyo' : row.workflow === 'translation' ? row.id.split(':')[1] : row.workflow;
+    const taskId = row.id.split(':').at(-1);
+    if (!claims.some(claim => claim.taskId === taskId && claim.workflow === workflow))
+      Object.assign(row, { completedAt: previous.completedAt, completionSource: previous.completionSource });
+  }
+  return rows;
+}
+
 export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, figmaBoardUrl } = {}) {
   const updatedAt = new Date(now).toISOString();
   const rows = [];
@@ -711,7 +725,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
       const claims = [];
       // Sequential reads share Slack's token/rate limit with the actual workers.
       for (const channel of [...new Set([config.slack.channel_id, ...(config.monitor_channels?.claims || [])])])
-        claims.push(...await claimReader(hubFetch, channel, { now, onMessage, lookbackDays: 7 }));
+        claims.push(...await claimReader(hubFetch, channel, { now, onMessage, lookbackDays: Number(config.claims?.lookback_days) || 60 }));
       return claims;
     })(),
     Promise.resolve().then(() => fleetReader(config.hub, fleetDirectory ? { fleetDirectory } : {})),
@@ -734,6 +748,9 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const fleetDetail = workerResult.status === 'rejected'
     ? 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.' : undefined;
   const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl });
+  // Keep a confirmed date after its source thread leaves the history window.
+  // Any currently visible attempt prevents borrowing an older success.
+  retainCompletionDates(queue, previousTasks, claims);
   applyPmQuestions(queue, questionResult.value);
   await addRunDetails(queue, { hubFetch, channelId: config.slack.channel_id, previews, previousTasks, now });
   queue.push(...salesResult.value);

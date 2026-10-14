@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildQueue,DEFAULT_WORKFLOWS,completionEvidence,contentKind} from './newsletter-monitor-bridge.mjs';
+import {buildQueue,DEFAULT_WORKFLOWS,completionEvidence,contentKind,retainCompletionDates} from './newsletter-monitor-bridge.mjs';
 const now=Date.parse('2026-10-14T17:00:00Z');
 const task={id:'abc',name:'Mail',date_updated:String(now),tags:['pre gen · fertig'],status:{status:'approval intern'}};
 const claim={taskId:'abc',workflow:'newsletter',state:'final',outcome:'completed',heartbeat:Date.parse('2026-10-12T12:00:00Z')/1000,ts:'1791800000.001',runId:'first',workerId:'mac-1'};
@@ -26,4 +26,13 @@ test('content types use briefing fields, including the zero-valued flow dropdown
  assert.equal(contentKind({...task,custom_fields:[{name:'Flow Type',value:0}]}),'flow');
  assert.equal(contentKind({...task,name:'Anmelde Pop-up'}),'popup');
  assert.equal(contentKind({...task,name:'Flower Power'}),'newsletter');
+});
+test('known completion dates survive the source history window without crossing attempts or languages',()=>{
+ const old={id:'clickup:newsletter:abc',workflow:'newsletter',status:'completed',completedAt:'2026-10-12T12:00:00.000Z',completionSource:'slack'};
+ const row=()=>({...old,completedAt:undefined,completionSource:'clickup'});
+ const retained=retainCompletionDates([row()],[old]);assert.equal(retained[0].completedAt,old.completedAt);
+ assert.equal(retainCompletionDates([row()],[old],[{...claim,state:'running'}])[0].completedAt,undefined);
+ assert.equal(retainCompletionDates([{...row(),status:'queued'}],[old])[0].completedAt,undefined);
+ const en={...old,id:'clickup:translation-en:abc',workflow:'translation'};
+ assert.equal(retainCompletionDates([{...en,completedAt:undefined}],[en],[{...claim,workflow:'translation-fr',state:'running'}])[0].completedAt,en.completedAt);
 });
