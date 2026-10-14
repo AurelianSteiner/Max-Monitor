@@ -1,0 +1,76 @@
+{
+  "revision": "b70ac91",
+  "verifiedAt": "2026-10-14T18:21:04.437Z",
+  "source": {
+    "name": "ClickUp · AI Newsletter Creation",
+    "lastSuccessAt": "2026-10-14T18:20:31.474Z",
+    "detail": "654 Aufgaben · 27 Tags · 735 Reservierungen · 3 offen in #ai-fehler",
+    "receivedAt": "2026-10-14T18:20:42.912Z",
+    "error": null,
+    "stale": false,
+    "status": "fresh"
+  },
+  "completedToday": {
+    "newsletter:newsletter": 13,
+    "newsletter:flow": 10,
+    "upload:newsletter": 24,
+    "correction:": 25
+  },
+  "unknownCompletionDates": 25,
+  "olderCompletionProof": {
+    "taskId": "clickup:newsletter:12451cu4b36",
+    "completedAt": "2026-10-12T02:00:19.000Z",
+    "updatedAt": "2026-10-14T14:56:53.465Z"
+  },
+  "deployedFileHashes": {
+    "scripts/newsletter-monitor-bridge.mjs": "06b38041444e96b70c8ba455835fbf57d9d97fb80cf3bd377160af29bdc4150e",
+    "team-server/fleet.js": "34fd305a888dffd1356c091727ee98e50e64897ada50562f359cec32896d5d1d",
+    "team-server/public/dashboard.js": "01027c9ac22e5b9c3420d8503d1f2e02afaa75c58733d8a7f3e9c9e53e2dcb97",
+    "team-server/public/dashboard.html": "a7f9eb1e2e951756bb99d0fbdd55db9ece8c31610c36a2e0cb1d724de90310e9",
+    "team-server/public/dashboard.css": "bdfa88aabdfecb01f8826cd41c6b2148d74c67d0680f443917b5ea644326ee6d"
+  },
+  "tests": {
+    "relay": 94,
+    "sourceBridge": 175,
+    "failures": 0,
+    "localization": "passed"
+  },
+  "browser": {
+    "viewports": [
+      {
+        "width": 1440,
+        "height": 900,
+        "summary": "14.10.26 · 44 offen · 21 fertig",
+        "newsletterCompletions": 10,
+        "overflow": false,
+        "protruding": []
+      },
+      {
+        "width": 1024,
+        "height": 768,
+        "summary": "14.10.26 · 44 offen · 21 fertig",
+        "newsletterCompletions": 10,
+        "overflow": false,
+        "protruding": []
+      },
+      {
+        "width": 390,
+        "height": 844,
+        "summary": "14.10.26 · 44 offen · 21 fertig",
+        "newsletterCompletions": 10,
+        "overflow": false,
+        "protruding": []
+      }
+    ],
+    "errors": [],
+    "oldCompletionDate": true,
+    "unknownCompletionLabel": true
+  },
+  "native": {
+    "verified": true,
+    "newsletterToday": 13,
+    "flowsToday": 10,
+    "newsletterBarAndQueueAgree": true
+  },
+  "rollbackDirectory": "/var/backups/max-monitor/2026-10-14T18-20-29-628Z-055dd9"
+}
