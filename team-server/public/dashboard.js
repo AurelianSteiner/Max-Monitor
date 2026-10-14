@@ -5,7 +5,15 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   // Display names do not change task ownership or the SSH/enrollment identity.
-  const workerDisplayNames = new Map([["newsletter-mac-141b2976", "Mac 4"]]);
+  const workerDisplayNames = new Map([
+    ["macbook-1", "Mac 1"],
+    ["macbook-2", "Mac 2"],
+    ["newsletter-mac-141b2976", "Mac 4"],
+    ["macworker-5-schwarz", "Mac 5 schwarz"],
+    ["macbook-till-main", "Till Main"],
+    ["macbook-von-till-main-2", "Till Main 2"],
+    ["mac-f121ae17", "Macworker vale"],
+  ]);
   const workerName = (workerId, fallback = "Mac") => workerDisplayNames.get(workerId) || workerId || fallback;
   // The relay can be hosted at / or behind a shared Hub path such as /max-monitor.
   const relayPrefix = location.pathname.replace(/\/(?:fleet|monitor)\/?$/, "");
@@ -30,13 +38,16 @@
   const previewImages = new Map();
   let openTask = null;
   const params = new URLSearchParams(location.search);
+  let pipelinePeriod = params.get("pipeline-period") === "all" ? "all" : "today";
+  let queuePeriod = params.get("queue-period") === "today" ? "today" : "all";
+  let renderedDay = null;
   let view = params.get("view") || "overview";
   let logFilter = params.get("log") === "attention" ? "attention" : "all";
   if (view === "attention") {
     view = "log";
     logFilter = "attention";
   }
-  let statusFilter = params.get("status") || "running";
+  let statusFilter = params.get("status") || "queued";
   let workerFilter = params.get("worker") || "";
   let workflowFilter = params.get("workflow") || "";
   let query = params.get("q") || "";
@@ -55,8 +66,11 @@
     offline: "Offline",
     unknown: "Unbekannt",
     queued: "Wartet",
+    marked: "Markiert",
+    paused: "Pausiert",
     running: "Läuft",
     blocked: "Blockiert",
+    clarification: "Klärung nötig",
     completed: "Fertig",
     failed: "Fehler",
   };
@@ -73,9 +87,11 @@
   // Pipeline stages mirror the ClickUp tags: the trigger tag alone means
   // "markiert"; a state tag or a worker reservation moves a task to "wartet".
   const stages = [
-    ["marked", "Markiert", "queued"],
+    ["marked", "Markiert", "marked"],
     ["queued", "Wartet", "queued"],
+    ["paused", "Pausiert", "paused"],
     ["running", "Läuft", "running"],
+    ["clarification", "Klärung nötig", "clarification"],
     ["blocked", "Blockiert", "blocked"],
     ["completed", "Fertig", "completed"],
     ["failed", "Fehler", "failed"],
@@ -86,6 +102,7 @@
   });
   const clockFormat = new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" });
   const numberFormat = new Intl.NumberFormat("de-DE");
+  const dayFormat = new Intl.DateTimeFormat("de-DE", { dateStyle: "short", timeZone: "Europe/Berlin" });
   function setSync(text, state) {
     $("sync-status").textContent = text;
     $("sync-status").dataset.state = state;
@@ -93,8 +110,24 @@
   function stageOf(task) {
     if (task.status !== "queued") return task.status;
     const waiting = task.workerId || (task.tags || []).some((tag) =>
-      String(tag).toLocaleLowerCase("de-DE").replace(/[^\p{L}\p{N}]/gu, "").endsWith("wartet"));
+      String(tag).toLocaleLowerCase("de-DE").replace(/[^\p{L}\p{N}]/gu, "").endsWith("wartet"))
+      || /^(Reserviert|Worker-Abgleich|Wartet)/.test(task.phase || "");
     return waiting ? "queued" : "marked";
+  }
+
+  // A production day follows Berlin time, independent of the browser's timezone.
+  function productionDay(value) {
+    const time = typeof value === "number" ? value : Date.parse(value || "");
+    return Number.isFinite(time) ? dayFormat.format(time) : null;
+  }
+  function tasksInPeriod(items, period, now = Date.now()) {
+    if (period !== "today") return items;
+    const today = productionDay(now);
+    return items.filter((task) => {
+      const time = task.status === "completed" && task.completedAt
+        ? task.completedAt : task.updatedAt;
+      return productionDay(time) === today;
+    });
   }
   function node(tag, className, value) {
     const result = document.createElement(tag);
@@ -169,6 +202,12 @@
   }
   function isOpen(task) {
     return !["completed"].includes(task.status);
+  }
+  function matchesStatus(task, status) {
+    if (status === "all") return true;
+    if (status === "open") return isOpen(task);
+    if (status === "blocked") return ["blocked", "failed"].includes(task.status);
+    return stageOf(task) === status;
   }
   function usageStale(machine) {
     return (
@@ -268,7 +307,7 @@
   }
   function attentionEntries(devices, items) {
     const entries = items
-      .filter((task) => ["blocked", "failed"].includes(task.status))
+      .filter((task) => ["blocked", "failed", "clarification"].includes(task.status))
       .map((task) => ({
         type: "task",
         entity: task,
@@ -287,9 +326,11 @@
   }
   function saveFilters() {
     const state = new URLSearchParams();
+    if (pipelinePeriod !== "today") state.set("pipeline-period", pipelinePeriod);
+    if (queuePeriod !== "all") state.set("queue-period", queuePeriod);
     if (view !== "overview") state.set("view", view);
     if (logFilter !== "all") state.set("log", logFilter);
-    if (statusFilter !== "running") state.set("status", statusFilter);
+    if (statusFilter !== "queued") state.set("status", statusFilter);
     if (workerFilter) state.set("worker", workerFilter);
     if (workflowFilter) state.set("workflow", workflowFilter);
     if (query) state.set("q", query);
@@ -474,7 +515,7 @@
               ? `Die Queue wurde ${relative(data.queue.source.lastSuccessAt)} synchronisiert. Prüfe die Newsletter-Brücke.`
               : "",
       );
-      render();
+      render({ preserveScroll: true });
       startLive();
       return true;
     } catch (error) {
@@ -489,7 +530,7 @@
           ? `${message} Angezeigt wird der letzte geladene Stand.`
           : message,
       );
-      if (snapshot) render();
+      if (snapshot) render({ preserveScroll: true });
       $("connection-error").textContent = message;
       $("connection-error").hidden = false;
       if (!snapshot) {
@@ -596,26 +637,38 @@
     if ($("detail-dialog").open && $("detail-title").textContent === "Skill-Versionen") skillDetails();
   }
 
-  function render() {
+  function render({ preserveScroll = false } = {}) {
+    renderedDay = productionDay(Date.now());
+    // WebKit can clamp the page offset while live regions are replaced.
+    // Capture at render time so scrolling during the request stays intact.
+    const scrollPosition = preserveScroll ? { left: window.scrollX, top: window.scrollY } : null;
     const items = tasks();
     const devices = machines();
     renderSkillVersions(devices);
     const attention = attentionEntries(devices, items);
-    const openCount = items.filter(isOpen).length;
-    $("nav-queue").textContent = snapshot ? numberFormat.format(openCount) : "—";
+    for (const [id, status] of [["nav-queue", "queued"], ["nav-running", "running"],
+      ["nav-blocked", "blocked"], ["nav-clarification", "clarification"]]) {
+      const count = snapshot ? items.filter(task => matchesStatus(task, status)).length : null;
+      $(id).textContent = count == null ? "—" : numberFormat.format(count);
+      $(id).dataset.tone = countTone(status, count);
+    }
     $("nav-machines").textContent = snapshot ? numberFormat.format(devices.length) : "—";
     $("nav-attention").textContent = numberFormat.format(attention.length);
     $("nav-attention").hidden = !snapshot || !attention.length;
     $("log-attention-count").textContent = snapshot ? attention.length : "—";
+    $("log-attention-count").dataset.tone = snapshot ? attention.length ? "bad" : "good" : "unknown";
     $("machine-count").textContent = devices.length;
-    $("queue-count").textContent = items.length;
+    const queueTitle = statusNames[statusFilter] || ({ open: "Offene Aufgaben", all: "Alle Aufgaben" })[statusFilter] || "Aufgaben";
+    $("queue-title").textContent = queueTitle;
     $("page-title").textContent =
-      { overview: "Übersicht", queue: "Queue", machines: "Macs", log: "Log" }[view] || "Übersicht";
+      { overview: "Übersicht", queue: queueTitle, machines: "Macs", log: "Log" }[view] || "Übersicht";
     document.querySelectorAll(".nav-item").forEach((button) => {
-      button.classList.toggle("selected", button.dataset.view === view);
+      const selected = button.dataset.view === view
+        && (!button.dataset.status || button.dataset.status === statusFilter);
+      button.classList.toggle("selected", selected);
       button.setAttribute(
         "aria-current",
-        button.dataset.view === view ? "page" : "false",
+        selected ? "page" : "false",
       );
     });
     $("overview-section").hidden = view !== "overview";
@@ -639,6 +692,13 @@
     });
     $("worker-filter").hidden = !workerFilter;
     $("worker-filter-label").textContent = `Aufgaben für ${workerFilter}`;
+    $("queue-period-filter").hidden = queuePeriod !== "today";
+    $("queue-period-label").textContent = `Heute · ${productionDay(Date.now())}`;
+    document.querySelectorAll("[data-pipeline-period]").forEach((button) => {
+      const selected = button.dataset.pipelinePeriod === pipelinePeriod;
+      button.classList.toggle("selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+    });
     $("team-label").textContent = credentials
       ? `Verbunden mit Team ${credentials.teamId} · ${location.host}`
       : "Jeder Mac nutzt dieselbe Team-ID mit eigenem Mitglieds-Token.";
@@ -667,8 +727,10 @@
     renderQueue(items);
     renderEvents(attention);
     refreshOpenTask();
+    if (scrollPosition) window.scrollTo({ ...scrollPosition, behavior: "instant" });
   }
-  function openQueue(status, workflowValue = "") {
+  function openQueue(status, workflowValue = "", period = "all") {
+    queuePeriod = period;
     workerFilter = "";
     workflowFilter = workflowValue;
     query = "";
@@ -677,6 +739,7 @@
     $("queue-heading").focus({ preventScroll: true });
   }
   function renderPipeline(items) {
+    items = tasksInPeriod(items, pipelinePeriod);
     const groups = new Map();
     for (const task of items) {
       const name = workflow(task.workflow);
@@ -689,18 +752,24 @@
     const open = items.filter(isOpen).length;
     const done = items.length - open;
     $("pipeline-summary").textContent = snapshot
-      ? `${numberFormat.format(open)} offen · ${numberFormat.format(done)} fertig`
+      ? `${pipelinePeriod === "today" ? productionDay(Date.now()) : "Gesamt"} · ${numberFormat.format(open)} offen · ${numberFormat.format(done)} fertig`
       : "—";
+    $("pipeline-summary").title = pipelinePeriod === "today"
+      ? "Aufgaben mit letzter Änderung heute · Tagesgrenze: Europe/Berlin. Bei manuell abgehakten Aufgaben zählt der Abschlusszeitpunkt."
+      : "Alle Aufgaben der Queue";
     if (!flows.length) {
       $("pipeline").replaceChildren(node("div", "empty-state", snapshot?.queue?.source?.lastSuccessAt
-        ? "Die Queue ist leer. Neue markierte Aufgaben erscheinen hier."
+        ? pipelinePeriod === "today" && tasks().length
+          ? "Heute wurden noch keine Aufgaben aktualisiert. Unter „Gesamt“ siehst du die gesamte Pipeline."
+          : "Die Queue ist leer. Neue markierte Aufgaben erscheinen hier."
         : "Queue-Quelle noch nicht verbunden."));
       return;
     }
     $("pipeline").replaceChildren(...flows.map(([name, group]) => {
       const counts = new Map(stages.map(([key]) => [key, 0]));
       for (const task of group.tasks) counts.set(stageOf(task), (counts.get(stageOf(task)) || 0) + 1);
-      const shown = stages.filter(([key]) => key !== "failed" || counts.get("failed") > 0);
+      const shown = stages.filter(([key]) => (key !== "failed" || counts.get("failed") > 0)
+        && (key !== "clarification" || ["newsletter", "correction"].includes(group.value) || counts.get(key) > 0));
       const max = Math.max(1, ...shown.map(([key]) => counts.get(key)));
       const flow = node("div", "flow");
       const head = node("div", "flow-head");
@@ -718,14 +787,17 @@
         const tip = node("span", "bar-tip", `${name} · ${label}: ${numberFormat.format(count)}`);
         tip.setAttribute("aria-hidden", "true");
         const value = node("span", "bar-value", numberFormat.format(count));
+        value.dataset.tone = countTone(key, count);
         value.setAttribute("aria-hidden", "true");
         value.append(tip);
         const bar = node("span", "bar");
         bar.style.height = `${(count / max) * 78}%`;
         column.append(value, bar);
-        column.addEventListener("click", () => openQueue(status, group.value));
+        column.addEventListener("click", () => openQueue(status, group.value, pipelinePeriod));
         bars.append(column);
-        labels.append(node("span", "", label));
+        const caption = node("span", "", label);
+        caption.title = label;
+        labels.append(caption);
       }
       flow.append(head, bars, labels);
       return flow;
@@ -742,6 +814,7 @@
   function renderAttention(attention) {
     const list = $("attention-list");
     $("attention-count").textContent = numberFormat.format(attention.length);
+    $("attention-count").dataset.tone = attention.length ? "bad" : "good";
     $("attention-more").hidden = !attention.length;
     if (!attention.length) {
       const calm = node("li", "attention-calm");
@@ -815,14 +888,51 @@
         : machine.powerSource === "battery" ? "Akku" : "";
     return [`${machine.batteryPercent} %`, source];
   }
-  function meter(limit, stale) {
-    const value = limit?.percent ?? null;
-    const wrap = node("div", `meter${value == null ? " unknown" : ""}${stale && value != null ? " stale" : ""}`);
+  // Quotas report usage; battery reports remaining charge. Unknown is never zero.
+  function percentTone(value, stale = false, remaining = false) {
+    if (!Number.isFinite(value) || value < 0 || value > 100 || stale) return "unknown";
+    if (remaining) return value <= 15 ? "bad" : value <= 30 ? "warn" : "good";
+    return value >= 100 ? "bad" : value >= 80 ? "warn" : "good";
+  }
+  function batteryTone(machine) {
+    const stale = machine.status !== "online" || (machine.nativeStatus && machine.nativeStatus !== "online");
+    return percentTone(machine.batteryPercent, stale, true);
+  }
+  function limitStale(limit, stale = false) {
+    const updatedAt = timestamp(limit?.usageUpdatedAt);
+    return Boolean(stale || limit?.usageStale || limit?.usageError || limit?.usageStatus === "error"
+      || (updatedAt && Date.now() - updatedAt > 15 * 60000));
+  }
+  function countTone(status, count) {
+    if (!Number.isFinite(count)) return "unknown";
+    if (["blocked", "failed", "clarification"].includes(status) && count === 0) return "good";
+    if (count === 0) return "unknown";
+    return ({ online: "good", completed: "good", queued: "warn", paused: "warn", silent: "warn",
+      blocked: "bad", failed: "bad", offline: "bad", running: "info", clarification: "clarification" })[status] || "unknown";
+  }
+  function limitTitle(limit, stale) {
+    const value = limit?.percent;
+    if (!Number.isFinite(value)) return "Noch keine Kontingent-Messung";
+    return `${value} % genutzt · ${limitStale(limit, stale) ? "Messung veraltet"
+      : value >= 100 ? "Limit ausgeschöpft" : `${100 - value} % verfügbar`}`;
+  }
+  function usageTrack(value) {
     const track = node("div", "usage-track");
-    const fill = node("div", `usage-fill ${value >= 100 ? "full" : value >= 80 ? "high" : ""}`);
+    const fill = node("div", "usage-fill");
     fill.style.width = `${Math.min(100, Math.max(0, value || 0))}%`;
     track.append(fill);
-    wrap.append(track, node("b", "", value == null ? "—" : `${value} %`));
+    return track;
+  }
+
+  function meter(limit, stale) {
+    const value = limit?.percent ?? null;
+    const outdated = limitStale(limit, stale);
+    const wrap = node("div", `meter${value == null ? " unknown" : ""}${outdated && value != null ? " stale" : ""}`);
+    wrap.dataset.tone = percentTone(value, outdated);
+    wrap.title = limitTitle(limit, stale);
+    const number = node("b", "", value == null ? "—" : `${value} %`);
+    number.dataset.tone = wrap.dataset.tone;
+    wrap.append(usageTrack(value), number);
     return wrap;
   }
   function sortedMachines(devices) {
@@ -835,7 +945,14 @@
   function renderFleet(devices) {
     const online = devices.filter((machine) => machine.status === "online").length;
     const affected = devices.filter(machine => workerFailureReason(machine)).length;
-    $("fleet-summary").textContent = `${numberFormat.format(online)} von ${numberFormat.format(devices.length)} online${affected ? ` · ${numberFormat.format(affected)} mit Worker-Störung` : ""}`;
+    const onlineCount = node("span", "", `${numberFormat.format(online)} von ${numberFormat.format(devices.length)} online`);
+    onlineCount.dataset.tone = devices.length ? online === devices.length ? "good" : online ? "warn" : "bad" : "unknown";
+    $("fleet-summary").replaceChildren(onlineCount);
+    if (affected) {
+      const errors = node("span", "", `${numberFormat.format(affected)} mit Worker-Störung`);
+      errors.dataset.tone = "bad";
+      $("fleet-summary").append(" · ", errors);
+    }
     $("fleet-dots").replaceChildren(...sortedMachines(devices).map((machine) => node("span", `dot ${machineDisplayStatus(machine)}`)));
     if (!devices.length) {
       const row = node("tr");
@@ -883,10 +1000,12 @@
       }
       const [battery, source] = batteryText(machine);
       const batteryCell = node("td", "fleet-battery", battery);
-      if (source === "veraltet") batteryCell.title = "Keine aktuelle Akku-Messung der Mac-App";
+      batteryCell.dataset.tone = batteryTone(machine);
+      batteryCell.title = source === "veraltet" ? "Keine aktuelle Akku-Messung der Mac-App"
+        : battery === "—" ? "Akku noch nicht gemeldet" : `Akku: ${battery}${source ? ` · ${source}` : ""}`;
       if (source && source !== "Akku") batteryCell.append(node("small", "", ` · ${source}`));
       const account = machineAccount(machine);
-      const stale = usageStale(machine);
+      const stale = usageStale(machine) || Boolean(machine.usageError);
       const sessionCell = node("td");
       const weeklyCell = node("td");
       if (account) {
@@ -952,6 +1071,12 @@
       ]) {
         const datum = node("div");
         const text = node("span", "datum-value", value);
+        if (name === "Akku") {
+          text.dataset.tone = batteryTone(machine);
+          text.title = source === "veraltet" ? "Keine aktuelle Akku-Messung der Mac-App"
+            : battery === "—" ? "Akku noch nicht gemeldet" : `Akku: ${battery}${source ? ` · ${source}` : ""}`;
+        }
+        if (name === "Meldung") text.dataset.tone = countTone(machine.status, 1);
         if (hint) text.append(node("small", "", ` · ${hint}`));
         if (tooltip) text.title = tooltip;
         datum.append(node("span", "datum-label", name), text);
@@ -973,23 +1098,30 @@
       card.append(accountLabel);
       if (account) {
         const limitGroup = node("div", "machine-limits");
-        for (const [name, kind] of [["5-Stunden-Limit", "session"], ["Wochenlimit", "weekly"]]) {
-          const value = machineLimit(machine, account, kind)?.percent ?? null;
+        const stale = usageStale(machine) || Boolean(machine.usageError);
+        const outdatedLabels = [];
+        for (const [name, kind] of [["5 h", "session"], ["Woche", "weekly"]]) {
+          const measurement = machineLimit(machine, account, kind);
+          const value = measurement?.percent ?? null;
+          const outdated = limitStale(measurement, stale);
+          if (measurement && outdated) outdatedLabels.push(name);
           const limit = node("div", "machine-limit");
+          limit.dataset.tone = percentTone(value, outdated);
+          limit.title = limitTitle(measurement, stale);
           const line = node("div", "usage-line");
-          line.append(node("span", "", name), node("strong", "", value == null ? "—" : `${value} %`));
-          const track = node("div", "usage-track");
-          const fill = node("div", `usage-fill ${value >= 100 ? "full" : value >= 80 ? "high" : ""}`);
-          fill.style.width = `${Math.min(100, Math.max(0, value || 0))}%`;
-          track.append(fill);
-          limit.append(line, track);
+          const number = node("strong", "", value == null ? "—" : `${value} %`);
+          number.dataset.tone = limit.dataset.tone;
+          line.append(node("span", "", `${name} genutzt`), number);
+          limit.append(line, usageTrack(value));
           limitGroup.append(limit);
         }
         card.append(limitGroup);
         const limits = machine.limits || [];
-        if (!limits.length || usageStale(machine) || machine.usageError)
+        if (!limits.length || outdatedLabels.length || machine.usageError)
           card.append(node("p", "usage-note", machine.usageError ||
-            (!limits.length ? "Claude-Kontingente noch nicht gemeldet." : `Kontingente veraltet · ${relative(machine.usageUpdatedAt)}`)));
+            (!limits.length ? "Claude-Kontingente noch nicht gemeldet."
+              : stale ? `Kontingente veraltet · ${relative(machine.usageUpdatedAt)}`
+                : `Messung veraltet: ${outdatedLabels.join(", ")}`)));
       }
       if (machine.workerStatus && machine.workerStatus !== "online")
         card.append(node("p", "usage-note",
@@ -1009,28 +1141,26 @@
   function filtered(items, { ignoreStatus = false } = {}) {
     const workerNames = new Map(machines().filter(machine => machine.workerId).map(machine => [machine.workerId, [workerName(machine.workerId, machine.name), machine.deviceName].filter(Boolean).join(" ")]));
     const needle = query.trim().toLocaleLowerCase();
-    return items
+    return tasksInPeriod(items, queuePeriod)
       .filter((task) => {
         if (
-          !ignoreStatus && (statusFilter === "open"
-            ? !isOpen(task)
-            : statusFilter !== "all" && task.status !== statusFilter)
+          !ignoreStatus && !matchesStatus(task, statusFilter)
         )
           return false;
         if (workerFilter && task.workerId !== workerFilter) return false;
         if (workflowFilter && task.workflow !== workflowFilter) return false;
         return (
           !needle ||
-          [task.title, task.id, task.company, task.workerId, workerNames.get(task.workerId), task.url, task.blockedReason, task.phase, task.step, ...(task.tags || [])]
+          [task.title, task.id, task.company, task.workerId, workerName(task.workerId, ""), workerNames.get(task.workerId), task.url, task.blockedReason, task.phase, task.step, ...(task.tags || [])]
             .filter(Boolean).join(" ").toLocaleLowerCase().includes(needle)
         );
       })
       .sort(
         (a, b) =>
-          (({ running: 0, blocked: 1, failed: 2, queued: 3, completed: 4 })[
+          (({ running: 0, blocked: 1, failed: 2, clarification: 3, paused: 4, queued: 5, completed: 6 })[
             a.status
           ] ?? 5) -
-            ({ running: 0, blocked: 1, failed: 2, queued: 3, completed: 4 }[
+            ({ running: 0, blocked: 1, failed: 2, clarification: 3, paused: 4, queued: 5, completed: 6 }[
               b.status
             ] ?? 5) || String(a.title).localeCompare(String(b.title)),
       );
@@ -1109,12 +1239,17 @@
   function renderQueue(items) {
     const scoped = filtered(items, { ignoreStatus: true });
     const statusCounts = { open: scoped.filter(isOpen).length, all: scoped.length };
-    for (const status of ["running", "queued", "blocked", "completed"]) statusCounts[status] = scoped.filter(task => task.status === status).length;
+    for (const status of ["marked", "running", "queued", "paused", "clarification", "blocked", "completed"]) statusCounts[status] = scoped.filter(task => matchesStatus(task, status)).length;
     for (const [status, count] of Object.entries(statusCounts)) {
       const label = $(`${status}-count`);
-      if (label) label.textContent = numberFormat.format(count);
+      if (label) {
+        label.textContent = numberFormat.format(count);
+        label.dataset.tone = countTone(status, snapshot ? count : null);
+      }
     }
     const visible = filtered(items);
+    $("queue-count").textContent = snapshot ? numberFormat.format(visible.length) : "—";
+    $("queue-count").dataset.tone = countTone(statusFilter, snapshot ? visible.length : null);
     const body = $("queue-body");
     body.replaceChildren();
     queuePage = Math.min(
@@ -1172,9 +1307,12 @@
       }
       titleCell.append(node("span", "task-id", task.id));
       const category = node("td");
-      category.append(node("span", "workflow-name", workflow(task.workflow)));
+      const workflowLabel = node("span", "workflow-name", workflow(task.workflow));
+      workflowLabel.dataset.workflow = task.workflow || "";
+      workflowLabel.title = workflowLabel.textContent;
+      category.append(workflowLabel);
       const state = node("td");
-      const status = badge(task.status);
+      const status = badge(stageOf(task));
       if (task.completion === "manual") status.lastChild.textContent = "Erledigt";
       state.append(status);
       const assigned = node("td");
@@ -1211,7 +1349,8 @@
         link.href = href;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
-        link.setAttribute("aria-label", `${label === "Figma" ? "Figma-Board" : label === "Slack" ? "Fehler in Slack" : label} öffnen: ${task.title || task.id}`);
+        link.setAttribute("aria-label", `${label === "Figma" ? "Figma-Board" : label === "Slack"
+          ? task.status === "clarification" ? "Klärung in Slack" : "Fehler in Slack" : label} öffnen: ${task.title || task.id}`);
         links.append(link);
       }
       const detail = node("button", "icon-button", "⋯");
@@ -1384,7 +1523,7 @@
     grid.append(
       detailField("Unternehmen", task.company || "Nicht hinterlegt"),
       detailField("Workflow", workflow(task.workflow)),
-      detailField("Status", task.completion === "manual" ? "Manuell erledigt" : statusNames[task.status] || task.status),
+      detailField("Status", task.completion === "manual" ? "Manuell erledigt" : statusNames[stageOf(task)] || task.status),
       detailField("Worker", workerName(task.workerId, "Noch nicht zugewiesen")),
       detailField(
         "Fortschritt",
@@ -1401,7 +1540,7 @@
         (task.workflow === "sales" ? salesStatuses[task.sourceStatus] : task.sourceStatus) || "Unbekannt"),
       detailField("Aktualisiert", exact(task.updatedAt)),
     );
-    if (task.blockedReason) grid.append(detailField("Blockiergrund", task.blockedReason, true));
+    if (task.blockedReason) grid.append(detailField(task.status === "clarification" ? "Offene Klärung" : "Blockiergrund", task.blockedReason, true));
     const tags = node("div", "detail-tags");
     (task.tags || []).forEach((tag) =>
       tags.append(node("span", "workflow-name", tag)),
@@ -1409,11 +1548,13 @@
     const children = [node("p", "", task.id), grid, tags];
     const errorUrl = safeLink(task.errorUrl);
     if (errorUrl) {
-      const link = node("a", "button primary", "Fehler in Slack öffnen ↗");
+      const link = node("a", "button primary", task.status === "clarification" ? "Klärung in Slack öffnen ↗" : "Fehler in Slack öffnen ↗");
       link.href = errorUrl;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
-      children.push(link, node("p", "form-hint", "Nach der Behebung und Entfernung aus #ai-fehler verschwindet dieser Eintrag beim nächsten Abgleich."));
+      children.push(link, node("p", "form-hint", task.status === "clarification"
+        ? "Die Aufgabe wartet auf Informationen, eine Freigabe oder einen Zugang. Sobald sie fortgesetzt wird, verschwindet der Klärungsbedarf aus dieser Ansicht."
+        : "Die Fehlermeldung beschreibt den aktuellen blockierten Versuch. Sobald die Aufgabe fortgesetzt oder abgeschlossen wird, zählt sie nicht mehr als blockiert."));
     }
     const url = safeLink(task.url);
     if (url) {
@@ -1456,7 +1597,11 @@
   function machineDetails(machine) {
     const account = (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
     const grid = node("div", "detail-grid");
+    const [battery, source] = batteryText(machine);
+    const batteryField = detailField("Akku", `${battery}${source ? ` · ${source}` : ""}`);
+    batteryField.querySelector("strong").dataset.tone = batteryTone(machine);
     grid.append(
+      batteryField,
       detailField("Direkte Worker-Meldung", machine.agentLastSeenAt
         ? `${machine.activity?.fresh ? "Live" : "Veraltet"} · ${exact(machine.agentLastSeenAt)}` : "Wird eingerichtet"),
       detailField("Wartungsdienst", machine.maintenance
@@ -1533,6 +1678,7 @@
     if ((machine.workerIssues || []).some(issue => issue.stage === "claude"))
       list.append(node("p", "form-hint", "Claude auf diesem Mac prüfen und bei einem Anmeldefehler erneut anmelden. Die Warnung verschwindet nach dem nächsten vollständigen Abgleich, sobald der Worker seine Meldung entfernt hat."));
     (machine.limits || []).forEach((limit) => {
+      const outdated = limitStale(limit, usageStale(machine) || Boolean(machine.usageError));
       const line = node("div", "usage-line");
       line.append(
         node(
@@ -1540,16 +1686,18 @@
           "",
           `${limit.accountName || limit.accountId} · ${limit.label || limit.kind}`,
         ),
-        node("strong", "", `${limit.percent} % genutzt`),
+        node("strong", "", limit.percent == null ? "—" : `${limit.percent} % genutzt`),
       );
+      line.querySelector("strong").dataset.tone = percentTone(limit.percent, outdated);
+      line.title = limitTitle(limit, outdated);
       list.append(line);
       list.append(
         node(
           "p",
-          limit.usageStale || limit.usageStatus === "error"
+          outdated
             ? "usage-note"
             : "form-hint",
-          `${limit.usageError || (limit.usageStale ? "Veraltete Messung" : "Geprüft")} · ${exact(limit.usageUpdatedAt || machine.usageUpdatedAt)}`,
+          `${limit.usageError || machine.usageError || (outdated ? "Veraltete Messung" : "Geprüft")} · ${exact(limit.usageUpdatedAt || machine.usageUpdatedAt)}`,
         ),
       );
       if (limit.resetsAt)
@@ -1855,13 +2003,17 @@
   document
     .querySelectorAll("[data-view]")
     .forEach((button) =>
-      button.addEventListener("click", () =>
+      button.addEventListener("click", () => {
+        if (button.classList.contains("nav-item") && button.dataset.status) {
+          openQueue(button.dataset.status);
+          return;
+        }
         selectView(
           button.dataset.view,
           button.dataset.status,
           button.dataset.logFilter,
-        ),
-      ),
+        );
+      }),
     );
   document.querySelectorAll("#status-tabs .tab").forEach((button) =>
     button.addEventListener("click", () => {
@@ -1871,6 +2023,19 @@
       render();
     }),
   );
+  document.querySelectorAll("[data-pipeline-period]").forEach((button) =>
+    button.addEventListener("click", () => {
+      pipelinePeriod = button.dataset.pipelinePeriod;
+      saveFilters();
+      render({ preserveScroll: true });
+    }),
+  );
+  $("clear-queue-period").addEventListener("click", () => {
+    queuePeriod = "all";
+    queuePage = 0;
+    saveFilters();
+    render({ preserveScroll: true });
+  });
   document.querySelectorAll("#log-filters .tab").forEach((button) =>
     button.addEventListener("click", () => {
       logFilter = button.dataset.logFilter;
@@ -1999,7 +2164,10 @@
     $("connection-dialog").showModal();
   }
   setInterval(() => {
-    if (!document.hidden) refresh();
+    if (!document.hidden) {
+      if (snapshot && renderedDay !== productionDay(Date.now())) render({ preserveScroll: true });
+      refresh();
+    }
   }, 30000);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) stopLive();

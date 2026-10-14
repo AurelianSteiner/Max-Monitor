@@ -3,6 +3,10 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
+import io
+import sys
+import json
 
 spec = importlib.util.spec_from_file_location('member_remote', Path(__file__).with_name('member-remote.py'))
 client = importlib.util.module_from_spec(spec)
@@ -43,6 +47,53 @@ class MemberRemoteTest(unittest.TestCase):
     def test_credentials_are_never_sent_to_plain_http_or_in_a_url(self):
         for url in ['http://hub.example.test','https://user:pass@hub.example.test','https://hub.example.test?token=secret','https://hub.example.test#secret']:
             with self.assertRaises(ValueError): client.ticket_request(url,'RSMACS01','personal-token','macbook-1','unused')
+
+    def test_approved_source_key_is_used_for_request_and_both_ssh_hops_without_copying_it(self):
+        identity = Path(self.directory.name)/'key'
+        original = identity.read_bytes()
+        real_run = subprocess.run
+        ssh_calls = []
+        def run(args, **kwargs):
+            if args[0] == '/usr/bin/ssh':
+                ssh_calls.append(args)
+                return subprocess.CompletedProcess(args, 0, stdout='worker\n', stderr='')
+            return real_run(args, **kwargs)
+        with patch.object(sys, 'argv', ['member-remote.py','check','macbook-1','--token-stdin','--identity-file',str(identity)]), \
+             patch.object(sys, 'stdin', io.StringIO('personal-token\n')), \
+             patch.object(client, 'ticket_request', return_value=self.ticket) as request, \
+             patch.object(client.subprocess, 'run', side_effect=run), \
+             patch.object(sys, 'stdout', io.StringIO()):
+            self.assertEqual(client.main(), 0)
+        self.assertEqual(request.call_args.args[4], self.ticket['hubHostKey'])
+        args = ssh_calls[0]
+        self.assertEqual(args[args.index('-i')+1], str(identity))
+        proxy = client.shlex.split(next(v for v in args if v.startswith('ProxyCommand='))[len('ProxyCommand='):])
+        self.assertEqual(proxy[proxy.index('-i')+1], str(identity))
+        self.assertEqual(identity.read_bytes(), original)
+
+    def test_public_ticket_uses_source_key_without_requesting_or_reading_a_token(self):
+        identity = Path(self.directory.name)/'key'
+        real_run = subprocess.run
+        def run(args, **kwargs):
+            if args[0] == '/usr/bin/ssh':
+                return subprocess.CompletedProcess(args, 0, stdout='worker\n', stderr='')
+            return real_run(args, **kwargs)
+        with patch.object(sys, 'argv', ['member-remote.py','check','macbook-1','--ticket-stdin','--identity-file',str(identity)]), \
+             patch.object(sys, 'stdin', io.StringIO(json.dumps(self.ticket)+'\n')), \
+             patch.object(client, 'ticket_request') as request, \
+             patch.object(client.getpass, 'getpass') as prompt, \
+             patch.object(client.subprocess, 'run', side_effect=run), \
+             patch.object(sys, 'stdout', io.StringIO()):
+            self.assertEqual(client.main(), 0)
+            request.assert_not_called()
+            prompt.assert_not_called()
+
+    def test_wrong_target_ticket_fails_before_any_ssh_process(self):
+        with patch.object(sys, 'argv', ['member-remote.py','check','macbook-2','--ticket-stdin']), \
+             patch.object(sys, 'stdin', io.StringIO(json.dumps(self.ticket)+'\n')), \
+             patch.object(client.subprocess, 'run') as run:
+            with self.assertRaises(ValueError): client.main()
+            run.assert_not_called()
 
 
 if __name__ == '__main__':

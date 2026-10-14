@@ -22,8 +22,17 @@
         <button class="nav-item selected" data-view="overview">
           Übersicht
         </button>
+        <button class="nav-item" data-view="queue" data-status="queued">
+          Wartet <span id="nav-queue" class="nav-count">—</span>
+        </button>
         <button class="nav-item" data-view="queue" data-status="running">
-          Queue <span id="nav-queue" class="nav-count">—</span>
+          Läuft <span id="nav-running" class="nav-count">—</span>
+        </button>
+        <button class="nav-item" data-view="queue" data-status="blocked">
+          Blockiert <span id="nav-blocked" class="nav-count">—</span>
+        </button>
+        <button class="nav-item" data-view="queue" data-status="clarification" title="Informationen, Freigabe oder Zugang fehlen">
+          Klärung nötig <span id="nav-clarification" class="nav-count">—</span>
         </button>
         <button class="nav-item" data-view="machines">
           Macs <span id="nav-machines" class="nav-count">—</span>
@@ -65,9 +74,13 @@
 
       <section id="overview-section" class="overview" aria-label="Übersicht">
         <article class="panel pipeline-panel" aria-labelledby="pipeline-heading">
-          <header class="panel-head">
+          <header class="panel-head pipeline-head">
             <h2 id="pipeline-heading">Pipeline</h2>
-            <span id="pipeline-summary" class="panel-meta">—</span>
+            <div id="pipeline-period" class="status-tabs pipeline-period" role="group" aria-label="Zeitraum der Pipeline">
+              <button type="button" class="tab selected" data-pipeline-period="today" aria-pressed="true" title="Aufgaben mit letzter Änderung heute · Europe/Berlin">Heute</button>
+              <button type="button" class="tab" data-pipeline-period="all" aria-pressed="false">Gesamt</button>
+            </div>
+            <span id="pipeline-summary" class="panel-meta" aria-live="polite">—</span>
           </header>
           <div id="pipeline" class="pipeline"></div>
         </article>
@@ -102,8 +115,8 @@
                   <th scope="col">Mac</th>
                   <th scope="col">Arbeitet an</th>
                   <th scope="col" class="num">Akku</th>
-                  <th scope="col">5 h</th>
-                  <th scope="col">Woche</th>
+                  <th scope="col">5 h genutzt</th>
+                  <th scope="col">Woche genutzt</th>
                   <th scope="col" class="num">Meldung</th>
                 </tr>
               </thead>
@@ -128,20 +141,18 @@
       <section id="queue-section" class="content-section" hidden>
         <div class="section-heading">
           <h2 id="queue-heading" tabindex="-1">
-            Queue <span id="queue-count" class="count">—</span>
+            <span id="queue-title">Wartet</span> <span id="queue-count" class="count">—</span>
           </h2>
           <span id="queue-updated" class="interval">Quelle noch nicht verbunden</span>
         </div>
         <div class="queue-toolbar">
-          <div id="status-tabs" class="status-tabs" aria-label="Aufgabenstatus">
+          <div id="status-tabs" class="status-tabs" aria-label="Weitere Aufgabenstatus">
             <button class="tab" data-status="open" aria-pressed="false">
               Offen <span id="open-count">0</span></button
-            ><button class="tab selected" data-status="running" aria-pressed="true">
-              Läuft <span id="running-count">0</span></button
-            ><button class="tab" data-status="queued" aria-pressed="false">
-              Wartet <span id="queued-count">0</span></button
-            ><button class="tab" data-status="blocked" aria-pressed="false">
-              Blockiert <span id="blocked-count">0</span></button
+            ><button class="tab" data-status="marked" aria-pressed="false">
+              Markiert <span id="marked-count">0</span></button
+            ><button class="tab" data-status="paused" aria-pressed="false">
+              Pausiert <span id="paused-count">0</span></button
             ><button class="tab" data-status="completed" aria-pressed="false">
               Fertig <span id="completed-count">0</span></button
             ><button class="tab" data-status="all" aria-pressed="false">
@@ -168,6 +179,10 @@
         <div id="worker-filter" class="worker-filter" hidden>
           <span id="worker-filter-label"></span
           ><button id="clear-worker" class="text-button">Filter entfernen ×</button>
+        </div>
+        <div id="queue-period-filter" class="worker-filter" hidden>
+          <span id="queue-period-label"></span>
+          <button id="clear-queue-period" type="button" class="text-button">Zeitraum entfernen ×</button>
         </div>
         <div class="table-scroll">
           <table class="queue-table">

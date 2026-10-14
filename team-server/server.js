@@ -482,10 +482,10 @@ const server = http.createServer((req, res) => {
   const who = identify(req, teamId);
   if (!who) return send(res, 401, { error: "Token fehlt oder passt nicht zum Team" });
 
-  // Explicit team policy: every authenticated role may maintain every enrolled Mac.
-  // Tokens are checked afresh; requests only sign a public key, never execute commands.
+  // Source-Mac policy may restrict both the authenticated identity and its SSH key.
+  // Tokens and source permissions are checked afresh; no commands are executed here.
   if (req.method === "GET" && rest === "/remote-access") {
-    try { return send(res, 200, remoteAccess.configuration(DATA_DIR, teamId)); }
+    try { return send(res, 200, remoteAccess.configuration(DATA_DIR, teamId, who.member.id)); }
     catch (error) { return send(res, error instanceof remoteAccess.RemoteAccessError ? error.status : 503, { error: "Team-Fernzugriff ist nicht eingerichtet" }); }
   }
   if (req.method === "POST" && rest === "/remote-access/certificate") {
@@ -606,6 +606,15 @@ const server = http.createServer((req, res) => {
       if (!who || !["admin", "super"].includes(who.role)) return send(res, 403, { error: "Keine Berechtigung zum Vorschau-Upload" });
       return fleetResult(res, () => ({ ok: true, ...fleet.savePreview(teamId, previewMatch[1], body) }));
     }, MAX_PREVIEW_BYTES, true);
+  }
+  if (req.method === "POST" && rest === "/fleet/tasks/clarification") {
+    if (!["admin", "super"].includes(who.role)) return send(res, 403, { error: "Nur Admin oder Team-Inhaber darf Klärungsbedarf zuordnen" });
+    return readBody(req, (error, raw) => {
+      if (error) return send(res, 413, { error: "Klärungsanfrage zu groß" });
+      let body;
+      try { body = JSON.parse(raw); } catch { return send(res, 400, { error: "kein gültiges JSON" }); }
+      return fleetResult(res, () => ({ ok: true, task: fleet.clarifyTask(teamId, who, body) }));
+    });
   }
   // Every team member can resolve an attention item; source synchronization
   // remains restricted to the queue bridge/admin.

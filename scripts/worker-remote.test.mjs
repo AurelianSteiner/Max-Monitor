@@ -195,6 +195,22 @@ test('team manifest and bastion key retain exact registered ports and exclude pr
   assert.ok(line.includes('principals="max-monitor-DEMO1234-bastion"')); assert.ok(line.includes('command="/usr/bin/false"'));
   assert.ok(line.includes('permitopen="127.0.0.1:23000"')); assert.ok(!line.includes('23001'));
   assert.throws(()=>syncTeamAccess({teamId:'OTHER123'},options),/Ungültige/);
+  const policy = JSON.parse(await fs.readFile(policyFile,'utf8'));
+  const sourceKeys = [key(),key()];
+  await fs.writeFile(policyFile,JSON.stringify({...policy,sourcePublicKeys:sourceKeys}));
+  syncTeamAccess({teamId},options);
+  const restricted = await fs.readFile(bastionKeys,'utf8');
+  assert.equal(restricted.trim().split('\n').length,2);
+  for(const sourceKey of sourceKeys) assert.ok(restricted.includes(sourceKey));
+  assert.ok(!restricted.includes('cert-authority'));
+  assert.ok(!restricted.includes(operatorKey));
+  assert.match(restricted,/command="\/usr\/bin\/false"/);
+  const before = restricted;
+  for(const sourcePublicKeys of [[],[sourceKeys[0],sourceKeys[0]],['ssh-ed25519 AAAA']]) {
+    await fs.writeFile(policyFile,JSON.stringify({...policy,sourcePublicKeys}));
+    assert.throws(()=>syncTeamAccess({teamId},options));
+    assert.equal(await fs.readFile(bastionKeys,'utf8'),before);
+  }
   await fs.chmod(policyFile,0o644); assert.throws(()=>syncTeamAccess({teamId},options),/Ungültige/);
 });
 

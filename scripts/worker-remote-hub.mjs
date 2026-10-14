@@ -57,6 +57,11 @@ export function teamConfiguration(settings, { policyFile = '/etc/max-monitor/rem
   if (policy.schema !== 1 || !/^[A-Z0-9]{4,16}$/.test(policy.teamId || '') || policy.teamId !== settings.teamId ||
       typeof policy.hubHost !== 'string' || !/^[a-z0-9][a-z0-9.-]{0,252}$/i.test(policy.hubHost) ||
       !Array.isArray(policy.excludedWorkerIds) || policy.excludedWorkerIds.some(v => typeof v !== 'string' || !WORKER_ID.test(v))) throw new Error('Ungültige Team-Fernzugriff-Freigabe.');
+  if (policy.sourcePublicKeys !== undefined) {
+    if (!Array.isArray(policy.sourcePublicKeys) || !policy.sourcePublicKeys.length || policy.sourcePublicKeys.length > 200) throw new Error('Ungültige Quell-Mac-Freigabe.');
+    policy.sourcePublicKeys = policy.sourcePublicKeys.map(publicKey);
+    if (new Set(policy.sourcePublicKeys).size !== policy.sourcePublicKeys.length) throw new Error('Doppelte Quell-Mac-Freigabe.');
+  }
   const keyFile = path.join(dataDir, policy.teamId, 'remote-ca.pub');
   if (!fs.lstatSync(keyFile).isFile()) throw new Error('Team-Prüfschlüssel ist keine reguläre Datei.');
   return { ...policy, publicKey: publicKey(fs.readFileSync(keyFile, 'utf8').trim()), dataDir };
@@ -67,8 +72,11 @@ export function syncTeamAccess(settings, { file = '/etc/max-monitor/remote-acces
   if (!team) return null;
   const workers = registryAt(file).workers.filter(v => !team.excludedWorkerIds.includes(v.workerId));
   if (!workers.length) throw new Error('Keine Macs für Team-Fernzugriff eingerichtet.');
-  const keys = ['cert-authority', `principals="max-monitor-${team.teamId}-bastion"`, 'restrict', 'port-forwarding',
-    'command="/usr/bin/false"', ...workers.map(v => `permitopen="127.0.0.1:${v.port}"`)].join(',') + ` ${team.publicKey} max-monitor-team-access\n`;
+  const destinations = workers.map(v => `permitopen="127.0.0.1:${v.port}"`);
+  const restrictions = ['restrict', 'port-forwarding', 'command="/usr/bin/false"', ...destinations];
+  const keys = team.sourcePublicKeys
+    ? team.sourcePublicKeys.map(key => `${restrictions.join(',')} ${key} max-monitor-source-access\n`).join('')
+    : ['cert-authority', `principals="max-monitor-${team.teamId}-bastion"`, ...restrictions].join(',') + ` ${team.publicKey} max-monitor-team-access\n`;
   if (!fs.lstatSync(bastionKeys).isFile()) throw new Error('Bastion-Prüfschlüssel ist keine reguläre Datei.');
   const manifest = { schema: 1, enabled: true, teamId: team.teamId, hubHost: team.hubHost, hubUser: 'max-monitor-access',
     hubHostKey: publicKey(fs.readFileSync(hostKeyFile, 'utf8').trim()),

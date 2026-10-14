@@ -27,6 +27,7 @@ test('relay service uses dedicated user, loopback binding and persistent separat
   assert.match(environment, /TEAM_TOKENS=RSMACS01:1111/);
   assert.match(environment, /HOST=127\.0\.0\.1/);
   assert.match(environment, /DATA_DIR=\/var\/lib\/max-monitor/);
+  assert.match(environment, /MAX_MONITOR_REMOTE_CLIENT_POLICY_FILE=\/etc\/max-monitor-remote-policy\/RSMACS01\.json/);
   assert.match(service, /User=max-monitor/);
   assert.match(service, /StateDirectory=max-monitor/);
   assert.match(service, /NoNewPrivileges=true/);
@@ -40,12 +41,25 @@ test('queue service reads credentials only on the Hub, uses the existing local t
   assert.match(service, /--local-hub \/opt\/rs-hub/);
   assert.match(service, /--enrollment-config \/etc\/max-monitor\/enrollment.json/);
   assert.match(service, /--worker-root \/opt\/max-monitor\/newsletter-source/);
+  assert.match(service, /--cleanup-error-copies/);
   assert.match(service, /StateDirectory=max-monitor-queue/);
   assert.match(service, /ReadOnlyPaths=\/opt\/rs-hub \/etc\/max-monitor/);
   assert.match(service, /ReadWritePaths=\/var\/lib\/max-monitor-queue/);
   assert.ok(!service.includes(ownerToken));
   assert.ok(!service.includes('MONITOR_BRIDGE_TOKEN'));
   assert.ok(!service.includes('--once'));
+});
+
+test('relay maintenance cannot propagate a stop to the independently retrying queue bridge', () => {
+  const service = queueService(installationSettings({}, prior));
+  const unit = service.split('[Unit]\n')[1].split('\n[Service]')[0];
+  const dependencies = Object.fromEntries(unit.split('\n').filter(line => line.includes('='))
+    .map(line => { const at = line.indexOf('='); return [line.slice(0, at), line.slice(at + 1).split(/\s+/)]; }));
+  assert.ok(dependencies.Wants.includes('max-monitor-relay.service'), 'starting the bridge starts its relay');
+  assert.ok(dependencies.After.includes('max-monitor-relay.service'), 'initial publication waits for relay startup');
+  for (const name of ['Requires', 'BindsTo', 'PartOf', 'Requisite']) {
+    assert.ok(!dependencies[name]?.includes('max-monitor-relay.service'), `${name} must not stop the bridge during relay maintenance`);
+  }
 });
 
 test('nginx injection edits only the matching TLS server and is idempotent', () => {

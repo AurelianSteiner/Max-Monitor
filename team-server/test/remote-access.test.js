@@ -55,6 +55,52 @@ test('member issuance is throttled without allowing unbounded signer processes',
   // after() releases the held signers; don't await the deliberately held promises here.
 });
 
+test('source policy requires an allowed identity and its approved private-key counterpart', async t => {
+  const f = fixture(t);
+  const policy = { schema: 1, teamId: 'DEMO1234', clients: [{ workerId: 'till-main', publicKey: f.publicKey, memberIds: ['member-one'] }] };
+  fs.writeFileSync(path.join(f.directory, 'remote-client-policy.json'), JSON.stringify(policy), { mode: 0o600 });
+  assert.equal(access.configuration(f.root, 'DEMO1234', 'member-one').enabled, true);
+  assert.throws(() => access.configuration(f.root, 'DEMO1234', 'guest-member'), { status: 403 });
+  await assert.rejects(access.issueCertificate(f.root, 'DEMO1234', 'guest-member', { publicKey: f.publicKey, workerId: 'macbook-1' }), { status: 403 });
+  const wrong = path.join(f.directory, 'other-key');
+  execFileSync('/usr/bin/ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', wrong]);
+  const otherKey = fs.readFileSync(wrong + '.pub', 'utf8').trim();
+  await assert.rejects(access.issueCertificate(f.root, 'DEMO1234', 'member-one', { publicKey: otherKey, workerId: 'macbook-1', sourceWorkerId: 'till-main' }), { status: 403 });
+  const ticket = await access.issueCertificate(f.root, 'DEMO1234', 'member-one', { publicKey: f.publicKey, workerId: 'macbook-1' });
+  assert.ok(ticket.certificate);
+  const audit = JSON.parse(fs.readFileSync(path.join(f.directory, 'remote-access-audit.jsonl'), 'utf8').trim());
+  assert.equal(audit.sourceWorkerId, 'till-main');
+  assert.ok(!JSON.stringify(audit).includes(f.publicKey));
+});
+
+test('required source policy fails closed when missing, malformed, writable or replaced by a symlink', t => {
+  const f = fixture(t), policy = path.join(f.directory, 'required-policy.json');
+  const previous = process.env.MAX_MONITOR_REMOTE_CLIENT_POLICY_FILE;
+  process.env.MAX_MONITOR_REMOTE_CLIENT_POLICY_FILE = policy;
+  t.after(() => { if (previous === undefined) delete process.env.MAX_MONITOR_REMOTE_CLIENT_POLICY_FILE; else process.env.MAX_MONITOR_REMOTE_CLIENT_POLICY_FILE = previous; });
+  assert.throws(() => access.configuration(f.root, 'DEMO1234', 'member-one'), { status: 503 });
+  fs.writeFileSync(policy, '{', { mode: 0o600 });
+  assert.throws(() => access.configuration(f.root, 'DEMO1234', 'member-one'), { status: 503 });
+  fs.writeFileSync(policy, JSON.stringify({ schema: 1, teamId: 'DEMO1234', clients: [] }));
+  assert.throws(() => access.configuration(f.root, 'DEMO1234', 'member-one'), { status: 403 });
+  fs.chmodSync(policy, 0o666);
+  assert.throws(() => access.configuration(f.root, 'DEMO1234', 'member-one'), { status: 503 });
+  fs.chmodSync(policy, 0o600); fs.renameSync(policy, policy + '.original'); fs.symlinkSync(policy + '.original', policy);
+  assert.throws(() => access.configuration(f.root, 'DEMO1234', 'member-one'), { status: 503 });
+});
+
+test('source permission is rechecked after signing so revocation prevents ticket delivery', async t => {
+  const f = fixture(t), policy = path.join(f.directory, 'remote-client-policy.json');
+  fs.writeFileSync(policy, JSON.stringify({ schema: 1, teamId: 'DEMO1234', clients: [{ workerId: 'till-main', publicKey: f.publicKey, memberIds: ['member-one'] }] }), { mode: 0o600 });
+  await assert.rejects(access.issueCertificate(f.root, 'DEMO1234', 'member-one', { publicKey: f.publicKey, workerId: 'macbook-1' }, {
+    run: async (command, args) => {
+      execFileSync(command, args);
+      fs.writeFileSync(policy, JSON.stringify({ schema: 1, teamId: 'DEMO1234', clients: [] }));
+    },
+  }), { status: 403 });
+  assert.ok(!fs.existsSync(path.join(f.directory, 'remote-access-audit.jsonl')));
+});
+
 test('every current role may request access; removed, unknown and cross-team tokens cannot', async t => {
   const f = fixture(t);
   process.env.DATA_DIR=f.root; process.env.TEAM_TOKENS='DEMO1234:owner-token,OTHER123:other-owner'; delete process.env.TEAM_TOKEN;
@@ -78,6 +124,12 @@ test('every current role may request access; removed, unknown and cross-team tok
   const manifestBefore=fs.readFileSync(f.file,'utf8');
   fs.writeFileSync(memberFile,JSON.stringify(members.filter(v=>v.role!=='guest')));
   assert.equal((await call('guest-token')).status,401); assert.equal(fs.readFileSync(f.file,'utf8'),manifestBefore);
+  fs.writeFileSync(path.join(f.directory,'remote-client-policy.json'),JSON.stringify({ schema:1,teamId:'DEMO1234',clients:[{workerId:'till-main',publicKey:f.publicKey,memberIds:['team-owner']}] }),{mode:0o600});
+  for(const token of ['admin-token','member-token']) {
+    assert.equal((await call(token,'/remote-access',null)).status,403);
+    assert.equal((await call(token)).status,403);
+  }
+  assert.equal((await call('owner-token')).status,200);
   const client=await fetch(base+'/remote-client.py'); assert.equal(client.status,200);
   const code=await client.text(); assert.match(code,/getpass/); assert.ok(!code.includes('owner-token'));
 });

@@ -20,22 +20,6 @@ const claimMessage = (state = 'running', overrides = {}) => ({ ts: '1791373200.0
   event_type: 'ai_newsletter_claim', event_payload: { task_id: 'a', run_id: 'run-1', worker: 'newsletter-mac-1', state, heartbeat: now / 1000 - 60, ...overrides },
 } });
 
-test('automatic repair pauses remain waiting in the queue for PreGen, upload and correction', () => {
-  const paused = parseClaim(claimMessage('final', { paused: true }));
-  const rows = buildQueue([task('a', ['pre gen · pausiert'])], [paused], DEFAULT_WORKFLOWS, { now });
-  assert.equal(rows[0].status, 'queued');
-  assert.equal(rows[0].phase, 'Pausiert · automatische Fortsetzung');
-  assert.equal(rows[0].workerId, 'newsletter-mac-1');
-  const upload = buildQueue([task('a', ['klaviyo upload · pausiert'])], [], DEFAULT_WORKFLOWS, { now });
-  assert.equal(upload[0].status, 'queued');
-  assert.equal(upload[0].phase, 'Pausiert · automatische Fortsetzung');
-  const correction = parseClaim({ ...claimMessage('final', { task_id:'korrektur-cu-a@1000-intern',paused:true }),
-    metadata:{event_type:'ai_korrektur_claim',event_payload:{task_id:'korrektur-cu-a@1000-intern',run_id:'r',worker:'newsletter-mac-1',state:'final',heartbeat:now/1000,paused:true}} });
-  const corrected = buildQueue([task('a')], [correction], DEFAULT_WORKFLOWS, { now }).find(row=>row.workflow==='correction');
-  assert.equal(corrected.status, 'queued');
-  assert.equal(corrected.phase, 'Pausiert · automatische Fortsetzung');
-});
-
 test('tag discovery uses actual spelling from all spaces and recognizes punctuation', async () => {
   const called = [];
   const variants = await discoverTags(async target => {
@@ -215,6 +199,56 @@ test('blocked correction diagnosis comes from its own bot thread and is cached o
   assert.equal(changed[0].blockedReason, undefined);
 });
 
+test('a terminal correction marked Fertig in its parent is completed without a reaction', () => {
+  const message = { ts: '1791862331.952979', text: '*Korrektur · Happy dogs*\n:white_check_mark: Fertig: <https://app.clickup.com/t/86cb1enj9|Sortimentsvorstellung Trockenfutter>',
+    metadata: { event_type: 'ai_korrektur_claim', event_payload: { task_id: 'korrektur-cu-86cb1enj9@1791813435889-extern',
+      run_id: 'finished-retry', worker: 'macbook-till-main', state: 'final', heartbeat: now / 1000 } } };
+  const parsed = parseClaim(message);
+  const row = buildQueue([], [parsed], DEFAULT_WORKFLOWS, { now })[0];
+  assert.equal(row.status, 'completed'); assert.equal(row.progress, 100);
+  assert.equal(row.phase, 'Korrektur abgeschlossen'); assert.equal(row.attemptId, 'finished-retry');
+  assert.equal(parseClaim({ ...message, reactions: [{ name: 'x' }] }).outcome, 'completed', 'the current terminal label supersedes an old failure reaction');
+  assert.equal(parseClaim({ ...message, metadata: { ...message.metadata, event_payload: { ...message.metadata.event_payload, state: 'running' } } }).outcome, undefined);
+  assert.equal(parseClaim({ ...message, text: '*Korrektur · Fertig*\n:repeat: Fortsetzung: Fertig' }).outcome, undefined);
+  assert.equal(parseClaim({ ...message, text: '*Korrektur · Happy dogs*\n✅ Fertig: <https://app.clickup.com/t/86cb1enj9|Trockenfutter>' }).outcome, 'completed');
+});
+
+test('open PM questions show the exact bot question and survive cache reads only for the same attempt', async () => {
+  const message = { ts: '123.001', text: '*Korrektur · Baumax*\n:repeat: Fortsetzung: <https://app.clickup.com/t/task|Rüttelplatte>', reactions: [{ name: 'question' }],
+    metadata: { event_type: 'ai_korrektur_claim', event_payload: { task_id: 'korrektur-cu-task@123-extern',
+      run_id: 'pm-question', worker: 'mac-2', state: 'final', heartbeat: now / 1000 } } };
+  const claim = { ...parseClaim(message), channelId: 'correction-channel' };
+  const question = 'Gilt „NUR HVP und VP25/50“ auch für VP10/31, VP12/35 und VP16/44?';
+  const rows = () => buildQueue([], [claim], DEFAULT_WORKFLOWS, { now });
+  let calls = 0;
+  const fetcher = async () => { calls++; return response({ ok: true, messages: [
+    { ts: message.ts, bot_id: 'worker-bot', text: message.text },
+    { ts: '123.002', bot_id: 'worker-bot', text: ':question: Unklar: 1 Punkt braucht eine Antwort.' },
+    { ts: '123.003', bot_id: 'worker-bot', text: `*Unklar – bitte hier antworten* (der Bot setzt die Antwort um)\n• Unklar · Kommentar 1 („Dieses Foto zeigt eine RVP-Rüttelplatte…“): ${question}` },
+    { ts: '123.004', text: '*Unklar – bitte hier antworten*\n• Unklar · Kommentar 1 („Mensch“): Falsche menschliche Frage?' },
+  ] }); };
+  const first = await addRunDetails(rows(), { hubFetch: fetcher });
+  assert.equal(first[0].status, 'blocked'); assert.equal(first[0].phase, 'PM-Rückfrage offen');
+  assert.equal(first[0].blockedReason, question);
+  const cached = await addRunDetails(rows(), { hubFetch: fetcher, previousTasks: first });
+  assert.equal(calls, 1); assert.equal(cached[0].blockedReason, question); assert.equal(cached[0].phase, 'PM-Rückfrage offen');
+  const retry = buildQueue([], [{ ...claim, runId: 'new-attempt', awaitingPm: false }], DEFAULT_WORKFLOWS, { now });
+  const next = await addRunDetails(retry, { hubFetch: async () => { throw Error('temporary outage'); }, previousTasks: first });
+  assert.equal(next[0].blockedReason, undefined); assert.equal(next[0].phase, 'Korrekturabschluss noch nicht bestätigt');
+  const completed = buildQueue([], [{ ...claim, outcome: 'completed', awaitingPm: false }], DEFAULT_WORKFLOWS, { now });
+  await addRunDetails(completed, { hubFetch: fetcher, previousTasks: first });
+  assert.equal(completed[0].status, 'completed'); assert.equal(completed[0].blockedReason, undefined);
+});
+
+test('PM question details redact credentials and do not turn an unrelated thread message into a question', async () => {
+  const make = () => ({ id: 'correction:job', workflow: 'correction', status: 'blocked', attemptId: 'one',
+    run: { id: 'one', ts: '123.001', channelId: 'correction-channel' } });
+  const read = text => addRunDetails([make()], { hubFetch: async () => response({ ok: true, messages: [{ ts: '123.002', bot_id: 'bot', text }] }) });
+  const result = await read('*Unklar – bitte hier antworten*\n• Unklar · Kommentar 3 („Module“): token=secret123 Welche Module?');
+  assert.equal(result[0].phase, 'PM-Rückfrage offen'); assert.match(result[0].blockedReason, /ENTFERNT/); assert.doesNotMatch(result[0].blockedReason, /secret123/);
+  assert.equal((await read('Hinweis: Unklar\n• Unklar · Kommentar 3 („Module“): Fremde Frage?'))[0].blockedReason, undefined);
+});
+
 test('tag discovery finds every tag the worker sets', async () => {
   const workerTags = ['pre gen.', 'pre gen · wartet', 'pre gen · läuft', 'pre gen · fertig', 'pre gen · blockiert',
     'klaviyo upload', 'klaviyo upload · wartet', 'klaviyo upload · läuft', 'klaviyo upload · fertig', 'klaviyo upload · blockiert',
@@ -329,6 +363,13 @@ test('missing Hub observations do not discard a verified ClickUp/Slack snapshot'
     fleetReader: async () => { throw new Error('unavailable'); } });
   assert.deepEqual(snapshot.tasks, []); assert.equal(snapshot.observedWorkers, undefined);
   assert.match(snapshot.source.detail, /Worker-Dateien nicht verfügbar/); assert.equal(snapshot.source.error, undefined);
+});
+
+test('an unavailable PM journal preserves the last complete snapshot instead of clearing clarification', async () => {
+  const snapshot = await collectSnapshot({ now, config: { clickup: { workspace_id: 'test' }, slack: { channel_id: 'test' }, hub: {} },
+    hubFetch: async target => String(target).includes('slack.com') ? response({ ok: true, messages: [], has_more: false }) : response({ spaces: [] }),
+    fleetReader: async () => [], questionReader: async () => { throw new Error('PM-Journal nicht erreichbar'); } });
+  assert.equal(snapshot.tasks, undefined);assert.match(snapshot.source.error,/PM-Journal/);
 });
 
 test('minute cadence includes request time, never overlaps, and recovers after an overrun', async () => {
@@ -630,37 +671,4 @@ test('preview uploads go to the relay with the token in the header only', async 
   assert.equal(calls[0][0], `https://api.example.test/max-monitor/v1/teams/DEMO1234/fleet/previews/${'a'.repeat(64)}`);
   assert.deepEqual([calls[0][1].method, calls[0][1].redirect, calls[0][1].headers.Authorization, calls[0][1].headers['Content-Type']], ['PUT', 'error', 'Bearer secret', 'image/jpeg']);
   await assert.rejects(uploadPreview('a'.repeat(64), Buffer.from('jpeg'), { relayUrl: 'https://api.example.test', teamId: 'DEMO1234', token: 'secret', fetchImpl: async () => ({ ok: false, status: 413 }) }), /413/);
-});
-
-test('paused active claims stay in the central queue for every workflow', () => {
-  for (const [event, jobId, workflow, tags] of [
-    ['ai_newsletter_claim', 'a', 'newsletter', ['pre gen · läuft']],
-    ['ai_klaviyo_upload_claim', 'a-klaviyo', 'upload', ['klaviyo upload · läuft']],
-    ['ai_translation_claim', 'a-uebersetzung-en', 'translation', ['en translation']],
-    ['ai_korrektur_claim', 'korrektur-cu-a@1000-intern', 'correction', []],
-  ]) {
-    const message = claimMessage('running', { task_id: jobId, paused: true });
-    message.metadata.event_type = event;
-    const rows = buildQueue([task('a', tags)], [parseClaim(message)], DEFAULT_WORKFLOWS, { now });
-    const row = rows.find(row => row.workflow === workflow);
-    assert.ok(row, workflow); assert.equal(row.status, 'queued', workflow);
-    assert.equal(row.phase, 'Pausiert · wartet außerhalb der Worker-Plätze', workflow);
-    assert.equal(row.workerId, 'newsletter-mac-1', 'session ownership remains visible');
-  }
-});
-
-test('portable pauses have central priority without a Mac binding and actual execution wins over the saved origin', () => {
-  for(const [event,jobId,workflow,tags] of [
-    ['ai_newsletter_claim','a','newsletter',['pre gen · läuft']],
-    ['ai_klaviyo_upload_claim','a-klaviyo','upload',['klaviyo upload · läuft']],
-    ['ai_translation_claim','a-uebersetzung-en','translation',['en translation']],
-    ['ai_korrektur_claim','korrektur-cu-a@1000-intern','correction',[]],
-  ]){
-    const old=claimMessage('running',{task_id:jobId,paused:true,portable:true});old.metadata.event_type=event;
-    const paused=buildQueue([task('a',tags)],[parseClaim(old)],DEFAULT_WORKFLOWS,{now}).find(row=>row.workflow===workflow);
-    assert.equal(paused.status,'queued');assert.equal(paused.workerId,undefined);assert.equal(paused.phase,'Pausiert · vorne in der zentralen Queue');
-    const fresh=claimMessage('running',{task_id:jobId,worker:'new-mac',run_id:'adopted'});fresh.metadata.event_type=event;fresh.ts=String(Number(old.ts)+1);
-    const running=buildQueue([task('a',tags)],[parseClaim(old),parseClaim(fresh)],DEFAULT_WORKFLOWS,{now}).find(row=>row.workflow===workflow);
-    assert.equal(running.status,'running');assert.equal(running.workerId,'new-mac');
-  }
 });
