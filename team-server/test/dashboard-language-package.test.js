@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(__dirname, '../public/dashboard.js'), '
 const marker = '  function attentionEntries(';
 const context = { window: {}, location: { pathname: '/fleet', search: '' }, URLSearchParams, Intl };
 vm.runInNewContext(source.replace(marker,
-  '  globalThis.check = { stageOf, matchesStatus, completionLabel, runningPackage, workerName, setTasks: items => snapshot = { queue: { tasks: items } } }; return;\n' + marker), context);
+  '  globalThis.check = { stageOf, matchesStatus, completionLabel, runningPackage, workerName, tasks, setTasks: items => snapshot = { queue: { tasks: items } } }; return;\n' + marker), context);
 const ui = context.check;
 const master = { id: 'clickup:newsletter:de1', workflow: 'newsletter', packageId: 'de1', status: 'running', workerId: 'mac-worker-6-64d66918' };
 const en = { id: 'clickup:translation-en:de1', workflow: 'translation', status: 'queued', tags: ['en translation'] };
@@ -44,4 +44,18 @@ test('blocked, paused, completed and PM states remain outside a running package'
   assert.notEqual(ui.stageOf(en), 'running');
   ui.setTasks([{ ...master, workerId: null }, en]);
   assert.notEqual(ui.stageOf(en), 'running');
+});
+
+test('an EN mail already in review does not leave an idle duplicate in Waiting', () => {
+  const completed = { ...master, title: 'EN | Herbst', language: 'en', status: 'completed', sourceStatus: 'approval extern' };
+  ui.setTasks([completed, en]);
+  assert.deepEqual(Array.from(ui.tasks(), task => task.id), [completed.id]);
+  for (const change of [{ status: 'blocked' }, { workerId: 'another-mac' }, { blockedReason: 'Freigabe fehlt' }]) {
+    ui.setTasks([completed, { ...en, ...change }]);
+    assert.equal(ui.tasks().length, 2);
+  }
+  for (const change of [{ language: 'de' }, { id: 'clickup:newsletter:another' }, { sourceStatus: 'pre-gen' }]) {
+    ui.setTasks([{ ...completed, ...change }, en]);
+    assert.equal(ui.tasks().length, 2);
+  }
 });

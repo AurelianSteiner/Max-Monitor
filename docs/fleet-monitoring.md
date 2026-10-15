@@ -389,6 +389,9 @@ unter **Läuft** mit „Paket läuft“. Die Zuordnung nutzt dieselbe ClickUp-Au
 oder einen eindeutigen Briefing-Link zur DE-Aufgabe desselben Kunden. Status und
 Worker-Plätze der einzelnen Fassung bleiben erhalten; Blockaden, Pausen und
 PM-Rückfragen bleiben in ihrer bisherigen Ansicht.
+Ist eine EN-Mail unter derselben ClickUp-ID bereits im Review, blendet die Ansicht
+ihren unreservierten alten Übersetzungs-Tag-Eintrag aus. Die abgeschlossene Mail
+bleibt erhalten; aktive oder blockierte Übersetzungen werden nicht ausgeblendet.
 Groß-/Kleinschreibung, Leerzeichen und Satzzeichen werden beim Abgleich
 normalisiert; ClickUp-Abfragen verwenden trotzdem die genaue vorhandene
 Schreibweise. Alle Tags werden in **einer** seitenweisen ClickUp-Abfrage gelesen

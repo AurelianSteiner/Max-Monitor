@@ -114,7 +114,8 @@
     return task.packageId || /^clickup:(?:newsletter|translation-[a-z]{2}):([A-Za-z0-9]+)$/.exec(task.id)?.[1] || null;
   }
   function packageLanguage(task) {
-    return task.language || /^clickup:translation-([a-z]{2}):/.exec(task.id)?.[1];
+    return task.language || /^clickup:translation-([a-z]{2}):/.exec(task.id)?.[1]
+      || /^\s*\[?(EN|IT|FR|SE|SP)\]?(?:\s*[|¦:]\s*|\s+[-–—·]\s+)/u.exec(task.title || "")?.[1].toLowerCase();
   }
   function runningPackage(task) {
     if (task.status !== "queued" || task.blockedReason || /^(Pausiert|Wartet.*PM)/i.test(task.phase || "")) return null;
@@ -209,7 +210,17 @@
     }
   }
   function tasks() {
-    return Array.isArray(snapshot?.queue?.tasks) ? snapshot.queue.tasks : [];
+    const items = Array.isArray(snapshot?.queue?.tasks) ? snapshot.queue.tasks : [];
+    // Old translation trigger tags can remain after the language mail itself
+    // reached review. Keep its completed Pre-Gen row; hide only the idle duplicate.
+    return items.filter(task => {
+      const id = /^clickup:translation-([a-z]{2}):([A-Za-z0-9]+)$/.exec(task.id);
+      if (!id || task.status !== "queued" || task.workerId || task.blockedReason
+        || /^(Pausiert|Wartet.*PM)/i.test(task.phase || "")) return true;
+      return !items.some(other => other.id === `clickup:newsletter:${id[2]}` && other.status === "completed"
+        && packageLanguage(other) === id[1]
+        && /^(approval intern|approval extern|qa|design revision intern|design revision extern)$/i.test(other.sourceStatus || ""));
+    });
   }
   function machines() {
     if (!Array.isArray(snapshot?.machines)) return [];
