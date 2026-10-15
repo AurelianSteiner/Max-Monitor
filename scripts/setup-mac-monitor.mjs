@@ -284,24 +284,40 @@ export async function installBundle(source, destination, runner = run) {
   };
 }
 
+// Exactly the inputs of scripts/build_without_xcode.sh: Swift sources and
+// resources, the project version, Info.plist/entitlements and the build script.
+// Every other file (helpers, relay, docs, tests) leaves the app binary unchanged.
+// A new build input must be added here, or it would not trigger a rebuild.
+export const NATIVE_PATHS = ['Usage4Claude', 'Usage4Claude.xcodeproj', 'Config', 'Package.swift', 'Package.resolved', 'scripts/build_without_xcode.sh'];
+const NATIVE_FILE = /^(?:Usage4Claude\/|Usage4Claude\.xcodeproj\/|Config\/|Package\.(?:swift|resolved)$|scripts\/build_without_xcode\.sh$)/;
+
 export async function nativeCodeUnchanged(from, to, runner = run) {
   if (!/^[a-f0-9]{40}$/.test(from || '') || !/^[a-f0-9]{40}$/.test(to || '')) return false;
   try {
     const changed = (await runner('git', ['-C', ROOT, 'diff', '--name-only', from, to, '--'],
       {label:'Native App-Änderungen prüfen'})).trim().split('\n').filter(Boolean);
-    const scripts = new Set(['scripts/setup-mac-monitor.mjs','scripts/setup-mac-monitor.sh',
-      'scripts/setup-mac-monitor.test.mjs','scripts/newsletter-monitor-bridge.mjs',
-      'scripts/newsletter-monitor-bridge.test.mjs','scripts/install-worker-observer.mjs',
-      'scripts/install-worker-observer.test.mjs','scripts/install-monitor-hub.mjs',
-      'scripts/install-monitor-hub.test.mjs','scripts/release.sh']);
-    // Node test files are not compiled into the native bundle. Treating a new
-    // regression test as Swift input forced old worker toolchains to rebuild
-    // an unchanged, already published app on every minute check.
-    return changed.every(file => file.startsWith('team-server/') || scripts.has(file) ||
-      (file.startsWith('scripts/') && /\.(?:test|spec)\.[cm]?js$/.test(file)) ||
-      file === 'README.md' || file === 'releases/worker-native.json' || file === 'appcast.xml' || file.startsWith('docs/'));
+    // An allowlist of non-native helpers rejected every new helper script and
+    // made old worker toolchains rebuild an unchanged app every ~100 s (14.10.).
+    return !changed.some(file => NATIVE_FILE.test(file));
   } catch { return false; }
 }
+
+// Content key of every native build input at one revision. A fix commit to the
+// same Swift file yields a new key, unlike a list of changed file names.
+export async function nativeSourceKey(revision, runner = run) {
+  if (!/^[a-f0-9]{40}$/.test(revision || '')) return null;
+  try {
+    const tree = await runner('git', ['-C', ROOT, 'ls-tree', revision, '--', ...NATIVE_PATHS], {label:'Native App-Quellen lesen'});
+    return tree.trim() ? createHash('sha256').update(tree).digest('hex') : null;
+  } catch { return null; }
+}
+
+async function swiftToolchain(runner) {
+  try { return (await runner('swiftc', ['--version'], {label:'Swift-Version lesen'})).split('\n')[0].trim().slice(0, 200) || 'unknown'; }
+  catch { return 'unknown'; }
+}
+
+export const BUILD_RETRY_MS = 6 * 3600000;
 
 export async function storedMonitorPreferences(bundleId, runner = run) {
   const safe = {schema:1,bundleId};
@@ -375,7 +391,7 @@ export async function workerArtifactBundle(revision, runner = run, {
 }
 
 async function updateExistingMonitor(options, {worker, app, revision, release, releaseCurrent,
-  receipt, receiptPath, runner, appReader, artifactReader, log, pause}) {
+  receipt, receiptPath, runner, appReader, artifactReader, log, pause, now = Date.now}) {
   if (!app) throw new Error('Kein eingerichteter Monitor vorhanden – zuerst die Worker-Einrichtung ausführen.');
   // Background maintenance must never launch the credential-reading native CLI.
   // The running GUI owns Keychain access and reports its authenticated heartbeat.
@@ -385,12 +401,16 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   const recorded = receipt?.binarySourceRevision || receipt?.sourceRevision;
   const sameCode = receipt?.sourceRevision === revision || await nativeCodeUnchanged(recorded,revision,runner);
   const sameVersion = !releaseCurrent || app.version.split('+')[0] === release.version;
-  const writeReceipt = async (binarySourceRevision, installed) => {
+  const writeReceipt = async (binarySourceRevision, installed, failure) => {
     await fs.mkdir(path.dirname(receiptPath),{recursive:true,mode:0o700});
-    const safe = {schema:1,maintenanceVersion:1,sourceRevision:revision,binarySourceRevision,appVersion:app.version,
+    // A failed build keeps the last confirmed source, so the next run never
+    // mistakes the unbuilt revision for the installed app.
+    const safe = {schema:1,maintenanceVersion:failure ? receipt?.maintenanceVersion : 1,
+      sourceRevision:failure ? receipt?.sourceRevision : revision,binarySourceRevision,appVersion:app.version,
       appPath:options.appPath,workerId:before.workerId || worker.workerId,deviceId:before.deviceId,
-      serverURL:before.serverURL,teamId:before.teamId,checkedAt:new Date().toISOString(),
-      installedAt:installed ? new Date().toISOString() : receipt?.installedAt};
+      serverURL:before.serverURL,teamId:before.teamId,checkedAt:new Date(now()).toISOString(),
+      installedAt:installed ? new Date(now()).toISOString() : receipt?.installedAt,
+      ...(failure ? {buildFailure:failure} : {})};
     const temporary = receiptPath + '.tmp';
     await fs.writeFile(temporary,JSON.stringify(safe,null,2)+'\n',{mode:0o600});
     await fs.rename(temporary,receiptPath);
@@ -411,10 +431,23 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   const artifact = !bundle ? await artifactReader(revision,runner) : null;
   bundle ||= artifact;
   if (!bundle) {
+    // Back-off: the same native code with the same compiler failed recently.
+    // The installed app stays as it is; the reason stays build_failed.
+    const nativeKey = await nativeSourceKey(revision,runner);
+    const swiftcVersion = await swiftToolchain(runner);
+    const failed = receipt?.buildFailure, failedAt = Date.parse(failed?.at);
+    if (nativeKey && failed?.nativeKey === nativeKey && failed.swiftcVersion === swiftcVersion &&
+        Number.isFinite(failedAt) && now() - failedAt >= 0 && now() - failedAt < BUILD_RETRY_MS)
+      throw new Error(`Max Monitor bauen zurückgestellt: derselbe native Stand ist mit diesem Swift-Compiler um ${new Date(failedAt).toISOString()} fehlgeschlagen; neuer Versuch nach 6 Stunden, mit neuem Code oder neuem Compiler. Die installierte App bleibt unverändert.`);
     log('Max Monitor: aktuelle App aus dem Repo bauen.');
-    await runner('/bin/bash',[path.join(ROOT,'scripts','build_without_xcode.sh')],{
-      cwd:ROOT,env:{...process.env,U4C_PRODUCT_NAME:'Max Monitor',U4C_BUNDLE_ID:options.bundleId,U4C_APPCAST_URL:''},
-      timeout:15*60000,inherit:true,label:'Max Monitor bauen'});
+    try {
+      await runner('/bin/bash',[path.join(ROOT,'scripts','build_without_xcode.sh')],{
+        cwd:ROOT,env:{...process.env,U4C_PRODUCT_NAME:'Max Monitor',U4C_BUNDLE_ID:options.bundleId,U4C_APPCAST_URL:''},
+        timeout:15*60000,inherit:true,label:'Max Monitor bauen'});
+    } catch (error) {
+      if (nativeKey) await writeReceipt(recorded,false,{nativeKey,swiftcVersion,at:new Date(now()).toISOString()}).catch(()=>{});
+      throw error;
+    }
     bundle = path.join(ROOT,'build','no-xcode','Max Monitor.app');
   }
   const built = await appReader(bundle,runner,options.bundleId);
@@ -449,7 +482,7 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
 
 export async function setup(options, { runner = run, workerReader = readWorker,
   appReader = appInformation, artifactReader = workerArtifactBundle, manifestReader = workerArtifactManifest,
-  platform = process.platform, log = console.log, pause = delay,
+  platform = process.platform, log = console.log, pause = delay, now = Date.now,
   receiptPath = path.join(os.homedir(), 'Library', 'Application Support',
     options.bundleId && options.bundleId !== BUNDLE_ID ? options.bundleId : 'Max Monitor', 'Worker Setup', 'installation.json') } = {}) {
   if (platform !== 'darwin' && !options.dryRun) throw new Error('Max Monitor benötigt macOS.');
@@ -473,7 +506,7 @@ export async function setup(options, { runner = run, workerReader = readWorker,
     }
   }
   if (options.updateOnly) return updateExistingMonitor(options,{worker,app,revision,release,releaseCurrent,
-    receipt,receiptPath,runner,appReader,artifactReader,log,pause});
+    receipt,receiptPath,runner,appReader,artifactReader,log,pause,now});
   let initialStatus = null;
   if (app && !app.legacy) {
     try { initialStatus = await appStatus(app, true, runner); } catch {

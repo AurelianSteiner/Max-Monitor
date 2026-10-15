@@ -253,11 +253,88 @@ test('helper, relay, Node tests and documentation changes can reuse a verified n
     'scripts/install-worker-observer.test.mjs','scripts/install-monitor-hub.mjs'])),true);
   assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/blocked-error-inventory.test.mjs',
     'scripts/newsletter-monitor-sales.test.mjs','scripts/new-regression.spec.cjs'])),true);
-  assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/new-runtime.mjs'])),false);
-  assert.equal(await nativeCodeUnchanged(before,after,diff(['Usage4Claude/Helpers/FleetReporter.swift'])),false);
-  assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/build_without_xcode.sh'])),false);
+  // Only build inputs count as native; any other helper script reuses the app.
+  assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/new-runtime.mjs'])),true);
+  for (const file of ['Usage4Claude/Helpers/FleetReporter.swift','Config/Info.plist','Config/Usage4Claude.entitlements',
+    'Usage4Claude.xcodeproj/project.pbxproj','scripts/build_without_xcode.sh','Package.swift','Package.resolved'])
+    assert.equal(await nativeCodeUnchanged(before,after,diff(['scripts/new-runtime.mjs',file])),false,file);
   assert.equal(await nativeCodeUnchanged(undefined,after,diff([])),false);
   assert.equal(await nativeCodeUnchanged(before,after,async()=>{throw Error('missing revision');}),false);
+});
+
+test('the 14.10. helper release (3e87220 to 1d0d4ab) reuses the published native app', async () => {
+  // Exact `git diff --name-only 3e87220 1d0d4ab`: 49 files, none of them a build input.
+  const changed = ['docs/completion-counts-live-2026-10-14.json','docs/fleet-monitoring.md','docs/team-remote-access.md',
+    'docs/worker-remote-access-handoff-2026-10-12.md','docs/worker-remote-access.md','releases/worker-native.json',
+    'scripts/blocked-error-inventory.test.mjs','scripts/completion-evidence.test.mjs','scripts/error-copy-cleanup.mjs',
+    'scripts/error-copy-cleanup.test.mjs','scripts/install-monitor-hub.mjs','scripts/install-monitor-hub.sh',
+    'scripts/install-monitor-hub.test.mjs','scripts/install-worker-admin.sh','scripts/install-worker-observer.mjs',
+    'scripts/install-worker-observer.test.mjs','scripts/member-remote.py','scripts/newsletter-monitor-bridge.mjs',
+    'scripts/newsletter-monitor-bridge.test.mjs','scripts/newsletter-monitor-sales.test.mjs','scripts/pm-question-status.mjs',
+    'scripts/pm-question-status.test.mjs','scripts/setup-mac-monitor.mjs','scripts/setup-mac-monitor.test.mjs',
+    'scripts/setup-worker-remote.sh','scripts/test_member_remote.py','scripts/worker-admin-hub.mjs','scripts/worker-admin.mjs',
+    'scripts/worker-admin.test.mjs','scripts/worker-diagnose.py','scripts/worker-remote-hub.mjs','scripts/worker-remote.mjs',
+    'scripts/worker-remote.test.mjs','team-server/fleet.js','team-server/public/dashboard.css','team-server/public/dashboard.html',
+    'team-server/public/dashboard.js','team-server/remote-access.js','team-server/server.js','team-server/skill-versions.js',
+    'team-server/test/clarification.test.js','team-server/test/completion-evidence.test.js','team-server/test/current-queue.test.js',
+    'team-server/test/dashboard-pipeline-period.test.js','team-server/test/remote-access.test.js','team-server/test/skill-versions.test.js',
+    'team-server/test/worker-control.test.js','team-server/test/worker-reports.test.js','team-server/worker-reports.js'];
+  assert.equal(changed.length,49);
+  const from = '3e87220a629dc9e4a6e67a6a2179d77e7d4b075c', to = '1d0d4ab14f75b73ab11c7b6667cd20dbc69d0f09';
+  assert.equal(await nativeCodeUnchanged(from,to,async (command,args) => {
+    assert.deepEqual([command,...args.slice(2)],['git','diff','--name-only',from,to,'--']);
+    return changed.join('\n')+'\n';
+  }),true);
+});
+
+test('a failed source build is not repeated for the same native code and toolchain within 6 hours', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  await f.writeReceipt('a'.repeat(40));
+  let clock = Date.parse('2026-10-15T08:00:00Z');
+  const native = {tree:'040000 tree '+'1'.repeat(40)+'\tUsage4Claude\n', swiftc:'Apple Swift version 6.1 (swiftlang-6.1)\nTarget: arm64-apple-macosx15.0\n'};
+  let builds = 0, artifact = null;
+  const runner = f.dependencies.runner;
+  f.dependencies.runner = async (command,args,...rest) => {
+    if (command === 'git' && args.includes('diff')) return 'Usage4Claude/Helpers/FleetReporter.swift\nscripts/new-runtime.mjs\n';
+    if (command === 'git' && args.includes('ls-tree')) return native.tree;
+    if (command === 'swiftc') { assert.deepEqual(args,['--version']); return native.swiftc; }
+    if (command === '/bin/bash') { builds++; throw new Error('Max Monitor bauen fehlgeschlagen (Exit 1).'); }
+    return runner(command,args,...rest);
+  };
+  f.dependencies.artifactReader = async () => artifact;
+  f.dependencies.now = () => clock;
+  const update = () => setup({...f.options,appBundle:null,updateOnly:true,open:false},f.dependencies);
+  await assert.rejects(update(),/Max Monitor bauen fehlgeschlagen/);
+  assert.equal(builds,1);
+  let receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+  assert.match(receipt.buildFailure.nativeKey,/^[a-f0-9]{64}$/);
+  assert.equal(receipt.buildFailure.swiftcVersion,'Apple Swift version 6.1 (swiftlang-6.1)');
+  assert.equal(receipt.buildFailure.at,new Date(clock).toISOString());
+  // The failed revision is never recorded as installed.
+  assert.equal(receipt.sourceRevision,'a'.repeat(40));
+  clock += 60000;
+  await assert.rejects(update(),error => {
+    assert.match(error.message,/^Max Monitor bauen zurückgestellt/);
+    for (const marker of ['EPERM','EACCES','Operation not permitted','Permission denied','App-Version','Laufende Monitor-App'])
+      assert.ok(!error.message.includes(marker),marker);
+    return true;
+  });
+  assert.equal(builds,1,'the second update-only run does not build again');
+  assert.equal(await f.marker(),'previous app');
+  // A new toolchain, new native code or the end of the 6-hour window builds again.
+  native.swiftc = 'Apple Swift version 6.2\n';
+  await assert.rejects(update(),/Max Monitor bauen fehlgeschlagen/); assert.equal(builds,2);
+  await assert.rejects(update(),/zurückgestellt/); assert.equal(builds,2);
+  native.tree = '040000 tree '+'2'.repeat(40)+'\tUsage4Claude\n';
+  await assert.rejects(update(),/Max Monitor bauen fehlgeschlagen/); assert.equal(builds,3);
+  clock += 6*3600000;
+  await assert.rejects(update(),/Max Monitor bauen fehlgeschlagen/); assert.equal(builds,4);
+  // A verified release artifact still installs and clears the recorded failure.
+  artifact = f.source;
+  const result = await update();
+  assert.equal(result.mode,'installed'); assert.equal(builds,4);
+  receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+  assert.equal(receipt.buildFailure,undefined);
 });
 
 test('observer-only updates preserve a current native app with local build metadata', async t => {
