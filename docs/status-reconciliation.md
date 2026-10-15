@@ -75,3 +75,17 @@ Die Ausrollung ändert nur die zentrale Queue-Bridge und den Relay samt gemeinsa
 Zustandsmodul und Kontrolllauf. Laufende Newsletter-Worker bleiben unberührt.
 Vorher Runtime-Dateien sichern, anschließend frischen vollständigen Abgleich,
 Audit-Protokoll, Fleet-API und die beiden Anzeigen im Max Monitor prüfen.
+
+## Live bestätigt
+
+Am 16.10.2026 um 00:56 Uhr wurde `c1fee17` im zentralen Dienst bestätigt.
+Die öffentliche, authentifizierte Fleet-API und der gespeicherte Kontrolllauf
+zeigen 729 aktuelle Einträge und keine offenen Statuswidersprüche. Beide
+Uficell-Einträge stehen gespeichert auf `completed`. Der Max Monitor zeigt alle
+sieben Uficell-Pre-Gen-Flows unter „Erledigt“ und keinen unter „Wartet“.
+Ein vorheriger regulärer Folgeabgleich nach der ersten Ausrollung hatte die
+Korrektur bereits erhalten. Der 30-Minuten-Takt ist im Scheduler-Test geprüft;
+der erste produktive Kontrolllauf nach Dienststart ist gespeichert.
+
+Beleg: `docs/audits/2026-10-16-status-live.json`. Die Runtime-Dateien und ihre
+Vorgänger sind über das dort gespeicherte Release-Manifest rückverfolgbar.

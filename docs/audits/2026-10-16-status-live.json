@@ -1,0 +1,97 @@
+{
+  "verifiedAt": "2026-10-15T22:56:27.866Z",
+  "release": {
+    "revision": "c1fee17",
+    "deployedAt": "2026-10-15T22:56:02.729533+00:00",
+    "backup": "/var/backups/max-monitor/status-reconciliation-20261015T225602Z",
+    "files": {
+      "scripts/newsletter-monitor-bridge.mjs": "6874d93aa94e698a800e676751dd41bfe469659e0ccb3717b84019a70777a94e",
+      "team-server/fleet.js": "0bf214a586df929968a2c2ed7580acfcd342bca723ad49cf51ef2e4c0f718d51",
+      "scripts/task-state.cjs": "e27c7dc74f97c6175eb70a83f7f62bbc15727f61cd619057a54c30ac58f99897",
+      "scripts/status-reconciliation.mjs": "828a02d86c8d7e681548aeaadfd39ef06057a525f369cab772629ca4276ba8dd"
+    }
+  },
+  "services": [
+    "active",
+    "active"
+  ],
+  "source": {
+    "name": "ClickUp · AI Newsletter Creation",
+    "lastSuccessAt": "2026-10-15T22:56:02.901Z",
+    "detail": "729 Aufgaben · 27 Tags · 902 Reservierungen · 27 offen in #ai-fehler",
+    "receivedAt": "2026-10-15T22:56:15.431Z",
+    "error": null,
+    "stale": false,
+    "status": "fresh"
+  },
+  "total": 729,
+  "uficell": [
+    {
+      "id": "clickup:newsletter:12451cu7umh",
+      "title": "Onboarding Welcome Flow",
+      "workflow": "newsletter",
+      "contentKind": "flow",
+      "packageId": "12451cu7umh",
+      "completedAt": "2026-10-15T20:37:39.000Z",
+      "completionSource": "slack",
+      "status": "completed",
+      "tags": [
+        "pre gen · fertig",
+        "uficell"
+      ],
+      "url": "https://app.clickup.com/t/12451cu7umh",
+      "figmaUrl": "https://www.figma.com/design/wG4CUoLkKXNZjd8JJsbncy?node-id=2152-2",
+      "company": "Uficell",
+      "sourceStatus": "approval intern",
+      "workerId": "macworker-5-schwarz",
+      "phase": "Pre-Gen abgeschlossen · approval intern",
+      "attemptId": "20261015T163838Z-12451cu7umh@1792075250797",
+      "progress": 100,
+      "updatedAt": "2026-10-15T20:35:38.200Z",
+      "taskVersion": "3549c7e47578fb64aea2f477decfe12f20fe309f8649ae47924bbe5ca7ab69c6"
+    },
+    {
+      "id": "clickup:newsletter:12451cu7uu1",
+      "title": "Onboarding Thank You Flow",
+      "workflow": "newsletter",
+      "contentKind": "flow",
+      "packageId": "12451cu7uu1",
+      "completedAt": "2026-10-15T18:52:25.000Z",
+      "completionSource": "slack",
+      "status": "completed",
+      "tags": [
+        "pre gen · fertig",
+        "revision · läuft",
+        "uficell"
+      ],
+      "url": "https://app.clickup.com/t/12451cu7uu1",
+      "figmaUrl": "https://www.figma.com/design/wG4CUoLkKXNZjd8JJsbncy?node-id=2064-2",
+      "company": "Uficell",
+      "sourceStatus": "revision intern",
+      "workerId": "macbook-1",
+      "phase": "Pre-Gen abgeschlossen · revision intern",
+      "attemptId": "20261015T165253Z-12451cu7uu1@1792075266404",
+      "progress": 100,
+      "updatedAt": "2026-10-15T22:51:10.746Z",
+      "taskVersion": "5d6bcc37c94a5f2d2aa27db7c80fce0048d9a3da44798b6b89fd6b34daed7f24"
+    }
+  ],
+  "audit": {
+    "schema": 1,
+    "startedAt": "2026-10-15T22:56:02.898Z",
+    "checkedAt": "2026-10-15T22:56:15.549Z",
+    "sourceAt": "2026-10-15T22:56:02.901Z",
+    "intervalSeconds": 1800,
+    "tasksChecked": 729,
+    "ok": true,
+    "repaired": [],
+    "findings": []
+  },
+  "logs": "Oct 15 22:56:02 rs-hub systemd[1]: Started max-monitor-queue.service - ClickUp and Newsletter queue monitor with error-copy cleanup.\nOct 15 22:56:02 rs-hub node[292620]: (node:292620) ExperimentalWarning: SQLite is an experimental feature and might change at any time\nOct 15 22:56:02 rs-hub node[292620]: (Use `node --trace-warnings ...` to show where the warning was created)\nOct 15 22:56:15 rs-hub node[292620]: 2026-10-15T22:56:15.478Z Queue aktualisiert (729 Aufgaben).\nOct 15 22:56:15 rs-hub node[292620]: 2026-10-15T22:56:15.549Z Status-Audit: 729 Aufgaben, 0 Abweichungen behoben, 0 offen.\nOct 15 22:56:18 rs-hub node[292620]: 2026-10-15T22:56:18.710Z Fehlerbereinigung: Fehlerthread nicht vollständig lesbar.\n",
+  "ui": {
+    "verified": true,
+    "application": "Max Monitor",
+    "preGenFlowsWaiting": 0,
+    "uficellPreGenFlowsCompleted": 7
+  }
+}
