@@ -466,7 +466,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         workerId: claim?.paused && claim.portable ? undefined : claim?.workerId, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
         updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30),
         // Internal only: addRunDetails reads progress and renders of this attempt, then removes it.
-        run: claim ? { id: claim.runId, ts: claim.ts, taskId: task.id, channelId: claim.channelId, heartbeat: claim.heartbeat } : undefined });
+        run: claim ? { id: claim.runId, jobId: claim.jobId, ts: claim.ts, taskId: task.id, channelId: claim.channelId, heartbeat: claim.heartbeat } : undefined });
     }
   }
   // Revisions come from the approval workflow. They can run while the old
@@ -500,7 +500,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId,
       phase, progress: status === 'completed' ? 100 : undefined, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
       ...completionEvidence([claim]),
-      run: { id: claim.runId, ts: claim.ts, taskId: claim.taskId, channelId: claim.channelId, heartbeat: claim.heartbeat } });
+      run: { id: claim.runId, jobId: claim.jobId, ts: claim.ts, taskId: claim.taskId, channelId: claim.channelId, heartbeat: claim.heartbeat } });
   }
   return rows.sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -824,7 +824,38 @@ export function createLocalHubFetch(hub, { localHub, transport, spawnImpl = spaw
   };
 }
 
-export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, claimReader = listClaims, statusCache, now = Date.now() }) {
+// A confirmed unowned checkpoint is held by the Hub. The producer is provenance,
+// never the current Mac assignment. Read descriptors only, without loading jobs.
+export async function readStoredCheckpoints(localHub) {
+  const file = path.join(localHub, 'state/newsletter-continuations/queue.sqlite');
+  try { await fs.access(file); } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  const db = new (require('node:sqlite').DatabaseSync)(file, { readOnly: true });
+  try { return db.prepare('SELECT run_id,task_id,producer,owner,ready_at FROM checkpoints WHERE owner IS NULL').all(); }
+  finally { db.close(); }
+}
+
+export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.filter(row => row.run).map(row => [row.id, row.run]))) {
+  for (const row of rows) {
+    if (row.status === 'completed') continue;
+    const run = bindings.get(row.id);
+    if (!run) continue;
+    const entry = entries.find(entry => !entry.owner && entry.run_id === run.id
+      && (entry.task_id === (run.jobId || run.taskId) || (row.workflow === 'correction' && row.id === `correction:${entry.task_id}`)));
+    if (!entry) continue;
+    row.workerId = undefined;
+    row.attemptId = run.id;
+    if (entry.ready_at === 8640000000000000) {
+      if (!/PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')) row.status = 'blocked';
+      if (!/PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')) row.phase = 'Blockiert · Fortschritt im RS Hub gesichert';
+    } else {
+      row.status = 'queued';
+      row.phase = 'Wartet · Fortsetzung im RS Hub gesichert';
+    }
+  }
+  return rows;
+}
+
+export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, checkpointReader, claimReader = listClaims, statusCache, now = Date.now() }) {
   validateWorkflows(workflows);
   const issues = new Map();
   const onMessage = message => {
@@ -835,7 +866,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   };
   const errorChannel = config.monitor_channels?.errors || (config.fehler?.enabled ? config.fehler.channel_id : undefined);
   const errorMessages = [];
-  const [taskResult, claimResult, workerResult, issueResult, salesResult, questionResult] = await Promise.allSettled([
+  const [taskResult, claimResult, workerResult, issueResult, salesResult, questionResult, checkpointResult] = await Promise.allSettled([
     (async () => {
       const variants = await discoverTags(hubFetch, config.clickup.workspace_id, workflows);
       return { variants, tasks: await listTasks(hubFetch, config.clickup.workspace_id, variants) };
@@ -861,6 +892,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
       onMessage: message => { errorMessages.push(message); onMessage(message); } }) : Promise.resolve(),
     Promise.resolve().then(() => salesReader ? salesReader(now) : []),
     Promise.resolve().then(() => questionReader ? questionReader() : { sets: [], jobs: [] }),
+    Promise.resolve().then(() => checkpointReader ? checkpointReader() : []),
   ]);
   // Clear resolved notices only after every configured warning channel was read completely.
   const workerIssues = claimResult.status === 'fulfilled' && issueResult.status === 'fulfilled' ? [...issues.values()] : undefined;
@@ -880,7 +912,9 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   // Any currently visible attempt prevents borrowing an older success.
   retainCompletionDates(queue, previousTasks, claims);
   applyPmQuestions(queue, questionResult.value);
+  const bindings = new Map(queue.filter(row => row.run).map(row => [row.id, row.run]));
   await addRunDetails(queue, { hubFetch, channelId: config.slack.channel_id, previews, previousTasks, now, statusCache });
+  if (checkpointResult.status === 'fulfilled') applyStoredCheckpoints(queue, checkpointResult.value, bindings);
   queue.push(...salesResult.value);
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
   const manualUploadIds = new Set(tasks.filter(task => (task.tags || []).some(tag => normalizeTag(typeof tag === 'string' ? tag : tag.name) === normalizeTag('manuell'))).map(task => task.id));
@@ -1040,7 +1074,8 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
         const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, statusCache, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
           previews, previousTasks: cached?.tasks, ...(options.localHub ? { fleetReader: readLocalHubFleet,
             salesReader: time => readLocalSales(path.join(options.localHub, 'sales-newsletter'), time),
-            questionReader: () => readPmQuestions(path.join(options.localHub, '..', 'rs-pm-question-pilot', 'state.sqlite')) } : {}) }), cachedSource: cached?.source,
+            questionReader: () => readPmQuestions(path.join(options.localHub, '..', 'rs-pm-question-pilot', 'state.sqlite')),
+            checkpointReader: () => readStoredCheckpoints(options.localHub) } : {}) }), cachedSource: cached?.source,
           publish: snapshot => options.dryRun ? console.log(JSON.stringify(snapshot, null, 2)) : publishSnapshot(snapshot, options),
           save: options.dryRun ? undefined : saveSnapshot,
         });
