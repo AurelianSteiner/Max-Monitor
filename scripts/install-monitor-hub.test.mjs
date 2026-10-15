@@ -45,6 +45,7 @@ test('queue service reads credentials only on the Hub, uses the existing local t
   assert.match(service, /StateDirectory=max-monitor-queue/);
   assert.match(service, /ReadOnlyPaths=\/opt\/rs-hub \/etc\/max-monitor/);
   assert.match(service, /ReadWritePaths=\/var\/lib\/max-monitor-queue/);
+  assert.match(service, /ReadWritePaths=\/var\/lib\/max-monitor-queue \/opt\/rs-hub\/state\/newsletter-continuations/);
   // The shared Slack budget of the Hub transport (worker slack-rate-limit.js).
   assert.match(service, /^ReadWritePaths=\/opt\/rs-hub\/state\/slack-rate-limits$/m);
   assert.ok(!service.includes(ownerToken));
