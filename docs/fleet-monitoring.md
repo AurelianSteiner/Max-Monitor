@@ -384,6 +384,11 @@ Standardmäßig werden diese Workflows erkannt:
 Die Tags entsprechen genau denen des Newsletter-Workers (`AI Newsletter Creation`,
 `src/pre-gen.js`). Übersetzungen erscheinen je Sprache als eigene Zeile mit dem
 Workflow `translation` und dem Sprachkürzel am Titel, z. B. „Graco Aktion · EN“.
+Wartende Sprachfassungen eines laufenden Sprachpakets erscheinen im Dashboard
+unter **Läuft** mit „Paket läuft“. Die Zuordnung nutzt dieselbe ClickUp-Aufgabe
+oder einen eindeutigen Briefing-Link zur DE-Aufgabe desselben Kunden. Status und
+Worker-Plätze der einzelnen Fassung bleiben erhalten; Blockaden, Pausen und
+PM-Rückfragen bleiben in ihrer bisherigen Ansicht.
 Groß-/Kleinschreibung, Leerzeichen und Satzzeichen werden beim Abgleich
 normalisiert; ClickUp-Abfragen verwenden trotzdem die genaue vorhandene
 Schreibweise. Alle Tags werden in **einer** seitenweisen ClickUp-Abfrage gelesen

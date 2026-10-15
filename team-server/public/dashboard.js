@@ -6,6 +6,7 @@
   const $ = (id) => document.getElementById(id);
   // Display names do not change task ownership or the SSH/enrollment identity.
   const workerDisplayNames = new Map([
+    ["mac-worker-6-64d66918", "MacWorker 6"],
     ["macbook-1", "Mac 1"],
     ["macbook-2", "Mac 2"],
     ["newsletter-mac-141b2976", "Mac 4"],
@@ -108,7 +109,26 @@
     $("sync-status").textContent = text;
     $("sync-status").dataset.state = state;
   }
+  function languagePackageId(task) {
+    if (!["newsletter", "translation"].includes(task.workflow)) return null;
+    return task.packageId || /^clickup:(?:newsletter|translation-[a-z]{2}):([A-Za-z0-9]+)$/.exec(task.id)?.[1] || null;
+  }
+  function packageLanguage(task) {
+    return task.language || /^clickup:translation-([a-z]{2}):/.exec(task.id)?.[1];
+  }
+  function runningPackage(task) {
+    if (task.status !== "queued" || task.blockedReason || /^(Pausiert|Wartet.*PM)/i.test(task.phase || "")) return null;
+    const language = packageLanguage(task);
+    const id = languagePackageId(task);
+    if (!id || !language || language === "de") return null;
+    return tasks().find(other => other.id !== task.id && languagePackageId(other) === id
+      && other.status === "running" && other.workerId) || null;
+  }
+  function packageHint(task) {
+    return runningPackage(task) ? `Sprachpaket läuft · ${packageLanguage(task).toUpperCase()} folgt im Paket` : null;
+  }
   function stageOf(task) {
+    if (runningPackage(task)) return "running";
     if (task.status !== "queued") return task.status;
     const waiting = task.workerId || (task.tags || []).some((tag) =>
       String(tag).toLocaleLowerCase("de-DE").replace(/[^\p{L}\p{N}]/gu, "").endsWith("wartet"))
@@ -173,6 +193,7 @@
     return !filter || task.workflow === filter || workflowKey(task) === filter;
   }
   function completionLabel(task) {
+    if (runningPackage(task)) return "Paket läuft";
     if (task.status !== "completed") return statusNames[stageOf(task)] || task.status;
     if (task.completion === "manual") return "Manuell erledigt";
     if (task.completedAt) return "Fertig";
@@ -707,7 +728,7 @@
       button.setAttribute("aria-pressed", String(selected));
     });
     $("worker-filter").hidden = !workerFilter;
-    $("worker-filter-label").textContent = `Aufgaben für ${workerFilter}`;
+    $("worker-filter-label").textContent = `Aufgaben für ${workerName(workerFilter)}`;
     $("queue-period-filter").hidden = queuePeriod !== "today";
     $("queue-period-label").textContent = `Offen + heute abgeschlossen · ${productionDay(Date.now())}`;
     document.querySelectorAll("[data-pipeline-period]").forEach((button) => {
@@ -1338,7 +1359,8 @@
       const assigned = node("td");
       const assignment = node("div", "progress");
       assignment.append(
-        node("span", "", workerName(task.workerId, "Noch nicht zugewiesen")),
+        node("span", "", runningPackage(task)
+          ? `Paket: ${workerName(runningPackage(task).workerId)}` : workerName(task.workerId, "Noch nicht zugewiesen")),
       );
       if (Number.isFinite(task.progress)) {
         const track = node("div", "usage-track");
@@ -1349,8 +1371,8 @@
       }
       assigned.append(assignment);
       // The worker's live step replaces the generic "In Bearbeitung".
-      if (task.blockedReason || task.step || task.phase) {
-        const phase = node("span", task.blockedReason ? "phase blocked-reason" : "phase", task.blockedReason || task.step || task.phase);
+      if (packageHint(task) || task.blockedReason || task.step || task.phase) {
+        const phase = node("span", task.blockedReason ? "phase blocked-reason" : "phase", packageHint(task) || task.blockedReason || task.step || task.phase);
         phase.title = phase.textContent;
         assigned.append(phase);
       }
@@ -1434,7 +1456,7 @@
     return parts.map((part, index) => (shared ? part.at(-1) : previews[index].title) || `Mail ${index + 1}`);
   }
   function taskSignature(task) {
-    return JSON.stringify([task.status, task.progress, task.step, task.phase, task.blockedReason, task.workerId, task.completion,
+    return JSON.stringify([task.status, packageHint(task), task.progress, task.step, task.phase, task.blockedReason, task.workerId, task.completion,
       (task.previews || []).map((entry) => [entry.id, entry.render])]);
   }
   function draftSection(task, keep) {
@@ -1562,6 +1584,9 @@
       detailField("Aktualisiert", exact(task.updatedAt)),
     );
     if (task.blockedReason) grid.append(detailField(task.status === "clarification" ? "Offene Klärung" : "Blockiergrund", task.blockedReason, true));
+    const source = runningPackage(task);
+    if (source) grid.append(detailField("Sprachpaket", source.title || source.id, true),
+      detailField("Sprachfassung", `${packageLanguage(task).toUpperCase()} · folgt im laufenden Paket; noch nicht gestartet`, true));
     const tags = node("div", "detail-tags");
     (task.tags || []).forEach((tag) =>
       tags.append(node("span", "workflow-name", tag)),

@@ -228,6 +228,8 @@ function validateQueue(body) {
       title: string(raw.title, "task.title", 300),
       workflow: string(raw.workflow, "task.workflow", 80),
       contentKind: ["newsletter", "flow", "popup"].includes(raw.contentKind) ? raw.contentKind : undefined,
+      packageId: string(raw.packageId, "task.packageId", 160, true),
+      language: ["de", "en", "it", "fr", "se", "sp"].includes(raw.language) ? raw.language : undefined,
       completedAt: timestamp(raw.completedAt, "task.completedAt", true),
       completionSource: ["slack", "clickup", "review", "sales"].includes(raw.completionSource) ? raw.completionSource : undefined,
       status,
@@ -307,6 +309,10 @@ function machineLiveness(machine, worker, now) {
   };
 }
 
+function workerDisplayName(workerId, fallback) {
+  return workerId === "mac-worker-6-64d66918" ? "MacWorker 6" : workerId || fallback;
+}
+
 function publicMachine(machine, now) {
   const { ownerId, derivedStatus, ...visible } = machine;
   const boundAccount = machine.accounts?.length === 1 && machine.monitoringAccountId && machine.accounts.find((account) =>
@@ -336,7 +342,7 @@ function publicMachine(machine, now) {
   return {
     ...visible,
     // Slack calls this Mac by worker_id; keep the OS name as separate metadata.
-    name: machine.workerId || machine.name,
+    name: workerDisplayName(machine.workerId, machine.name),
     deviceName: machine.name,
     limits,
     accounts,
@@ -361,7 +367,7 @@ function publicMachineEvent(entry, machines) {
   const workerId = "workerId" in entry ? entry.workerId
     : entry.type.startsWith("worker_") ? entry.entityId
     : machines.find((machine) => machine.deviceId === (entry.deviceId || entry.entityId))?.workerId;
-  return workerId ? { ...entry, title: workerId } : entry;
+  return workerId ? { ...entry, title: workerDisplayName(workerId) } : entry;
 }
 
 // A worker reads the app's random device UUID on its own Mac and sends it with
@@ -870,12 +876,12 @@ function createFleetStore(dataDir, now = Date.now) {
     });
     for (const worker of workers.values()) {
       const { derivedStatus, ...visible } = worker;
-      machines.push({ ...visible, name: worker.workerId, deviceId: `hub:${worker.workerId}`, telemetrySource: "worker", memberId: null, limits: [], status: machineStatus(worker, time), heartbeatAgeSeconds: Math.max(0, Math.floor((time - Date.parse(worker.lastSeenAt)) / 1000)), usageStale: true, usageStatus: "unavailable" });
+      machines.push({ ...visible, name: workerDisplayName(worker.workerId), deviceId: `hub:${worker.workerId}`, telemetrySource: "worker", memberId: null, limits: [], status: machineStatus(worker, time), heartbeatAgeSeconds: Math.max(0, Math.floor((time - Date.parse(worker.lastSeenAt)) / 1000)), usageStale: true, usageStatus: "unavailable" });
     }
     for (const issue of state.workerIssues || []) {
       let machine = machines.find(machine => machine.workerId === issue.workerId);
       if (!machine) {
-        machine = { workerId: issue.workerId, name: issue.workerId, deviceId: `hub:${issue.workerId}`, telemetrySource: "worker", limits: [], status: "offline", usageStale: true, usageStatus: "unavailable" };
+        machine = { workerId: issue.workerId, name: workerDisplayName(issue.workerId), deviceId: `hub:${issue.workerId}`, telemetrySource: "worker", limits: [], status: "offline", usageStale: true, usageStatus: "unavailable" };
         machines.push(machine);
       }
       (machine.workerIssues ||= []).push(issue);

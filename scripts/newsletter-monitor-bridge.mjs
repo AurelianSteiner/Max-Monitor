@@ -401,6 +401,21 @@ export function retainCompletionDates(rows, previousTasks = [], claims = []) {
   return rows;
 }
 
+// Keep language steps attached to their source task. A different ClickUp task
+// belongs to the package only with an explicit briefing link and source identity.
+function languagePackage(task, tasks, workflow) {
+  if (!["newsletter", "translation"].includes(workflow.queueWorkflow || workflow.id)) return {};
+  const prefix = /^\s*\[?(DE|EN|IT|FR|SE|SP)\]?(?:\s*[|¦:]\s*|\s+[-–—·]\s+)(?=\S)/u;
+  const language = /^translation-([a-z]{2})$/.exec(workflow.id)?.[1] || prefix.exec(task.name || "")?.[1].toLowerCase();
+  const core = name => String(name || "").replace(prefix, "").normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+  const text = [task.markdown_description, task.description, task.text_content].filter(Boolean).join("\n");
+  const links = [...text.matchAll(/app\.clickup\.com\/t\/(?:\d+\/)?([A-Za-z0-9]+)/g)].map(match => match[1]);
+  const sources = language && language !== "de" ? tasks.filter(source => source.id !== task.id && links.includes(source.id)
+    && task.folder?.id && source.folder?.id === task.folder.id
+    && (prefix.exec(source.name || "")?.[1] === "DE" || (!prefix.test(source.name || "") && core(source.name) === core(task.name)))) : [];
+  return { packageId: sources.length === 1 ? sources[0].id : task.id, language };
+}
+
 export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, figmaBoardUrl } = {}) {
   const updatedAt = new Date(now).toISOString();
   const rows = [];
@@ -441,6 +456,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       const title = workflow.titleSuffix ? `${displayText(name, 300 - workflow.titleSuffix.length - 3)} · ${workflow.titleSuffix}` : name;
       const evidence = completionEvidence(matches);
       rows.push({ id: `clickup:${workflow.id}:${task.id}`, title, url, workflow: workflow.queueWorkflow ?? workflow.id, status,
+        ...languagePackage(task, tasks, workflow),
         contentKind: contentKind(task, matches),
         ...evidence,
         completionSource: evidence.completionSource || (status === 'completed' ? 'clickup' : undefined),

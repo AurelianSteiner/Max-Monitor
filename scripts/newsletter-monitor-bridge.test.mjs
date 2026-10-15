@@ -127,6 +127,23 @@ test('translations appear per language with their own reservation', () => {
   assert.equal(byId['clickup:newsletter:t'].workerId, undefined, 'a translation claim never assigns the newsletter');
 });
 
+test('language packages preserve exact source links and reject ambiguous or cross-customer links', () => {
+  const de = { ...task('de1'), name: 'DE | Herbst', folder: { id: 'customer-a' } };
+  const en = { ...task('en1'), name: 'EN | Herbst', folder: { id: 'customer-a' }, markdown_description: 'Deutsches Briefing: https://app.clickup.com/t/24553341/de1' };
+  const rows = buildQueue([de, en], [], DEFAULT_WORKFLOWS, { now });
+  assert.equal(rows.find(row => row.id.endsWith(':en1')).packageId, 'de1');
+  assert.equal(rows.find(row => row.id.endsWith(':en1')).language, 'en');
+  assert.equal(rows.find(row => row.id.endsWith(':de1')).packageId, 'de1');
+  for (const sources of [[{ ...de, folder: { id: 'other-customer' } }], [],
+    [de, { ...de, id: 'de2' }]]) {
+    const input = { ...en, markdown_description: en.markdown_description + ' https://app.clickup.com/t/de2' };
+    assert.equal(buildQueue([...sources, input], [], DEFAULT_WORKFLOWS, { now }).find(row => row.id.endsWith(':en1')).packageId, 'en1');
+  }
+  const steps = buildQueue([task('single', ['pre gen · läuft', 'en translation'])], [], DEFAULT_WORKFLOWS, { now });
+  assert.ok(steps.every(row => row.packageId === 'single'));
+  assert.equal(steps.find(row => row.workflow === 'translation').language, 'en');
+});
+
 test('a claim counts only when its event type matches the worker job ID', () => {
   assert.equal(parseClaim(jobClaim('ai_newsletter_claim', 'x-klaviyo', 'mac')), null);
   assert.equal(parseClaim(jobClaim('ai_klaviyo_upload_claim', 'x', 'mac')), null);
