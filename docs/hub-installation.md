@@ -56,9 +56,13 @@ Bei einem abweichenden Node-Pfad `--node-binary /absoluter/pfad/node` angeben.
 Die Vorgaben sind Team `RSMACS01`, Port `8941` und die oben genannte öffentliche
 Adresse. `--team-id`, `--port` und `--server-url` erlauben eine gezielte Anpassung.
 
-`--worker-root` muss auf den geprüften Newsletter-Quellcode zeigen. Benötigt
-werden ausschließlich `src/config.js`, `src/hub-transport.js` und
-`src/pre-gen.js`. Der Installer kopiert diese drei Dateien und erzeugt eine
+`--worker-root` muss auf den geprüften Newsletter-Quellcode zeigen (aktueller
+`main` des Workers). Benötigt werden `src/config.js`, `src/hub-transport.js` und
+`src/pre-gen.js` samt allen Dateien, die sie über relative `require('./…')`
+laden, auch innerhalb von Funktionen (auf `main` vom 15.10.2026 15 Dateien, u. a.
+`read-coalescer.js`, `filestage-rate-limit.js` und `slack-rate-limit.js`). Der
+Installer kopiert genau diese Dateien und bricht vor jeder Änderung ab, wenn
+eine davon fehlt oder außerhalb von `--worker-root` liegt. Er erzeugt eine
 eigene minimale Monitor-Konfiguration mit `/usr/bin/false` als Claude-Binary;
 er kopiert keine lokale Mac-Konfiguration und startet keinen Newsletter-Worker.
 
@@ -81,8 +85,13 @@ lesen zu können. Er verwendet den unveränderten Newsletter-Hub-Transport mit
 einem lokalen Node-Prozess anstelle von SSH. Ein zusätzlicher GET-Filter
 verhindert ClickUp-/Slack-Schreibzugriffe und Worker-Heartbeat-Schreibeffekte.
 Der Dienst erhält nur Lesezugriff auf `/opt/rs-hub` und die private
-Monitor-Konfiguration; lokale Schreibzugriffe sind auf seinen eigenen Cache
-begrenzt. Die gemeinsamen Service-Schlüssel werden nicht auf Macs übertragen.
+Monitor-Konfiguration; lokale Schreibzugriffe sind auf seinen eigenen Cache und
+das gemeinsame Slack-Budget des Hub-Transports begrenzt
+(`<HUB_RUNTIME_DIR oder /opt/rs-hub>/state/slack-rate-limits`, dasselbe
+Verzeichnis wie bei den Workern; der Installer legt es bei Bedarf mit 0700 an).
+So bucht auch die Brücke jeden Slack-Aufruf im gemeinsamen Abstand aller Macs und
+beachtet deren 429-Pause. Die gemeinsamen Service-Schlüssel werden nicht auf
+Macs übertragen.
 
 ## Wiederherstellung
 

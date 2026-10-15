@@ -42,6 +42,8 @@ noch in einen Download-Befehl, in die Worker-Konfiguration oder auf die neuen Ma
 
 RS-Skills prüft Monitor-Updates alle 60 Sekunden und direkt nach der Anmeldung am Mac. Der Hintergrundmodus `--update-only` liest App-Metadaten und nicht geheime Einstellungen, bewahrt die bestehende Geräte- und Team-Zuordnung und startet die installierte App bei Bedarf. Er ruft keine native Schlüsselbund-CLI auf und registriert keine neuen Mitglieder. Die laufende App meldet die authentifizierte Verbindung jede Minute; nach einem Update wird dies über `nativeLastSeenAt` und `appVersion` in der zentralen Flotte geprüft.
 
+Nur Änderungen an den Bauquellen der App (`Usage4Claude/`, `Usage4Claude.xcodeproj/`, `Config/`, `Package.swift`, `Package.resolved`, `scripts/build_without_xcode.sh`) verlangen eine neue App; alle anderen Dateien (Hilfsskripte, Relay, Tests, Dokumentation) behalten die installierte bzw. veröffentlichte App. Eine neue Bauquelle muss in diese Liste in `scripts/setup-mac-monitor.mjs` aufgenommen werden. Eine native Änderung braucht im selben Push ein neues `releases/worker-native.json` (`scripts/release.sh`), sonst baut jeder Mac selbst. Schlägt dieser Bau fehl, merkt sich `--update-only` den nativen Stand und die Swift-Version und versucht denselben Bau mit demselben Compiler erst nach sechs Stunden erneut („Max Monitor bauen zurückgestellt …“, Grund `build_failed`); die installierte App bleibt unverändert.
+
 ## Was das Worker-Setup automatisch macht
 
 Die Monitor-App stellt ihre dauerhaft gespeicherte Geräte-UUID bereit. Der

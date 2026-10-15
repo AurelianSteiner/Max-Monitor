@@ -118,6 +118,16 @@ eine Quelle länger oder fällt sie aus, bleibt der letzte vollständige Stand
 sichtbar; unvollständige Quellenantworten überschreiben weder Aufgaben noch
 Zuordnungen.
 
+Die Brücke nutzt denselben Slack-Zugang (Tuck) wie alle Worker-Macs und hält
+ihren Leseanteil deshalb klein: Reservierungskanäle werden seitenweise mit 999
+Nachrichten und höchstens alle 180 Sekunden vollständig gelesen; dazwischen
+zeigt die Queue diesen Stand. Antwortet Slack für einen Kanal mit 429, nutzt die
+Brücke dessen letzten vollständigen Stand, solange er jünger als zehn Minuten
+ist, statt den ganzen Abgleich zu verwerfen. Ein solcher Stand dient nur der
+Anzeige; Reservierungen treffen ausschließlich die Worker mit eigenen Lesungen,
+und die Bereinigung der Fehlerkopien läuft nur nach einem vollständig frisch
+gelesenen Abgleich.
+
 Sobald ein vollständiger Stand im Relay gespeichert wurde, meldet eine
 authentifizierte Live-Verbindung die Änderung an alle offenen Monitor-Fenster.
 Diese laden die aktuelle Queue unmittelbar nach und behalten ihre Filter. Das
@@ -143,7 +153,7 @@ werden dafür nicht beendet. Claude-Kontingente werden alle fünf Minuten geprü
 Fehler führen zu gestaffelten Wiederholungen, statt den Account zurückzusetzen.
 
 Korrekturen erscheinen unabhängig vom alten Pre-Gen-Abschluss. Die aktuellen
-Slack-Reservierungen werden jede Minute neu gelesen: ❌ am finalen Claim bedeutet
+Slack-Reservierungen werden etwa alle drei Minuten neu gelesen: ❌ am finalen Claim bedeutet
 blockiert, ✅ abgeschlossen. Die eigene Bot-Antwort liefert den Blockiergrund. Er
 bleibt samt zuständigem Mac sichtbar, auch wenn dieser bereits andere Aufgaben
 bearbeitet. Ein neuer Versuch ersetzt die alte Blockierung; freigegebene oder
@@ -159,7 +169,10 @@ Slack-Thread seiner Reservierung (`⏳ 50 % · Bau der Mail`, vom Worker alle f�
 Minuten bearbeitet). Prozent und Schritt erscheinen im Fortschrittsbalken und als
 „Letzter Schritt“. Der Schritt steht im eigenen Feld `step`; anders als `phase`
 erzeugt er keinen Log-Eintrag und ändert die Abhak-Version nicht. Ohne lesbare
-Status-Antwort bleibt die Aufgabe einfach „In Bearbeitung“.
+Status-Antwort bleibt die Aufgabe einfach „In Bearbeitung“. Ein Thread wird nur
+erneut gelesen, wenn sich der Heartbeat seiner Reservierung geändert hat oder
+der gemerkte Stand fünf Minuten alt ist. Nach dem ersten 429 eines Abgleichs
+liest die Brücke keine weiteren Threads; diese behalten ihren letzten Stand.
 
 Jeder Bau einer Mail (`build.py --kunde`) speichert das tatsächliche Render im RS
 Hub, auch das erste vor dem Art Director. Die Brücke auf dem Hub liest diese
@@ -481,9 +494,16 @@ ein laufender Wiederholungsversuch wird zusätzlich als laufend angezeigt.
 Alte ClickUp-Blockiert-Tags und abgebrochene Tests erzeugen keine zusätzlichen
 offenen Fehler. Die ursprünglichen Quelldaten und die Ereignishistorie bleiben erhalten.
 
-Die Bridge liest den Fehlerkanal vollständig ohne Altersgrenze, einschließlich
-aller Seiten. Nach der Behebung entfernt der Worker seine Fehlermeldung aus Slack;
-der nächste vollständige Abgleich entfernt sie automatisch aus Max Monitor.
+Die Bridge liest den Fehlerkanal alle 30 Minuten vollständig ohne Altersgrenze,
+einschließlich aller Seiten; dazwischen liest sie nur Meldungen, die neuer sind
+als die neueste bekannte. Nach der Behebung entfernt der Worker seine
+Fehlermeldung aus Slack; der nächste vollständige Abgleich (spätestens nach 30
+Minuten, nach einer eigenen Bereinigung sofort) entfernt sie aus Max Monitor.
+Die zentrale Bereinigung entfernt eine Fehlerkopie nur, wenn die Aufgabe wieder
+läuft oder abgeschlossen ist. Bei pausierten, wartenden, markierten Aufgaben und
+offener PM-Rückfrage bleibt die Kopie stehen (`still-open`). Antwortet Slack beim
+Lesen eines Fehlerthreads mit 429, endet die Bereinigung dieses Abgleichs ohne
+Löschung (`skipped: 'ratelimited'`).
 Solche Einträge bieten einen direkten Slack-Link und können im Monitor nicht
 unabhängig abgehakt werden. Bei Quellenfehlern bleibt der letzte bestätigte Bestand
 mit einer sichtbaren Quellenwarnung erhalten. Ein erfolgreich leer gelesener
