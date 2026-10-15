@@ -457,8 +457,8 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         else if (status === 'running') { phase = 'Läuft laut ClickUp; Worker-Zuordnung fehlt'; }
       }
       if (pausedTag && fresh) phase = 'Pausiert · automatische Fortsetzung';
-      if (status !== 'completed' && claim?.outcome !== 'completed' && claim?.paused === true && ['claiming', 'running'].includes(claim.state)) { status = 'queued'; phase = 'Pausiert · wartet außerhalb der Worker-Plätze'; }
-      if (status !== 'completed' && claim?.outcome !== 'completed' && claim?.paused && claim.portable) { status='queued'; phase='Wartet · Fortsetzung in der zentralen Queue'; }
+      if (!['completed', 'blocked', 'failed'].includes(status) && claim?.outcome !== 'completed' && claim?.paused === true && ['claiming', 'running'].includes(claim.state)) { status = 'queued'; phase = 'Pausiert · wartet außerhalb der Worker-Plätze'; }
+      if (!['completed', 'blocked', 'failed'].includes(status) && claim?.outcome !== 'completed' && claim?.paused && claim.portable) { status='queued'; phase='Wartet · Fortsetzung in der zentralen Queue'; }
       if (status === 'blocked' && !phase) phase = 'Blockiert';
       let url = `https://app.clickup.com/t/${encodeURIComponent(task.id)}`;
       try {

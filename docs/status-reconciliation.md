@@ -29,6 +29,8 @@ keine widersprüchliche Anzeige bleibt im Replay übrig. Belege liegen unter
   Korrektur- oder Upload-Schritt steht. Eine aktuelle Korrektur bleibt als eigene
   Aufgabe sichtbar. Der tatsächliche Status wird einschließlich `revision intern`
   und `revision extern` berücksichtigt.
+- Eine portable Pause kann eine technische Blockade nur über den exakt passenden
+  gespeicherten Hub-Fortsetzungsauftrag in „Wartet“ überführen.
 - Ein neuer Auftrag darf wieder laufen. Er übernimmt weder Abschlussdatum noch
   Belege des früheren Versuchs. Ein neuer Heartbeat allein ist kein neuer Auftrag.
 - Laufidentitäten werden auch für Pre-Gen, Übersetzung und Upload gespeichert.
@@ -64,7 +66,7 @@ ClickUp-PM-Status, Freigaben, Kommentare, Produktionsdateien oder Live-Mails.
 
 ## Prüfung und Rollout
 
-`node --test scripts/*.test.mjs team-server/test/*.test.js`: 305 Tests bestanden,
+`node --test scripts/*.test.mjs team-server/test/*.test.js`: 306 Tests bestanden,
 einschließlich der beiden realen Uficell-Fälle, alter/neuer Laufgenerationen,
 PM-Sperren, manueller Entscheidungen, verlorener Quellen, veralteter Snapshots,
 API-Rücklesen, Halb-Stunden-Takt und dauerhaftem Prüfprotokoll.

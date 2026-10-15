@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import policy from './task-state.cjs';
-import { buildQueue, DEFAULT_WORKFLOWS, parseClaim, selectCurrentClaim, collectSnapshot } from './newsletter-monitor-bridge.mjs';
+import { buildQueue, DEFAULT_WORKFLOWS, parseClaim, selectCurrentClaim, collectSnapshot, applyStoredCheckpoints } from './newsletter-monitor-bridge.mjs';
 import { createStatusAudit, saveStatusAudit, STATUS_AUDIT_INTERVAL_MS } from './status-reconciliation.mjs';
 
 const now = Date.parse('2026-10-16T00:00:00Z');
@@ -39,6 +39,17 @@ test('latest terminal attempt retires old active owners while actual retries kee
   assert.equal(retry.attemptId, first.runId);
   assert.equal(retry.completedAt, undefined);
   assert.equal(retry.completionSource, undefined);
+});
+
+test('a portable pause never conceals a technical source blocker; only its exact stored checkpoint can resume it', () => {
+  const paused = claim(100, 'running', { paused: true, portable: true });
+  const [row] = buildQueue([task(paused.taskId, 'pre-gen', ['pre gen · blockiert'])], [paused], DEFAULT_WORKFLOWS, { now });
+  assert.equal(row.status, 'blocked');
+  applyStoredCheckpoints([row], [{ task_id: paused.jobId, run_id: 'foreign', ready_at: now }]);
+  assert.equal(row.status, 'blocked');
+  applyStoredCheckpoints([row], [{ task_id: paused.jobId, run_id: paused.runId, ready_at: now }]);
+  assert.equal(row.status, 'queued');
+  assert.equal(row.phase, 'Wartet · Fortsetzung im RS Hub gesichert');
 });
 
 test('terminal success outranks leftover paused metadata for every claim kind', () => {
