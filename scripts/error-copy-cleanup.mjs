@@ -12,6 +12,15 @@ export function errorTaskKey(payload) {
   return newsletter ? `clickup:newsletter:${newsletter[1]}` : null;
 }
 
+// Only a running continuation or a completed task supersedes an error copy.
+// A pause, a queue acceptance, a marker or an open PM question keeps it
+// (ablauf.md, Till 13.10.2026: pauses stay visible in #ai-fehler).
+const OPEN_STATES = new Set(['queued', 'marked', 'paused', 'clarification']);
+
+function keepReason(status) {
+  return OPEN_STATES.has(status) ? 'still-open' : 'still-blocked';
+}
+
 export function cleanupDecision(payload, snapshot, now = Date.now()) {
   const source = snapshot?.queue?.source;
   const age = now - Date.parse(source?.lastSuccessAt);
@@ -21,9 +30,12 @@ export function cleanupDecision(payload, snapshot, now = Date.now()) {
   const matches = snapshot.queue.tasks.filter(task => task.id === id);
   if (!id || matches.length !== 1) return { remove: false, reason: 'unknown-task' };
   const task = matches[0];
-  if (!['queued', 'marked', 'running', 'paused', 'clarification', 'completed'].includes(task.status))
-    return { remove: false, reason: 'still-blocked', task };
+  if (!['running', 'completed'].includes(task.status)) return { remove: false, reason: keepReason(task.status), task };
   return { remove: true, reason: 'no-longer-blocked', task };
+}
+
+function rateLimited(response, result) {
+  return response?.status === 429 || result?.error === 'ratelimited';
 }
 
 // This writer cannot post, update messages, touch another channel or mutate ClickUp.
@@ -69,8 +81,9 @@ export async function cleanupErrorCopies({ readFleet, hubFetch, slackWrite, erro
   const review = candidates.filter(error => {
     const key = errorTaskKey({ task_id: String(error.attemptId || '').replace(/^\d{8}T\d{6}Z-/, '') });
     const task = known.get(key);
-    if (task?.workflow === error.workflow && ['blocked', 'failed'].includes(task.status)) {
-      kept.push({ id: error.id, reason: 'still-blocked' }); return false;
+    // Open and blocked tasks keep their copy; skip them before any Slack call.
+    if (task?.workflow === error.workflow && (OPEN_STATES.has(task.status) || ['blocked', 'failed'].includes(task.status))) {
+      kept.push({ id: error.id, reason: keepReason(task.status) }); return false;
     }
     return true;
   });
@@ -89,7 +102,11 @@ export async function cleanupErrorCopies({ readFleet, hubFetch, slackWrite, erro
       for (const [key, value] of Object.entries({ channel: errorChannel, ts, limit: 200, include_all_metadata: true,
         ...(cursor ? { cursor } : {}) })) url.searchParams.set(key, String(value));
       const response = await hubFetch(url.href, { method: 'GET' });
+      // The Tuck token is shared with every Mac: a 429 ends this cycle quietly.
+      // Nothing of this thread was deleted yet; the next cycle checks it again.
+      if (rateLimited(response)) return { deleted, kept, skipped: 'ratelimited' };
       const result = await response.json();
+      if (rateLimited(response, result)) return { deleted, kept, skipped: 'ratelimited' };
       if (['thread_not_found', 'message_not_found'].includes(result.error)) break;
       if (!response.ok || !result.ok || !Array.isArray(result.messages)) throw new Error('Fehlerthread nicht vollständig lesbar.');
       messages.push(...result.messages);

@@ -9,7 +9,7 @@ const payload = { kind: 'lauf', task_id: 'abc@123', run_id: '20261013T202000Z-ab
 const error = { id: `slack-error:${channel}:1791922800.123456`, workflow: 'newsletter', attemptId: payload.run_id };
 const parent = { ts: '1791922800.123456', user: auth.user_id, bot_id: auth.bot_id,
   metadata: { event_type: 'ai_newsletter_fehler', event_payload: payload } };
-const task = (status = 'clarification') => ({ id: 'clickup:newsletter:abc', title: 'Mail', workflow: 'newsletter', status });
+const task = (status = 'completed') => ({ id: 'clickup:newsletter:abc', title: 'Mail', workflow: 'newsletter', status });
 const fleet = (tasks = [task()]) => ({ queue: { tasks, errors: [error], source: { status: 'fresh', stale: false,
   lastSuccessAt: new Date(now).toISOString() } } });
 
@@ -24,9 +24,13 @@ test('task binding preserves workflow, translation language and exact correction
   assert.equal(cleanupDecision(payload, fleet([{ id: 'clickup:upload:abc', status: 'completed' }]), now).remove, false);
 });
 
-test('only confirmed nonblocking states clear copies; stale, unknown and currently blocked uploads remain', () => {
-  for (const state of ['clarification', 'running', 'paused', 'queued', 'completed'])
+test('only running or completed work clears copies; open, stale, unknown and currently blocked tasks remain', () => {
+  for (const state of ['running', 'completed'])
     assert.equal(cleanupDecision(payload, fleet([task(state)]), now).remove, true);
+  // ablauf.md (Till, 13.10.): a pause stays visible in #ai-fehler; a mere queue
+  // acceptance, a marker or an open PM question never replaces the open copy.
+  for (const state of ['queued', 'marked', 'paused', 'clarification'])
+    assert.deepEqual([cleanupDecision(payload, fleet([task(state)]), now).remove, cleanupDecision(payload, fleet([task(state)]), now).reason], [false, 'still-open']);
   for (const state of ['blocked', 'failed', 'unknown'])
     assert.equal(cleanupDecision(payload, fleet([task(state)]), now).remove, false);
   assert.equal(cleanupDecision(payload, fleet([]), now).remove, false);
@@ -51,7 +55,32 @@ test('cleanup deletes the owned mirror and bot replies across pages, preserving 
   assert.deepEqual(result.deleted, [error.id]);
   assert.equal(result.kept[0].reason, 'still-blocked');
   assert.equal(archived.length, 1);
-  assert.equal(snapshot.queue.tasks[0].status, 'clarification');
+  assert.equal(snapshot.queue.tasks[0].status, 'completed');
+});
+
+test('open tasks keep their copy without authenticating or reading Slack', async () => {
+  for (const state of ['queued', 'marked', 'paused', 'clarification']) {
+    const result = await cleanupErrorCopies({ now: () => now, errorChannel: channel, readFleet: async () => fleet([task(state)]),
+      hubFetch: async () => { throw Error('Must not read the thread'); },
+      slackWrite: async () => { throw Error('Must not authenticate or delete'); } });
+    assert.deepEqual(result, { deleted: [], kept: [{ id: error.id, reason: 'still-open' }] });
+  }
+});
+
+test('a rate-limited thread read stops the cycle without deleting or throwing', async () => {
+  for (const reply of [{ ok: false, status: 429, json: async () => ({ ok: false, error: 'ratelimited' }) },
+    { ok: true, status: 200, json: async () => ({ ok: false, error: 'ratelimited' }) }]) {
+    const writes = [];
+    const snapshot = fleet([task('running')]);
+    snapshot.queue.errors.push({ id: `slack-error:${channel}:1791922800.222222`, workflow: 'newsletter', attemptId: payload.run_id });
+    let reads = 0;
+    const result = await cleanupErrorCopies({ now: () => now, errorChannel: channel, readFleet: async () => snapshot,
+      hubFetch: async () => { reads++; return reply; },
+      slackWrite: async (method, body) => { if (method === 'auth.test') return auth; writes.push(body); return { ok: true }; } });
+    assert.deepEqual(result, { deleted: [], kept: [], skipped: 'ratelimited' });
+    assert.equal(writes.length, 0);
+    assert.equal(reads, 1, 'the remaining threads are not read in the same cycle');
+  }
 });
 
 test('human replies, foreign bots and changed metadata prevent all deletion', async () => {
