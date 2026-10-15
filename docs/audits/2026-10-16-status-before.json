@@ -1,0 +1,58 @@
+{
+  "checkedAt": "2026-10-15T22:46:55.303Z",
+  "total": 728,
+  "source": {
+    "name": "ClickUp · AI Newsletter Creation",
+    "lastSuccessAt": "2026-10-15T22:46:11.842Z",
+    "detail": "728 Aufgaben · 27 Tags · 901 Reservierungen · 27 offen in #ai-fehler",
+    "receivedAt": "2026-10-15T22:46:30.489Z",
+    "error": null,
+    "stale": false,
+    "status": "fresh"
+  },
+  "contradictions": [
+    {
+      "id": "clickup:newsletter:12451cu7umh",
+      "title": "Onboarding Welcome Flow",
+      "workflow": "newsletter",
+      "contentKind": "flow",
+      "packageId": "12451cu7umh",
+      "completedAt": "2026-10-15T20:37:39.000Z",
+      "completionSource": "slack",
+      "status": "queued",
+      "tags": [
+        "pre gen · fertig",
+        "uficell"
+      ],
+      "url": "https://app.clickup.com/t/12451cu7umh",
+      "figmaUrl": "https://www.figma.com/design/wG4CUoLkKXNZjd8JJsbncy?node-id=2152-2",
+      "company": "Uficell",
+      "sourceStatus": "approval intern",
+      "phase": "Wartet · Fortsetzung in der zentralen Queue",
+      "updatedAt": "2026-10-15T20:35:38.200Z",
+      "taskVersion": "829f796cd506326e8f1891e6a17ddc03e73a72b2161f4aa46179e23d0ad56612"
+    },
+    {
+      "id": "clickup:newsletter:12451cu7uu1",
+      "title": "Onboarding Thank You Flow",
+      "workflow": "newsletter",
+      "contentKind": "flow",
+      "packageId": "12451cu7uu1",
+      "completedAt": "2026-10-15T18:52:25.000Z",
+      "completionSource": "slack",
+      "status": "queued",
+      "tags": [
+        "pre gen · fertig",
+        "revision · wartet",
+        "uficell"
+      ],
+      "url": "https://app.clickup.com/t/12451cu7uu1",
+      "figmaUrl": "https://www.figma.com/design/wG4CUoLkKXNZjd8JJsbncy?node-id=2064-2",
+      "company": "Uficell",
+      "sourceStatus": "revision intern",
+      "phase": "Wartet · Fortsetzung in der zentralen Queue",
+      "updatedAt": "2026-10-15T22:45:31.635Z",
+      "taskVersion": "98e803e21a7d51e1e90288e7ab3a8a7fe0d48a64fa281f731564b0a06a4f2f6f"
+    }
+  ]
+}

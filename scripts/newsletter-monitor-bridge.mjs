@@ -10,6 +10,8 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { cleanupErrorCopies, createErrorCleanupWriter } from './error-copy-cleanup.mjs';
 import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
+import taskState from './task-state.cjs';
+import { createStatusAudit, saveStatusAudit } from './status-reconciliation.mjs';
 
 const require = createRequire(import.meta.url);
 export const SOURCE_NAME = 'ClickUp · AI Newsletter Creation';
@@ -161,7 +163,8 @@ export function parseClaim(message) {
     ts: String(message.ts),
     ...(value.paused === true ? { paused: true, ...(value.portable === true ? { portable: true } : {}) } : {}),
     workflow: typeof value.workflow === 'string' ? value.workflow : translation ? `translation-${translation[2]}` : kind,
-    outcome: completed ? 'completed' : value.paused === true && value.state === 'final' ? 'queued' : reactions.includes('x') ? 'blocked' : reactions.includes('white_check_mark') ? 'completed' : undefined,
+    outcome: completed || (['final', 'released'].includes(value.state) && reactions.includes('white_check_mark')) ? 'completed'
+      : value.paused === true && value.state === 'final' ? 'queued' : reactions.includes('x') ? 'blocked' : undefined,
     awaitingPm,
     url, company: kind === 'correction' ? displayText(text.split('\n')[0].replace(/^\*?Korrektur\s*·\s*/, '').replace(/[*`]/g, ''), 200) : undefined,
     title: displayText((link?.[2] || text.split('\n')[0].replace(/[*`]/g, '')).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 300) };
@@ -387,6 +390,18 @@ export function completionEvidence(claims) {
   return { completedAt: new Date(time).toISOString(), completionSource: 'slack' };
 }
 
+// A later terminal attempt retires older reservations, including portable pauses.
+// Within the current attempt generation the worker's earliest-live-owner rule stays.
+export function selectCurrentClaim(matches, now, staleMinutes = 30) {
+  const ordered = matches.filter(claim => claim.state !== 'withdrawn').sort((a, b) => compareSlackTs(b.ts, a.ts));
+  const terminal = ordered.find(claim => ['final', 'released'].includes(claim.state));
+  const active = ordered.filter(claim => ['claiming', 'running'].includes(claim.state)
+    && (!terminal || compareSlackTs(claim.ts, terminal.ts) > 0))
+    .sort((a, b) => Number(Boolean(a.paused && a.portable)) - Number(Boolean(b.paused && b.portable)) || compareSlackTs(a.ts, b.ts));
+  return active.find(claim => now - claim.heartbeat * 1000 <= staleMinutes * 60000) || active[0]
+    || (terminal?.state === 'final' || terminal?.outcome === 'completed' ? terminal : undefined);
+}
+
 export function retainCompletionDates(rows, previousTasks = [], claims = []) {
   const previousById = new Map(previousTasks.map(task => [task.id, task]));
   for (const row of rows) {
@@ -430,12 +445,10 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       }
       if ((workflow.claimWorkflow ?? workflow.id) === 'klaviyo' && normalized.has(normalizeTag('manuell')) && status !== 'completed') continue;
       const matches = claims.filter(claim => claim.taskId === task.id && claim.workflow === (workflow.claimWorkflow ?? workflow.id));
-      const active = matches.filter(claim => ['claiming', 'running'].includes(claim.state)).sort((a, b) => Number(Boolean(a.paused && a.portable)) - Number(Boolean(b.paused && b.portable)) || Number(a.ts) - Number(b.ts));
+      const claim = selectCurrentClaim(matches, now, staleMinutes);
+      const active = claim && ['claiming', 'running'].includes(claim.state) ? [claim] : [];
       const fresh = active.find(claim => now - claim.heartbeat * 1000 <= staleMinutes * 60000);
       const pausedTag = tags.some(name => / · pausiert$/i.test(name) && Object.values(workflow.stateTags || {}).flat().some(tag => normalizeTag(tag) === normalizeTag(name)));
-      const previous = ['completed', 'blocked', 'failed'].includes(status) || pausedTag
-        ? matches.filter(item => item.state === 'final').sort((a, b) => Number(b.ts) - Number(a.ts))[0] : undefined;
-      const claim = fresh ?? active[0] ?? previous;
       let phase;
       if (pausedTag && !fresh) { status = 'queued'; phase = 'Wartet · automatische Fortsetzung'; }
       if ((!pausedTag || fresh) && status !== 'completed' && status !== 'failed' && status !== 'blocked') {
@@ -444,8 +457,8 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         else if (status === 'running') { phase = 'Läuft laut ClickUp; Worker-Zuordnung fehlt'; }
       }
       if (pausedTag && fresh) phase = 'Pausiert · automatische Fortsetzung';
-      if (claim?.paused === true && ['claiming', 'running'].includes(claim.state)) { status = 'queued'; phase = 'Pausiert · wartet außerhalb der Worker-Plätze'; }
-      if(claim?.paused && claim.portable){status='queued';phase='Wartet · Fortsetzung in der zentralen Queue';}
+      if (status !== 'completed' && claim?.outcome !== 'completed' && claim?.paused === true && ['claiming', 'running'].includes(claim.state)) { status = 'queued'; phase = 'Pausiert · wartet außerhalb der Worker-Plätze'; }
+      if (status !== 'completed' && claim?.outcome !== 'completed' && claim?.paused && claim.portable) { status='queued'; phase='Wartet · Fortsetzung in der zentralen Queue'; }
       if (status === 'blocked' && !phase) phase = 'Blockiert';
       let url = `https://app.clickup.com/t/${encodeURIComponent(task.id)}`;
       try {
@@ -454,7 +467,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       } catch { /* Use the canonical ClickUp task link. */ }
       const name = displayText(task.name, 300, task.id);
       const title = workflow.titleSuffix ? `${displayText(name, 300 - workflow.titleSuffix.length - 3)} · ${workflow.titleSuffix}` : name;
-      const evidence = completionEvidence(matches);
+      const evidence = status === 'completed' ? completionEvidence(matches) : {};
       rows.push({ id: `clickup:${workflow.id}:${task.id}`, title, url, workflow: workflow.queueWorkflow ?? workflow.id, status,
         ...languagePackage(task, tasks, workflow),
         contentKind: contentKind(task, matches),
@@ -463,7 +476,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         sourceStatus: displayText(typeof task.status === 'string' ? task.status : task.status?.status, 120),
         company: task.folder?.hidden ? undefined : displayText(task.folder?.name, 200),
         figmaUrl: taskFigmaLink(task) || ((workflow.claimWorkflow ?? workflow.id) === 'newsletter' ? figmaLink(figmaBoardUrl) : undefined),
-        workerId: claim?.paused && claim.portable ? undefined : claim?.workerId, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
+        workerId: claim?.paused && claim.portable ? undefined : claim?.workerId, attemptId: claim?.runId, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
         updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30),
         // Internal only: addRunDetails reads progress and renders of this attempt, then removes it.
         run: claim ? { id: claim.runId, jobId: claim.jobId, ts: claim.ts, taskId: task.id, channelId: claim.channelId, heartbeat: claim.heartbeat } : undefined });
@@ -477,21 +490,14 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
     corrections.get(claim.jobId).push(claim);
   }
   for (const attempts of corrections.values()) {
-    attempts.sort((a, b) => Number(b.ts) - Number(a.ts));
-    let claim = attempts[0];
-    // A newer retry supersedes an old failure; simultaneous live claims still
-    // use the worker's earliest-reservation rule. Withdrawn contenders never win.
-    if (['claiming', 'running'].includes(claim.state)) {
-      const ended = attempts.find(item => !['claiming', 'running'].includes(item.state));
-      const executing = attempts.some(item => ['claiming','running'].includes(item.state) && !(item.paused && item.portable));
-      const candidates = attempts.filter(item => ['claiming', 'running'].includes(item.state) && (!executing || !(item.paused && item.portable)) && (!ended || Number(item.ts) > Number(ended.ts)));
-      claim = candidates.filter(item => now - item.heartbeat * 1000 <= staleMinutes * 60000).at(-1) || candidates[0];
-    }
+    const claim = selectCurrentClaim(attempts, now, staleMinutes);
+    if (!claim) continue;
     if (claim.state === 'released' && claim.outcome !== 'completed') continue;
     const active = ['claiming', 'running'].includes(claim.state);
     const fresh = now - claim.heartbeat * 1000 <= staleMinutes * 60000;
-    const status = claim.paused ? 'queued' : active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : 'blocked' : claim.outcome || 'blocked';
-    const phase = claim.paused && claim.portable ? 'Wartet · Fortsetzung in der zentralen Queue' : claim.paused ? active ? 'Pausiert · wartet außerhalb der Worker-Plätze' : 'Wartet · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : 'Worker meldet sich nicht mehr'
+    const paused = claim.paused && claim.outcome !== 'completed';
+    const status = paused ? 'queued' : active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : 'blocked' : claim.outcome || 'blocked';
+    const phase = paused && claim.portable ? 'Wartet · Fortsetzung in der zentralen Queue' : paused ? active ? 'Pausiert · wartet außerhalb der Worker-Plätze' : 'Wartet · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : 'Worker meldet sich nicht mehr'
       : status === 'completed' ? 'Korrektur abgeschlossen' : claim.awaitingPm ? 'PM-Rückfrage offen'
         : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
     const task = tasks.find(task => task.id === claim.taskId);
@@ -502,7 +508,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       ...completionEvidence([claim]),
       run: { id: claim.runId, jobId: claim.jobId, ts: claim.ts, taskId: claim.taskId, channelId: claim.channelId, heartbeat: claim.heartbeat } });
   }
-  return rows.sort((a, b) => a.id.localeCompare(b.id));
+  return rows.map(taskState.reconcileTask).sort((a, b) => a.id.localeCompare(b.id));
 }
 
 // AI Newsletter Creation src/slack-notifier.js statusText(): the worker posts one
@@ -534,6 +540,12 @@ function parsePmQuestion(text) {
   if (!/^\*?Unklar\s*[–—-]\s*bitte hier antworten\*?/.test(lines[0])) return null;
   const questions = lines.slice(1).map(line => /^\s*•\s*Unklar\s*·\s*Kommentar\s+\d+\s*\(.*?\):\s*(.+)$/.exec(line)?.[1]).filter(Boolean);
   return questions.length ? parseBlockedReason(`:warning: blockiert: ${questions.join(' · ')}`) : null;
+}
+
+export function parseWaitingReason(text) {
+  const lines = String(text ?? '').split('\n');
+  if (!/^(?:⏸️?|:double_vertical_bar:) Pausiert · automatische Fortsetzung über die Queue\s*$/.test(lines[0])) return null;
+  return parseBlockedReason(':warning: blockiert: ' + lines.slice(1).join('\n'));
 }
 
 export const RUN_STATUS_MAX_AGE_MS = 300000;
@@ -568,6 +580,7 @@ export async function readRunStatuses(hubFetch, channelId, threads, { concurrenc
         const found = (Array.isArray(result.messages) ? result.messages : [])
           .filter(message => message?.ts !== ts && message?.bot_id).map(message => parseRunStatus(message.text)
             || (parsePmQuestion(message.text) ? { pmQuestion: parsePmQuestion(message.text) } : null)
+            || (parseWaitingReason(message.text) ? { blockedReason: parseWaitingReason(message.text) } : null)
             || (parseBlockedReason(message.text) ? { blockedReason: parseBlockedReason(message.text) } : null)).filter(Boolean);
         if (found.length) statuses.set(ts, found.at(-1));
         cache?.set(`${channelId}:${ts}`, { heartbeat: wanted.get(ts), at: now, status: found.at(-1) || null });
@@ -667,7 +680,8 @@ export function createRenderPreviews({ localHub, upload, openDatabase, resize, r
 // backfilled for tasks that finished before this monitor saw them run.
 export async function addRunDetails(rows, { hubFetch, channelId, previews, previousTasks = [], now = Date.now(), statusCache }) {
   const previous = new Map((Array.isArray(previousTasks) ? previousTasks : []).map(row => [row?.id, row]));
-  const running = rows.filter(row => row.run && (row.status === 'running' || (row.status === 'blocked' && row.workflow === 'correction'
+  const waiting = row => row.status === 'queued' && /^Wartet · (?:Hub-Übergabe|Fortsetzung in der zentralen Queue|automatische Fortsetzung)$/.test(row.phase || '');
+  const running = rows.filter(row => row.run && (row.status === 'running' || ((row.status === 'blocked' || waiting(row)) && row.workflow === 'correction'
     && !(previous.get(row.id)?.attemptId === row.attemptId && previous.get(row.id)?.blockedReason))));
   const attempts = rows.filter(row => row.run && row.workflow === 'newsletter' && (['running', 'blocked'].includes(row.status)
     || (row.status === 'completed' && ['running', 'blocked'].includes(previous.get(row.id)?.status))));
@@ -691,12 +705,12 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
     const old = previous.get(row.id);
     const status = statuses.get(row.run?.channelId || channelId)?.get(row.run?.ts);
     if (row.status === 'running' && status?.percent !== undefined) { row.progress = status.percent; row.step = status.step; }
-    if (row.status === 'blocked' && row.workflow === 'correction') {
+    if ((row.status === 'blocked' || waiting(row)) && row.workflow === 'correction') {
       row.blockedReason = status?.pmQuestion || status?.blockedReason || (old?.attemptId === row.attemptId && old.blockedReason
         ? parseBlockedReason(`:warning: blockiert: ${old.blockedReason}`) : undefined);
       if (status?.pmQuestion || row.phase === 'PM-Rückfrage offen'
         || (old?.attemptId === row.attemptId && old.phase === 'PM-Rückfrage offen' && row.blockedReason)) row.phase = 'PM-Rückfrage offen';
-      else if (row.blockedReason) row.phase = 'Korrektur blockiert';
+      else if (row.blockedReason && row.status === 'blocked') row.phase = 'Korrektur blockiert';
     }
     const list = attempts.includes(row) ? (rendered ? rendered.get(row.run.id) : old?.previews)
       : row.status === 'completed' && old?.status === 'completed' ? old.previews : undefined;
@@ -917,8 +931,8 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   ]);
   // Clear resolved notices only after every configured warning channel was read completely.
   const workerIssues = claimResult.status === 'fulfilled' && issueResult.status === 'fulfilled' ? [...issues.values()] : undefined;
-  if ([taskResult, claimResult, issueResult, salesResult, questionResult].some(result => result.status === 'rejected')) {
-    const error = [taskResult, claimResult, issueResult, salesResult, questionResult].find(result => result.status === 'rejected').reason;
+  if ([taskResult, claimResult, issueResult, salesResult, questionResult, checkpointResult].some(result => result.status === 'rejected')) {
+    const error = [taskResult, claimResult, issueResult, salesResult, questionResult, checkpointResult].find(result => result.status === 'rejected').reason;
     return { ...(workerIssues === undefined ? {} : { workerIssues }), source: {
       name: SOURCE_NAME, error: displayText(error.message, 300, 'Quellenabfrage fehlgeschlagen.'),
     } };
@@ -937,6 +951,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   await addRunDetails(queue, { hubFetch, channelId: config.slack.channel_id, previews, previousTasks, now, statusCache });
   if (checkpointResult.status === 'fulfilled') applyStoredCheckpoints(queue, checkpointResult.value, bindings);
   queue.push(...salesResult.value);
+  for (let index = 0; index < queue.length; index++) queue[index] = taskState.reconcileTask(queue[index]);
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
   const manualUploadIds = new Set(tasks.filter(task => (task.tags || []).some(tag => normalizeTag(typeof tag === 'string' ? tag : tag.name) === normalizeTag('manuell'))).map(task => task.id));
   const blockedErrors = errorChannel ? buildBlockedErrors(errorMessages, errorChannel, queue, { manualUploadIds }) : undefined;
@@ -1086,11 +1101,19 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     if (!response.ok) throw new Error(`Monitor-Abgleich: HTTP ${response.status}.`);
     return response.json();
   };
+  const audit = options.localHub && !options.dryRun ? createStatusAudit({ readFleet,
+    save: report => saveStatusAudit(path.dirname(options.cacheFile), report) }) : undefined;
   const stop = () => controller.abort();
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
   try {
     await runSyncLoop(async () => {
       try {
+        if (audit) {
+          try { await audit.begin(() => {
+            for (const channel of new Set([config.slack.channel_id, ...(config.monitor_channels?.claims || []), errorChannel].filter(Boolean))) claimReader.invalidate(channel);
+            statusCache.clear();
+          }); } catch { console.error(`${new Date().toISOString()} Status-Audit: Monitor nicht lesbar; regulärer Quellenabgleich läuft weiter.`); }
+        }
         const readsBefore = { ...claimReader.stats };
         const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, statusCache, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
           previews, previousTasks: cached?.tasks, ...(options.localHub ? { fleetReader: readLocalHubFleet,
@@ -1101,6 +1124,16 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
           save: options.dryRun ? undefined : saveSnapshot,
         });
         if (!options.dryRun) console.log(`${new Date().toISOString()} ${result.ok ? `Queue aktualisiert (${result.snapshot.tasks.length} Aufgaben).` : 'Quelle nicht erreichbar; letzte Queue bleibt erhalten.'}`);
+        if (result.ok && audit) {
+          try {
+            const report = await audit.finish(result.snapshot, { fresh: freshClaimCycle(readsBefore, claimReader.stats) });
+            if (report) {
+              console.log(`${report.checkedAt} Status-Audit: ${report.tasksChecked} Aufgaben, ${report.repaired.length} Abweichungen behoben, ${report.findings.length} offen.`);
+              if (!report.ok) await publishSnapshot({ source: { name: SOURCE_NAME,
+                error: `Status-Abgleich: ${report.findings.length} widersprüchliche Anzeigen; erneute Prüfung läuft.` } }, options);
+            }
+          } catch { console.error(`${new Date().toISOString()} Status-Audit: Rücklesen fehlgeschlagen; Prüfung wird wiederholt.`); }
+        }
         // Deleting needs claims read completely in this cycle; a cached or
         // rate-limit fallback read only feeds the display.
         if (result.ok && slackWrite && freshClaimCycle(readsBefore, claimReader.stats)) {

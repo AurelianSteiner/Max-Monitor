@@ -21,7 +21,7 @@ function setup(t) {
     source: { name: 'ClickUp · Slack', lastSuccessAt: at(0) } });
   const report = (runs, offset = 0) => store.workerReport('TEAM1234', { schema: 1, workerId: 'mac-1', sampledAt: at(offset),
     service: { running: true, lastPollAt: at(offset) }, activity: { state: runs.length ? 'busy' : 'idle', acceptingTasks: true, runs } });
-  return { store, update, report };
+  return { store, update, report, directory };
 }
 
 test('repeated errors enrich one current blocker; running, paused and completed tasks never count again as blocked', t => {
@@ -86,4 +86,32 @@ test('diagnoses do not cross correction jobs, workflow boundaries or newer block
   assert.equal(rows[0].blockedReason, 'error -1000');
   assert.equal(rows[1].blockedReason, undefined);
   assert.equal(rows[2].blockedReason, undefined);
+});
+
+test('completed Uficell Pre-Gen stays saved and visible as completed despite a later old-worker heartbeat', t => {
+  const { store, update, report, directory } = setup(t);
+  update([mail('12451cu7uu1', { status: 'queued', sourceStatus: 'revision intern',
+    phase: 'Wartet · Fortsetzung in der zentralen Queue', attemptId: 'finished', completedAt: at(-5000), completionSource: 'slack' })]);
+  report([{ id: mail('12451cu7uu1').id, title: 'old', runId: 'old', workflow: 'newsletter', status: 'running' }]);
+  const row = store.snapshot('TEAM1234').queue.tasks[0];
+  assert.equal(row.status, 'completed');
+  assert.equal(row.completedAt, at(-5000));
+  assert.equal(row.attemptId, 'finished');
+  assert.equal(row.runId, undefined);
+  assert.equal(createFleetStore(directory, () => now).snapshot('TEAM1234').queue.tasks[0].status, 'completed');
+  update([mail('12451cu7uu1', { status: 'queued', sourceStatus: 'pre-gen', attemptId: 'new' })]);
+  assert.equal(store.snapshot('TEAM1234').queue.tasks[0].status, 'queued');
+});
+
+test('older complete snapshots and delayed source errors cannot roll back newer state', t => {
+  const { store } = setup(t);
+  const latest = { tasks: [mail('x', { status: 'completed' })], source: { name: 'ClickUp', lastSuccessAt: at(0) } };
+  store.updateQueue('TEAM1234', latest);
+  for (const old of [{ tasks: [mail('x')] }, { source: { error: 'old failure' } }]) {
+    assert.throws(() => store.updateQueue('TEAM1234', { ...old, source: { name: 'ClickUp', lastSuccessAt: at(-1000), ...old.source } }), error => error.status === 409);
+    const snapshot = store.snapshot('TEAM1234');
+    assert.equal(snapshot.queue.tasks[0].status, 'completed');
+    assert.equal(snapshot.queue.source.error, null);
+    assert.equal(snapshot.queue.source.lastSuccessAt, at(0));
+  }
 });

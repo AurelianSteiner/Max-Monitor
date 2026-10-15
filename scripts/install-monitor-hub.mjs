@@ -17,7 +17,7 @@ const END = '# MAX MONITOR END';
 const SOURCE_FILES = ['team-server/server.js', 'team-server/fleet.js', 'team-server/enrollment.js', 'team-server/package.json',
   'team-server/public/dashboard.html', 'team-server/public/dashboard.css', 'team-server/public/dashboard.js', 'scripts/enroll-monitor-worker.mjs',
   'team-server/worker-control.js', 'team-server/remote-access.js', 'scripts/member-remote.py', 'scripts/check-worker-control.mjs', 'team-server/worker-reports.js', 'team-server/skill-versions.js', 'scripts/report-monitor-worker.mjs',
-  'scripts/install-monitor-hub.mjs', 'scripts/install-monitor-hub.sh', 'scripts/newsletter-monitor-bridge.mjs', 'scripts/error-copy-cleanup.mjs', 'scripts/worker-admin-hub.mjs', 'scripts/worker-admin.mjs', 'scripts/worker-diagnose.py', 'scripts/install-worker-admin.sh', 'scripts/worker-remote.mjs', 'scripts/worker-remote-hub.mjs', 'scripts/setup-mac-monitor.mjs'];
+  'scripts/install-monitor-hub.mjs', 'scripts/install-monitor-hub.sh', 'scripts/newsletter-monitor-bridge.mjs', 'scripts/task-state.cjs', 'scripts/status-reconciliation.mjs', 'scripts/pm-question-status.mjs', 'scripts/error-copy-cleanup.mjs', 'scripts/worker-admin-hub.mjs', 'scripts/worker-admin.mjs', 'scripts/worker-diagnose.py', 'scripts/install-worker-admin.sh', 'scripts/worker-remote.mjs', 'scripts/worker-remote-hub.mjs', 'scripts/setup-mac-monitor.mjs'];
 const defaults = { serverURL: 'https://api.ruegamer-steiner.de/max-monitor', teamId: 'RSMACS01', port: 8941, nodeBinary: '/usr/bin/node' };
 const HUB_ROOT = '/opt/rs-hub';
 const DEFAULT_SLACK_RATE_LIMITS = `${HUB_ROOT}/state/slack-rate-limits`;

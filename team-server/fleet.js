@@ -1,5 +1,6 @@
 // Shared fleet/queue state. Provider credentials never belong in this store.
 const fs = require("node:fs");
+const taskState = require("../scripts/task-state.cjs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { validateReport, publicReport } = require("./worker-reports");
@@ -401,21 +402,12 @@ function publicTask(task, completions = []) {
 }
 
 function currentTask(task) {
+  task = taskState.reconcileTask(task);
   if (task.completion === "manual" || task.status === "completed") return task;
   if (task.status === "clarification") return { ...task, status: "queued", workerId: null, phase: "Wartet · PM-Rückfrage" };
   // A published continuation is queued; old local pause tags retain its checkpoint.
   if (task.status === "queued" && /^Wartet(?:\s|$)/i.test(task.phase || "")) return task.phase === "Wartet · PM-Rückfrage" ? { ...task, workerId: null } : task;
   const normalize = value => String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-  // ClickUp review is downstream of Pre-Gen. A leftover automation tag must
-  // not turn a mail awaiting human review into a running or blocked build.
-  if (task.workflow === "newsletter" && [
-    "qa", "designrevisionintern", "approvalintern", "approvalextern",
-    "designrevisionextern", "klaviyoupload", "golive",
-  ].includes(normalize(task.sourceStatus))) {
-    return { ...task, status: "completed", phase: "Pre-Gen abgeschlossen · " + task.sourceStatus,
-      completionSource: task.completedAt ? task.completionSource : "review",
-      workerId: null, progress: 100, blockedReason: undefined, errorUrl: undefined };
-  }
   const prefix = { newsletter: "pregen", upload: "klaviyoupload" }[task.workflow];
   const paused = /^Pausiert(?:\s*[·:]|$)/i.test(task.phase || "")
     || (prefix && (task.tags || []).some(tag => normalize(tag) === prefix + "pausiert"));
@@ -476,15 +468,16 @@ function currentQueue(state, liveReports) {
     for (const [id, task] of tasks) {
       if (task.workerId === report.workerId && ["running", "queued"].includes(task.status) && !active.has(id)
         && (!task.updatedAt || sampled >= Date.parse(task.updatedAt))) {
-        tasks.set(id, { ...task, status: "queued", workerId: null, phase: "Worker-Abgleich ausstehend" });
+        const waiting = task.status === "queued" && /^Wartet(?:\s*[·:]|$)/.test(task.phase || "");
+        tasks.set(id, { ...task, status: "queued", workerId: null,
+          phase: waiting ? task.phase : "Worker-Abgleich ausstehend" });
       }
     }
     for (const run of report.activity.runs) {
       const previous = tasks.get(run.id);
       const paused = /^Pausiert(?:\s*[·:]|$)/i.test(run.step || "");
       if (paused && previous?.status === "queued" && /^Wartet · Fortsetzung in der zentralen Queue$/.test(previous.phase || "")) continue;
-      if (["paused", "blocked", "failed", "completed"].includes(previous?.status)
-        && Date.parse(previous.updatedAt) > sampled) continue;
+      if (!taskState.reportMayReplace(previous, run, report.sampledAt)) continue;
       const conflict = activeOwners.has(run.id) && activeOwners.get(run.id) !== report.workerId;
       activeOwners.set(run.id, report.workerId);
       tasks.set(run.id, { ...previous, ...run, blockedReason: undefined, errorUrl: undefined,
@@ -512,7 +505,7 @@ function currentQueue(state, liveReports) {
     tasks.set(id, { ...task, status: "blocked", ...(awaitingPm && technicalBlocker(error) ? { phase: "Blockiert" } : {}), blockedReason: error.blockedReason || task.blockedReason, errorUrl: error.errorUrl });
     diagnosed.add(id);
   }
-  return [...tasks.values()].map(task => withClarification(task, state.queue.clarifications));
+  return [...tasks.values()].map(task => taskState.reconcileTask(withClarification(task, state.queue.clarifications)));
 }
 
 function createFleetStore(dataDir, now = Date.now) {
@@ -714,6 +707,9 @@ function createFleetStore(dataDir, now = Date.now) {
   function updateQueue(teamId, raw) {
     const incoming = validateQueue(raw);
     const state = read(teamId);
+    if (incoming.source.lastSuccessAt && state.queue.source.lastSuccessAt
+      && Date.parse(incoming.source.lastSuccessAt) < Date.parse(state.queue.source.lastSuccessAt))
+      throw new FleetError(409, 'Veralteter Queue-Abgleich; der neuere gespeicherte Stand bleibt erhalten.');
     if (!incoming.source.error && Array.isArray(state.queue.blockedErrors) && incoming.blockedErrors === undefined)
       throw new FleetError(409, 'Vollständiger Abgleich von #ai-fehler fehlt; bisheriger Fehlerbestand bleibt erhalten.');
     const deleted = new Set(state.deletedWorkers || []);
@@ -738,6 +734,7 @@ function createFleetStore(dataDir, now = Date.now) {
       if (oldSource.error !== incoming.source.error) event(state, "queue_source_error", "queue", incoming.source.name, incoming.source.error, time);
       state.queue.source = { ...oldSource, name: incoming.source.name, error: incoming.source.error, receivedAt: new Date(time).toISOString(), ...(incoming.source.detail ? { detail: incoming.source.detail } : {}) };
     } else {
+      incoming.tasks = incoming.tasks.map(taskState.reconcileTask);
       // Never publish a reference whose image did not arrive.
       for (const task of incoming.tasks) {
         if (!task.previews) continue;
