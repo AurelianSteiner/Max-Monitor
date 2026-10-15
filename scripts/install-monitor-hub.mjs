@@ -19,6 +19,11 @@ const SOURCE_FILES = ['team-server/server.js', 'team-server/fleet.js', 'team-ser
   'team-server/worker-control.js', 'team-server/remote-access.js', 'scripts/member-remote.py', 'scripts/check-worker-control.mjs', 'team-server/worker-reports.js', 'team-server/skill-versions.js', 'scripts/report-monitor-worker.mjs',
   'scripts/install-monitor-hub.mjs', 'scripts/install-monitor-hub.sh', 'scripts/newsletter-monitor-bridge.mjs', 'scripts/error-copy-cleanup.mjs', 'scripts/worker-admin-hub.mjs', 'scripts/worker-admin.mjs', 'scripts/worker-diagnose.py', 'scripts/install-worker-admin.sh', 'scripts/worker-remote.mjs', 'scripts/worker-remote-hub.mjs', 'scripts/setup-mac-monitor.mjs'];
 const defaults = { serverURL: 'https://api.ruegamer-steiner.de/max-monitor', teamId: 'RSMACS01', port: 8941, nodeBinary: '/usr/bin/node' };
+const HUB_ROOT = '/opt/rs-hub';
+const DEFAULT_SLACK_RATE_LIMITS = `${HUB_ROOT}/state/slack-rate-limits`;
+// The bridge loads these worker files; each one brings its own relative requires.
+const WORKER_ENTRY_POINTS = ['src/config.js', 'src/hub-transport.js', 'src/pre-gen.js'];
+const RELATIVE_REQUIRE = /\brequire\(\s*(['"])(\.{1,2}\/[^'"\n]+)\1\s*\)/g;
 
 export function installationSettings(values = {}, previous) {
   const proposed = { ...defaults, ...values };
@@ -46,7 +51,60 @@ export function relayService(settings) {
 }
 
 export function queueService(settings) {
-  return `# Managed by Max Monitor Hub installer\n[Unit]\nDescription=ClickUp and Newsletter queue monitor with error-copy cleanup\nAfter=network-online.target ${SERVICE}\nWants=network-online.target ${SERVICE}\n\n[Service]\nType=simple\nUser=root\nWorkingDirectory=/opt/rs-hub\nExecStart=${settings.nodeBinary} /opt/max-monitor/scripts/newsletter-monitor-bridge.mjs --worker-root /opt/max-monitor/newsletter-source --local-hub /opt/rs-hub --enrollment-config /etc/max-monitor/enrollment.json --cache /var/lib/max-monitor-queue/cache.json --interval 60 --cleanup-error-copies\nRestart=on-failure\nRestartSec=10\nStateDirectory=max-monitor-queue\nStateDirectoryMode=0700\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadOnlyPaths=/opt/rs-hub /etc/max-monitor\nReadWritePaths=/var/lib/max-monitor-queue\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\n[Install]\nWantedBy=multi-user.target\n`;
+  // The Hub transport books every Slack call in the shared per-method budget
+  // of all Macs (worker src/slack-rate-limit.js); only that directory is writable.
+  const slackRateLimits = settings.slackRateLimits || DEFAULT_SLACK_RATE_LIMITS;
+  return `# Managed by Max Monitor Hub installer\n[Unit]\nDescription=ClickUp and Newsletter queue monitor with error-copy cleanup\nAfter=network-online.target ${SERVICE}\nWants=network-online.target ${SERVICE}\n\n[Service]\nType=simple\nUser=root\nWorkingDirectory=/opt/rs-hub\nExecStart=${settings.nodeBinary} /opt/max-monitor/scripts/newsletter-monitor-bridge.mjs --worker-root /opt/max-monitor/newsletter-source --local-hub /opt/rs-hub --enrollment-config /etc/max-monitor/enrollment.json --cache /var/lib/max-monitor-queue/cache.json --interval 60 --cleanup-error-copies\nRestart=on-failure\nRestartSec=10\nStateDirectory=max-monitor-queue\nStateDirectoryMode=0700\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadOnlyPaths=/opt/rs-hub /etc/max-monitor\nReadWritePaths=/var/lib/max-monitor-queue\nReadWritePaths=${slackRateLimits}\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\n[Install]\nWantedBy=multi-user.target\n`;
+}
+
+// Same runtime directory as the transport's remote script:
+// HUB_RUNTIME_DIR from <hub>/.env, otherwise the Hub root itself.
+export function slackRateLimitDirectory(hubRoot = HUB_ROOT, readFile = fs.readFileSync) {
+  let runtime = '';
+  try {
+    for (const line of String(readFile(path.join(hubRoot, '.env'), 'utf8')).split('\n')) {
+      const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
+      if (match?.[1] === 'HUB_RUNTIME_DIR') runtime = match[2].replace(/^['"]|['"]$/g, '');
+    }
+  } catch (error) { if (error.code !== 'ENOENT') throw new Error('RS-Hub-Konfiguration (.env) ist nicht lesbar.'); }
+  runtime ||= hubRoot;
+  if (!/^\/[A-Za-z0-9._/-]+$/.test(runtime) || runtime.split('/').includes('..'))
+    throw new Error('HUB_RUNTIME_DIR des RS Hub ist kein sicherer absoluter Pfad; Installation abgebrochen.');
+  return path.posix.join(runtime, 'state', 'slack-rate-limits');
+}
+
+function resolveWorkerModule(root, from, specifier) {
+  const base = path.posix.normalize(path.posix.join(path.posix.dirname(from), specifier));
+  if (base === '..' || base.startsWith('../') || path.posix.isAbsolute(base))
+    throw new Error(`Newsletter-Quelle ungültig: ${from} lädt ${specifier} außerhalb von --worker-root.`);
+  // Node's order for a relative require: exact file, .js, .json, directory index.
+  for (const candidate of [base, `${base}.js`, `${base}.json`, `${base}/index.js`]) {
+    try { if (fs.statSync(path.join(root, candidate)).isFile()) return candidate; } catch { /* Try the next form. */ }
+  }
+  return path.posix.extname(base) ? base : `${base}.js`;
+}
+
+// Every file the bridge can load from the worker: the transitive './' and '../'
+// require closure of the entry points, including requires inside functions.
+// A missing module fails the installation before anything is written.
+export function workerSourceFiles(workerRoot, entries = WORKER_ENTRY_POINTS) {
+  const root = fs.realpathSync(workerRoot);
+  const files = new Map();
+  const queue = entries.map(relative => ({ relative }));
+  while (queue.length) {
+    const { relative, from } = queue.shift();
+    if (files.has(relative)) continue;
+    let real;
+    try { real = fs.realpathSync(path.join(root, relative)); }
+    catch { throw new Error(`Newsletter-Quelle unvollständig: ${relative}${from ? ` (geladen von ${from})` : ''} fehlt; nichts installiert.`); }
+    if (!real.startsWith(`${root}${path.sep}`) || !fs.statSync(real).isFile())
+      throw new Error(`Newsletter-Quelle ungültig: ${relative} liegt außerhalb von --worker-root.`);
+    const content = fs.readFileSync(real);
+    files.set(relative, content);
+    for (const match of content.toString('utf8').matchAll(RELATIVE_REQUIRE))
+      queue.push({ relative: resolveWorkerModule(root, relative, match[2]), from: relative });
+  }
+  return [...files].map(([relative, content]) => ({ relative, content }));
 }
 
 export function nginxLocation(settings) {
@@ -161,15 +219,15 @@ export function ensureRuntimeDirectories(files, { runtimeDirectory = '/opt/max-m
   }
 }
 
-export function prepareInstallation({ stageDirectory, nginxConfigPath, workerRoot, existingConfigPath = '/etc/max-monitor/enrollment.json', values = {}, sourceRoot = REPO_ROOT }) {
+export function prepareInstallation({ stageDirectory, nginxConfigPath, workerRoot, existingConfigPath = '/etc/max-monitor/enrollment.json', values = {}, sourceRoot = REPO_ROOT, hubRoot = HUB_ROOT }) {
   if (!nginxConfigPath) throw new Error('--nginx-config ist erforderlich; die bestehende TLS-Konfiguration wird zuerst geprüft.');
   if (!workerRoot) throw new Error('--worker-root ist erforderlich; ausschließlich geprüfter Newsletter-Quellcode wird kopiert.');
-  const settings = installationSettings(values, privateJSON(existingConfigPath));
+  const settings = { ...installationSettings(values, privateJSON(existingConfigPath)), slackRateLimits: slackRateLimitDirectory(hubRoot) };
   const source = fs.readFileSync(nginxConfigPath, 'utf8');
   const nginx = injectNginxLocation(source, settings);
   const files = SOURCE_FILES.map((relative) => ({ target: `/opt/max-monitor/${relative}`, content: fs.readFileSync(path.join(sourceRoot, relative)), mode: relative.endsWith('.sh') ? 0o755 : 0o644 }));
-  for (const name of ['config.js', 'hub-transport.js', 'pre-gen.js']) {
-    files.push({ target: `/opt/max-monitor/newsletter-source/src/${name}`, content: fs.readFileSync(path.join(workerRoot, 'src', name)), mode: 0o644 });
+  for (const { relative, content } of workerSourceFiles(workerRoot)) {
+    files.push({ target: `/opt/max-monitor/newsletter-source/${relative}`, content, mode: 0o644 });
   }
   // Copy only the public routing contract, never the worker's local credentials.
   const channelFile = path.join(workerRoot, 'src', 'slack-kanaele.js');
@@ -190,7 +248,8 @@ export function prepareInstallation({ stageDirectory, nginxConfigPath, workerRoo
     fs.chmodSync(stageDirectory, 0o700);
     for (const file of files) atomicWrite(path.join(stageDirectory, 'payload', file.target.slice(1)), file.content, file.mode);
     atomicWrite(path.join(stageDirectory, 'plan.json'), `${JSON.stringify({ schema: 1, serverURL: settings.serverURL, teamId: settings.teamId, port: settings.port,
-      service: SERVICE, queueService: QUEUE_SERVICE, dataDirectory: '/var/lib/max-monitor', queueCacheDirectory: '/var/lib/max-monitor-queue', files: files.map(({ target, mode }) => ({ target, mode })) }, null, 2)}\n`, 0o600);
+      service: SERVICE, queueService: QUEUE_SERVICE, dataDirectory: '/var/lib/max-monitor', queueCacheDirectory: '/var/lib/max-monitor-queue',
+      slackRateLimitDirectory: settings.slackRateLimits, files: files.map(({ target, mode }) => ({ target, mode })) }, null, 2)}\n`, 0o600);
   }
   return { settings, files };
 }
@@ -310,6 +369,9 @@ export async function installOnHub(options) {
   try {
     ensureRuntimeDirectories(files);
     for (const file of files) atomicWrite(file.target, file.content, file.mode);
+    // systemd refuses a missing ReadWritePaths entry. The workers' transport
+    // normally created it already; same mode as its own mkdir. Never removed.
+    fs.mkdirSync(settings.slackRateLimits, { recursive: true, mode: 0o700 });
     stage = 'nginx-test';
     command('/usr/sbin/nginx', ['-t']);
     stage = 'relay-start';

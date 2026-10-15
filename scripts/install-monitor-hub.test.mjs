@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { installationSettings, relayEnvironment, relayService, queueService, injectNginxLocation, prepareInstallation, restoreFiles, ensureRuntimeDirectories, waitForEnrollment, safeFailureReason, parseInstallArguments } from './install-monitor-hub.mjs';
+import { installationSettings, relayEnvironment, relayService, queueService, injectNginxLocation, prepareInstallation, restoreFiles, ensureRuntimeDirectories, waitForEnrollment, safeFailureReason, parseInstallArguments, workerSourceFiles, slackRateLimitDirectory } from './install-monitor-hub.mjs';
 
 const nginx = `server {\n    listen 80;\n    server_name api.ruegamer-steiner.de;\n    return 301 https://$host$request_uri;\n}\nserver {\n    listen 443 ssl;\n    server_name api.ruegamer-steiner.de;\n    ssl_certificate /etc/ssl/current.pem;\n    # A brace in a comment { is not a block.\n    location /v1/ { proxy_pass http://127.0.0.1:8787; }\n    location / { add_header X-Example "quoted { braces }"; proxy_pass http://127.0.0.1:8787; }\n}\nserver {\n    listen 443 ssl;\n    server_name other.example.org;\n    location / { return 200 "unrelated"; }\n}\n`;
 const ownerToken = '1'.repeat(48);
@@ -45,6 +45,8 @@ test('queue service reads credentials only on the Hub, uses the existing local t
   assert.match(service, /StateDirectory=max-monitor-queue/);
   assert.match(service, /ReadOnlyPaths=\/opt\/rs-hub \/etc\/max-monitor/);
   assert.match(service, /ReadWritePaths=\/var\/lib\/max-monitor-queue/);
+  // The shared Slack budget of the Hub transport (worker slack-rate-limit.js).
+  assert.match(service, /^ReadWritePaths=\/opt\/rs-hub\/state\/slack-rate-limits$/m);
   assert.ok(!service.includes(ownerToken));
   assert.ok(!service.includes('MONITOR_BRIDGE_TOKEN'));
   assert.ok(!service.includes('--once'));
@@ -184,4 +186,83 @@ test('failed readiness is bounded and diagnoses HTTP status without exposing res
   });
   assert.equal(calls, 2);
   assert.equal(safeFailureReason(new Error(`unexpected private body ${ownerToken}`)), 'Funktionsprüfung fehlgeschlagen');
+});
+
+function workerFixture(t, files) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'max-monitor-worker-source-'));
+  t.after(() => fs.rmSync(directory, { force: true, recursive: true }));
+  const workerRoot = path.join(directory, 'newsletter-source');
+  for (const [relative, content] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(workerRoot, relative)), { recursive: true });
+    fs.writeFileSync(path.join(workerRoot, relative), content);
+  }
+  fs.writeFileSync(path.join(directory, 'nginx.conf'), nginx);
+  fs.writeFileSync(path.join(directory, 'enrollment.json'), JSON.stringify(prior), { mode: 0o600 });
+  return { directory, workerRoot, nginxConfigPath: path.join(directory, 'nginx.conf'), existingConfigPath: path.join(directory, 'enrollment.json') };
+}
+
+// Shape of worker main (15.10.): hub-transport.js loads the shared limiters.
+const currentWorker = {
+  'src/config.js': "const fs = require('fs');\nexports.loadConfig = () => ({});\n",
+  'src/pre-gen.js': 'exports.PRE_GEN_FILE = "abc";\n',
+  'src/hub-transport.js': "const { ReadCoalescer } = require('./read-coalescer');\nconst { rateLimit } = require('./filestage-rate-limit');\n" +
+    "const { slackRateLimit } = require(\"./slack-rate-limit\");\nconst klaviyoLink = require('./klaviyo-link');\nconst { X } = require('./pre-gen');\n",
+  'src/read-coalescer.js': 'module.exports = {};\n',
+  'src/filestage-rate-limit.js': "function responseError() { const { FreigabenError } = require('./freigaben'); }\nmodule.exports = {};\n",
+  'src/slack-rate-limit.js': "const { rateLimit } = require('./filestage-rate-limit');\nconst p = require('node:path');\n",
+  'src/klaviyo-link.js': "require('./config.js'); require('./lib/helper'); require('./hub-transport');\n",
+  'src/lib/helper/index.js': "require('../../netz');\n",
+  'src/netz.js': '',
+  'src/freigaben.js': "require('./jobs');\n",
+  'src/jobs.js': '',
+  'src/unrelated.js': 'never copied',
+};
+
+test('the worker source copy is the complete transitive relative require closure of the three entry points', (t) => {
+  const fixture = workerFixture(t, currentWorker);
+  const relatives = workerSourceFiles(fixture.workerRoot).map(file => file.relative).sort();
+  assert.deepEqual(relatives, ['src/config.js', 'src/filestage-rate-limit.js', 'src/freigaben.js', 'src/hub-transport.js', 'src/jobs.js',
+    'src/klaviyo-link.js', 'src/lib/helper/index.js', 'src/netz.js', 'src/pre-gen.js', 'src/read-coalescer.js', 'src/slack-rate-limit.js']);
+  const hubRoot = path.join(fixture.directory, 'hub');
+  const plan = prepareInstallation({ ...fixture, hubRoot });
+  const targets = plan.files.map(file => file.target);
+  for (const name of ['slack-rate-limit.js', 'filestage-rate-limit.js', 'read-coalescer.js', 'hub-transport.js', 'config.js', 'pre-gen.js'])
+    assert.ok(targets.includes(`/opt/max-monitor/newsletter-source/src/${name}`), name);
+  assert.ok(!targets.some(target => target.endsWith('/unrelated.js')));
+  const copied = plan.files.find(file => file.target === '/opt/max-monitor/newsletter-source/src/slack-rate-limit.js');
+  assert.equal(copied.mode, 0o644);
+  assert.equal(String(copied.content), currentWorker['src/slack-rate-limit.js']);
+  const unit = plan.files.find(file => file.target === '/etc/systemd/system/max-monitor-queue.service');
+  assert.ok(String(unit.content).split('\n').includes(`ReadWritePaths=${hubRoot}/state/slack-rate-limits`));
+  assert.equal(plan.settings.slackRateLimits, `${hubRoot}/state/slack-rate-limits`);
+});
+
+test('a missing or escaping worker module fails the install before anything is staged', (t) => {
+  for (const [files, pattern] of [
+    [{ ...currentWorker, 'src/slack-rate-limit.js': undefined }, /slack-rate-limit\.js.*fehlt/],
+    [{ ...currentWorker, 'src/jobs.js': undefined }, /jobs\.js.*fehlt/],
+    [{ ...currentWorker, 'src/netz.js': "require('../../outside');\n" }, /außerhalb/],
+  ]) {
+    const fixture = workerFixture(t, Object.fromEntries(Object.entries(files).filter(([, content]) => content !== undefined)));
+    const stageDirectory = path.join(fixture.directory, 'stage');
+    assert.throws(() => prepareInstallation({ ...fixture, stageDirectory, hubRoot: path.join(fixture.directory, 'no-hub') }), pattern);
+    assert.equal(fs.existsSync(stageDirectory), false);
+  }
+});
+
+test('the writable Slack budget follows the Hub transport runtime directory', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'max-monitor-hub-env-'));
+  t.after(() => fs.rmSync(directory, { force: true, recursive: true }));
+  assert.equal(slackRateLimitDirectory(path.join(directory, 'missing')), path.join(directory, 'missing', 'state', 'slack-rate-limits'));
+  fs.writeFileSync(path.join(directory, '.env'), 'SLACK_TOKEN=xoxb-secret-never-used\nHUB_RUNTIME_DIR=\n');
+  assert.equal(slackRateLimitDirectory(directory), path.join(directory, 'state', 'slack-rate-limits'));
+  fs.writeFileSync(path.join(directory, '.env'), 'HUB_RUNTIME_DIR="/var/lib/rs-hub"\n');
+  assert.equal(slackRateLimitDirectory(directory), '/var/lib/rs-hub/state/slack-rate-limits');
+  const unit = queueService({ ...installationSettings({}, prior), slackRateLimits: '/var/lib/rs-hub/state/slack-rate-limits' });
+  assert.match(unit, /^ReadWritePaths=\/var\/lib\/rs-hub\/state\/slack-rate-limits$/m);
+  assert.match(unit, /ReadOnlyPaths=\/opt\/rs-hub \/etc\/max-monitor/);
+  for (const value of ['relative/path', '/opt/rs hub', '/opt/../etc']) {
+    fs.writeFileSync(path.join(directory, '.env'), `HUB_RUNTIME_DIR=${value}\n`);
+    assert.throws(() => slackRateLimitDirectory(directory), /HUB_RUNTIME_DIR/);
+  }
 });
