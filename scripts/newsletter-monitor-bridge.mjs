@@ -77,12 +77,23 @@ export function workflowMatches(workflow, tags) {
   return tags.some(tag => configured.includes(normalizeTag(tag)));
 }
 
+// The bridge reads Slack with the Tuck token the worker Macs use. A 429 (or
+// Slack's 'ratelimited') is marked so callers can fall back instead of failing.
+const rateLimitError = message => Object.assign(new Error(message), { code: 'RATE_LIMITED' });
+export function isRateLimited(error) { return error?.code === 'RATE_LIMITED'; }
+
 async function requestJson(hubFetch, url, service) {
   const response = await hubFetch(url, { method: 'GET' });
-  if (!response.ok) throw new Error(`${service}: HTTP ${response.status}.`);
+  if (!response.ok) {
+    const message = `${service}: HTTP ${response.status}.`;
+    throw response.status === 429 ? rateLimitError(message) : new Error(message);
+  }
   const data = await response.json();
   if (!data || typeof data !== 'object') throw new Error(`${service}: ungültige Antwort.`);
-  if (service === 'Slack' && data.ok !== true) throw new Error(`Slack: ${/^[a-z_]+$/.test(data.error) ? data.error : 'Abfrage fehlgeschlagen'}.`);
+  if (service === 'Slack' && data.ok !== true) {
+    const message = `Slack: ${/^[a-z_]+$/.test(data.error) ? data.error : 'Abfrage fehlgeschlagen'}.`;
+    throw data.error === 'ratelimited' ? rateLimitError(message) : new Error(message);
+  }
   return data;
 }
 
@@ -156,13 +167,15 @@ export function parseClaim(message) {
     title: displayText((link?.[2] || text.split('\n')[0].replace(/[*`]/g, '')).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 300) };
 }
 
-export async function listClaims(hubFetch, channelId, { now = Date.now(), maxPages = 100, lookbackDays = 60, onMessage = () => {} } = {}) {
+export async function listClaims(hubFetch, channelId, { now = Date.now(), maxPages = 100, lookbackDays = 60, oldest, onMessage = () => {} } = {}) {
   const claims = [];
   let cursor;
   for (let page = 0; page < maxPages; page += 1) {
     const url = new URL('https://slack.com/api/conversations.history');
-    for (const [key, value] of Object.entries({ channel: channelId, include_all_metadata: true, limit: 100,
-      ...(lookbackDays === null ? {} : { oldest: ((now - lookbackDays * 86400000) / 1000).toFixed(6) }), ...(cursor ? { cursor } : {}) })) url.searchParams.set(key, String(value));
+    // 999 per page like the worker's readClaims: up to 10x fewer calls on the shared token.
+    const since = oldest !== undefined ? { oldest } : lookbackDays === null ? {} : { oldest: ((now - lookbackDays * 86400000) / 1000).toFixed(6) };
+    for (const [key, value] of Object.entries({ channel: channelId, include_all_metadata: true, limit: 999,
+      ...since, ...(cursor ? { cursor } : {}) })) url.searchParams.set(key, String(value));
     const result = await requestJson(hubFetch, url, 'Slack');
     if (!Array.isArray(result.messages)) throw new Error('Slack: Nachrichtenliste fehlt.');
     for (const message of result.messages) { onMessage(message); const claim = parseClaim(message); if (claim) claims.push({ ...claim, channelId }); }
@@ -173,26 +186,76 @@ export async function listClaims(hubFetch, channelId, { now = Date.now(), maxPag
   throw new Error('Slack: Reservierungen unvollständig; bisherige Queue bleibt erhalten.');
 }
 
-export function createClaimReader({ ttlMs = 60000 } = {}) {
+// Slack message IDs compared exactly (seconds and microseconds as digit strings).
+export function compareSlackTs(a, b) {
+  const [ai, af = ''] = String(a).split('.'), [bi, bf = ''] = String(b).split('.');
+  if (ai.length !== bi.length) return ai.length - bi.length;
+  if (ai !== bi) return ai < bi ? -1 : 1;
+  const x = af.padEnd(6, '0'), y = bf.padEnd(6, '0');
+  return x === y ? 0 : x < y ? -1 : 1;
+}
+
+export const CLAIM_CACHE_MS = 180000;
+export const RATE_LIMIT_FALLBACK_MS = 600000;
+export const ERROR_RESCAN_MS = 1800000;
+
+// Claim channels: one complete read per 180 s (the loop runs every 60 s).
+// incremental (#ai-fehler): only messages newer than the newest one seen, with a
+// complete rescan every 30 min or after invalidate(); deletions and edits of
+// older copies appear with that rescan.
+// A 429 reuses a read under 10 min old. Such a cycle feeds only the display:
+// stats tell the caller, and the error-copy cleanup waits for a fresh cycle.
+export function createClaimReader({ ttlMs = CLAIM_CACHE_MS, fallbackMs = RATE_LIMIT_FALLBACK_MS, rescanMs = ERROR_RESCAN_MS } = {}) {
   const cache = new Map();
+  const stats = { fresh: 0, cached: 0, fallback: 0 };
+  const replay = (entry, options) => {
+    for (const message of entry.messages) options.onMessage?.(message);
+    return entry.claims;
+  };
   const reader = async (hubFetch, channelId, options) => {
     const old = cache.get(channelId);
-    if (old && old.lookbackDays === options.lookbackDays && options.now - old.at < ttlMs) {
-      for (const message of old.messages) options.onMessage?.(message);
-      return old.claims;
+    const usable = Boolean(old) && old.lookbackDays === options.lookbackDays && old.incremental === Boolean(options.incremental);
+    const age = usable ? options.now - old.at : NaN;
+    if (usable && !old.incremental && age >= 0 && age < ttlMs) { stats.cached += 1; return replay(old, options); }
+    const sinceFull = usable ? options.now - old.fullAt : NaN;
+    const incremental = usable && old.incremental && typeof old.newest === 'string' && sinceFull >= 0 && sinceFull < rescanMs;
+    const all = [], kept = [];
+    let newest = incremental ? old.newest : undefined;
+    let claims;
+    try {
+      claims = await listClaims(hubFetch, channelId, { ...options, ...(incremental ? { oldest: old.newest } : {}), onMessage: message => {
+        all.push(message);
+        if (typeof message?.ts === 'string' && /^\d+\.\d+$/.test(message.ts) && (!newest || compareSlackTs(message.ts, newest) > 0)) newest = message.ts;
+        // Run errors are inventory too. A warm cache must replay the same errors
+        // as a fresh read, including errors older than the claims lookback.
+        if (message.metadata?.event_type === 'ai_newsletter_fehler' || parseWorkerIssue(message)) kept.push(message);
+      } });
+    } catch (error) {
+      if (isRateLimited(error) && usable && age >= 0 && age < fallbackMs) { stats.fallback += 1; return replay(old, options); }
+      throw error;
     }
-    const messages = [];
-    const claims = await listClaims(hubFetch, channelId, { ...options, onMessage: message => {
-      // Run errors are inventory too. A warm cache must replay the same errors
-      // as a fresh read, including errors older than the claims lookback.
-      if (message.metadata?.event_type === 'ai_newsletter_fehler' || parseWorkerIssue(message)) messages.push(message);
-      options.onMessage?.(message);
-    } });
-    cache.set(channelId, { at: options.now, lookbackDays: options.lookbackDays, claims, messages });
+    stats.fresh += 1;
+    if (incremental) {
+      const added = new Set(kept.map(message => message.ts));
+      const claimIds = new Set(claims.map(claim => claim.ts));
+      const entry = { ...old, at: options.now, newest, messages: [...kept, ...old.messages.filter(message => !added.has(message.ts))],
+        claims: [...claims, ...old.claims.filter(claim => !claimIds.has(claim.ts))] };
+      cache.set(channelId, entry);
+      return replay(entry, options);
+    }
+    cache.set(channelId, { at: options.now, fullAt: options.now, lookbackDays: options.lookbackDays,
+      incremental: Boolean(options.incremental), newest, claims, messages: kept });
+    for (const message of all) options.onMessage?.(message);
     return claims;
   };
   reader.invalidate = channelId => cache.delete(channelId);
+  reader.stats = stats;
   return reader;
+}
+
+// True when every channel of a cycle was read completely in that cycle.
+export function freshClaimCycle(before, after) {
+  return after.cached === before.cached && after.fallback === before.fallback;
 }
 
 export function parseWorkerIssue(message) {
@@ -376,7 +439,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         workerId: claim?.paused && claim.portable ? undefined : claim?.workerId, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
         updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30),
         // Internal only: addRunDetails reads progress and renders of this attempt, then removes it.
-        run: claim ? { id: claim.runId, ts: claim.ts, taskId: task.id, channelId: claim.channelId } : undefined });
+        run: claim ? { id: claim.runId, ts: claim.ts, taskId: task.id, channelId: claim.channelId, heartbeat: claim.heartbeat } : undefined });
     }
   }
   // Revisions come from the approval workflow. They can run while the old
@@ -410,7 +473,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId,
       phase, progress: status === 'completed' ? 100 : undefined, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
       ...completionEvidence([claim]),
-      run: { id: claim.runId, ts: claim.ts, taskId: claim.taskId, channelId: claim.channelId } });
+      run: { id: claim.runId, ts: claim.ts, taskId: claim.taskId, channelId: claim.channelId, heartbeat: claim.heartbeat } });
   }
   return rows.sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -446,11 +509,29 @@ function parsePmQuestion(text) {
   return questions.length ? parseBlockedReason(`:warning: blockiert: ${questions.join(' · ')}`) : null;
 }
 
-export async function readRunStatuses(hubFetch, channelId, threads, { concurrency = 4 } = {}) {
-  const pending = [...new Set(threads)];
+export const RUN_STATUS_MAX_AGE_MS = 300000;
+
+// threads: ts strings or { ts, heartbeat }. With a cache (per channel and ts), a
+// thread is read again only when its claim heartbeat changed or its status is
+// 5 min old. The first 429 (budget.limited, shared per cycle) stops all further
+// reads; unread threads keep their last known status for the display.
+export async function readRunStatuses(hubFetch, channelId, threads, { concurrency = 4, cache, now = Date.now(), budget = { limited: false } } = {}) {
+  const wanted = new Map();
+  for (const thread of threads) {
+    const ts = typeof thread === 'string' ? thread : thread?.ts;
+    if (typeof ts === 'string' && !wanted.has(ts)) wanted.set(ts, typeof thread === 'string' ? undefined : thread.heartbeat);
+  }
   const statuses = new Map();
+  const known = ts => { const status = cache?.get(`${channelId}:${ts}`)?.status; if (status) statuses.set(ts, status); };
+  const pending = [];
+  for (const [ts, heartbeat] of wanted) {
+    const old = cache?.get(`${channelId}:${ts}`);
+    const age = old ? now - old.at : NaN;
+    if (old && old.heartbeat === heartbeat && age >= 0 && age < RUN_STATUS_MAX_AGE_MS) known(ts);
+    else pending.push(ts);
+  }
   await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, async () => {
-    while (pending.length) {
+    while (pending.length && !budget.limited) {
       const ts = pending.shift();
       try {
         const url = new URL('https://slack.com/api/conversations.replies');
@@ -462,9 +543,15 @@ export async function readRunStatuses(hubFetch, channelId, threads, { concurrenc
             || (parsePmQuestion(message.text) ? { pmQuestion: parsePmQuestion(message.text) } : null)
             || (parseBlockedReason(message.text) ? { blockedReason: parseBlockedReason(message.text) } : null)).filter(Boolean);
         if (found.length) statuses.set(ts, found.at(-1));
-      } catch { /* Progress is optional: the task simply stays "In Bearbeitung". */ }
+        cache?.set(`${channelId}:${ts}`, { heartbeat: wanted.get(ts), at: now, status: found.at(-1) || null });
+      } catch (error) {
+        // Progress is optional: the task simply stays "In Bearbeitung".
+        if (isRateLimited(error)) budget.limited = true;
+        known(ts);
+      }
     }
   }));
+  for (const ts of pending) known(ts);
   return statuses;
 }
 
@@ -551,7 +638,7 @@ export function createRenderPreviews({ localHub, upload, openDatabase, resize, r
 // Live step from Slack for running work; render previews for newsletter attempts.
 // Pictures stay after completion (refreshed once at the transition) and are never
 // backfilled for tasks that finished before this monitor saw them run.
-export async function addRunDetails(rows, { hubFetch, channelId, previews, previousTasks = [], now = Date.now() }) {
+export async function addRunDetails(rows, { hubFetch, channelId, previews, previousTasks = [], now = Date.now(), statusCache }) {
   const previous = new Map((Array.isArray(previousTasks) ? previousTasks : []).map(row => [row?.id, row]));
   const running = rows.filter(row => row.run && (row.status === 'running' || (row.status === 'blocked' && row.workflow === 'correction'
     && !(previous.get(row.id)?.attemptId === row.attemptId && previous.get(row.id)?.blockedReason))));
@@ -561,12 +648,17 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
   for (const row of running) {
     const channel = row.run.channelId || channelId;
     if (!channels.has(channel)) channels.set(channel, []);
-    channels.get(channel).push(row.run.ts);
+    channels.get(channel).push({ ts: row.run.ts, heartbeat: row.run.heartbeat });
   }
+  const budget = { limited: false };
   const [statusLists, rendered] = await Promise.all([
-    Promise.all([...channels].map(async ([channel, threads]) => [channel, await readRunStatuses(hubFetch, channel, threads)])),
+    Promise.all([...channels].map(async ([channel, threads]) => [channel, await readRunStatuses(hubFetch, channel, threads, { cache: statusCache, now, budget })])),
     previews && attempts.length ? previews(attempts.map(row => ({ taskId: row.run.taskId, runId: row.run.id }))).catch(() => null) : new Map(),
   ]);
+  if (statusCache) {
+    const live = new Set(running.map(row => `${row.run.channelId || channelId}:${row.run.ts}`));
+    for (const key of [...statusCache.keys()]) if (!live.has(key)) statusCache.delete(key);
+  }
   const statuses = new Map(statusLists);
   for (const row of rows) {
     const old = previous.get(row.id);
@@ -705,7 +797,7 @@ export function createLocalHubFetch(hub, { localHub, transport, spawnImpl = spaw
   };
 }
 
-export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, claimReader = listClaims, now = Date.now() }) {
+export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, claimReader = listClaims, statusCache, now = Date.now() }) {
   validateWorkflows(workflows);
   const issues = new Map();
   const onMessage = message => {
@@ -729,7 +821,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
       return claims;
     })(),
     Promise.resolve().then(() => fleetReader(config.hub, fleetDirectory ? { fleetDirectory } : {})),
-    errorChannel ? claimReader(hubFetch, errorChannel, { now, lookbackDays: null,
+    errorChannel ? claimReader(hubFetch, errorChannel, { now, lookbackDays: null, incremental: true,
       onMessage: message => { errorMessages.push(message); onMessage(message); } }) : Promise.resolve(),
     Promise.resolve().then(() => salesReader ? salesReader(now) : []),
     Promise.resolve().then(() => questionReader ? questionReader() : { sets: [], jobs: [] }),
@@ -752,7 +844,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   // Any currently visible attempt prevents borrowing an older success.
   retainCompletionDates(queue, previousTasks, claims);
   applyPmQuestions(queue, questionResult.value);
-  await addRunDetails(queue, { hubFetch, channelId: config.slack.channel_id, previews, previousTasks, now });
+  await addRunDetails(queue, { hubFetch, channelId: config.slack.channel_id, previews, previousTasks, now, statusCache });
   queue.push(...salesResult.value);
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
   const manualUploadIds = new Set(tasks.filter(task => (task.tags || []).some(tag => normalizeTag(typeof tag === 'string' ? tag : tag.name) === normalizeTag('manuell'))).map(task => task.id));
@@ -889,6 +981,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     upload: options.dryRun ? async () => {} : (id, data) => uploadPreview(id, data, options) }) : undefined;
   const controller = new AbortController();
   const claimReader = createClaimReader();
+  const statusCache = new Map();
   const saveSnapshot = async snapshot => {
     await fs.mkdir(path.dirname(options.cacheFile), { recursive: true, mode: 0o700 });
     const temporary = `${options.cacheFile}.${process.pid}.tmp`;
@@ -907,7 +1000,8 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   try {
     await runSyncLoop(async () => {
       try {
-        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
+        const readsBefore = { ...claimReader.stats };
+        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, statusCache, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
           previews, previousTasks: cached?.tasks, ...(options.localHub ? { fleetReader: readLocalHubFleet,
             salesReader: time => readLocalSales(path.join(options.localHub, 'sales-newsletter'), time),
             questionReader: () => readPmQuestions(path.join(options.localHub, '..', 'rs-pm-question-pilot', 'state.sqlite')) } : {}) }), cachedSource: cached?.source,
@@ -915,7 +1009,9 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
           save: options.dryRun ? undefined : saveSnapshot,
         });
         if (!options.dryRun) console.log(`${new Date().toISOString()} ${result.ok ? `Queue aktualisiert (${result.snapshot.tasks.length} Aufgaben).` : 'Quelle nicht erreichbar; letzte Queue bleibt erhalten.'}`);
-        if (result.ok && slackWrite) {
+        // Deleting needs claims read completely in this cycle; a cached or
+        // rate-limit fallback read only feeds the display.
+        if (result.ok && slackWrite && freshClaimCycle(readsBefore, claimReader.stats)) {
           try {
             const cleaned = await cleanupErrorCopies({ readFleet, hubFetch, slackWrite, errorChannel,
               archive: entry => fs.appendFile(path.join(path.dirname(options.cacheFile), 'error-copy-cleanup.jsonl'),

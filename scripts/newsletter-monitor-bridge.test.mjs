@@ -11,6 +11,7 @@ import {
   parseClaim, listClaims, parseWorkerIssue, buildQueue, parseObservedWorkers, readHubFleet,
   collectSnapshot, relayEndpoint, publishSnapshot, syncOnce, runSyncLoop,
   parseRunStatus, parseBlockedReason, addRunDetails, readRenders, createRenderPreviews, uploadPreview,
+  createClaimReader, readRunStatuses, freshClaimCycle,
 } from './newsletter-monitor-bridge.mjs';
 
 const now = Date.parse('2026-10-07T12:00:00Z');
@@ -671,4 +672,126 @@ test('preview uploads go to the relay with the token in the header only', async 
   assert.equal(calls[0][0], `https://api.example.test/max-monitor/v1/teams/DEMO1234/fleet/previews/${'a'.repeat(64)}`);
   assert.deepEqual([calls[0][1].method, calls[0][1].redirect, calls[0][1].headers.Authorization, calls[0][1].headers['Content-Type']], ['PUT', 'error', 'Bearer secret', 'image/jpeg']);
   await assert.rejects(uploadPreview('a'.repeat(64), Buffer.from('jpeg'), { relayUrl: 'https://api.example.test', teamId: 'DEMO1234', token: 'secret', fetchImpl: async () => ({ ok: false, status: 413 }) }), /413/);
+});
+
+// INF-05: the bridge shares the Tuck Slack token with every worker Mac.
+const limitedReply = () => ({ ok: false, status: 429, json: async () => ({ ok: false, error: 'ratelimited' }) });
+const fehler = (ts, job = 'abc@1') => ({ ts, text: '*Newsletter Creation · Kunde*\n:warning: Technisch blockiert',
+  metadata: { event_type: 'ai_newsletter_fehler', event_payload: { kind: 'lauf', worker: 'mac-1', task_id: job, run_id: `run-${job}` } } });
+
+test('Slack history pages request 999 messages like the worker', async () => {
+  const limits = [];
+  await listClaims(async target => { limits.push(new URL(target).searchParams.get('limit')); return response({ ok: true, messages: [], has_more: false }); }, 'C0C6NMMGGJV', { now });
+  assert.deepEqual(limits, ['999']);
+});
+
+test('claim channels are read at most every 180 s; #ai-fehler reads only newer messages and rescans every 30 min', async () => {
+  const reader = createClaimReader();
+  const requests = [];
+  let errors = [fehler('1791373200.000100')];
+  const fetcher = async target => {
+    const url = new URL(target); requests.push(url);
+    if (url.searchParams.get('channel') !== 'errors') return response({ ok: true, messages: [claimMessage()], has_more: false });
+    const oldest = url.searchParams.get('oldest');
+    return response({ ok: true, messages: errors.filter(message => !oldest || Number(message.ts) > Number(oldest)), has_more: false });
+  };
+  const cycle = async at => {
+    const seen = [];
+    const claims = await reader(fetcher, 'status', { now: at, lookbackDays: 60 });
+    await reader(fetcher, 'errors', { now: at, lookbackDays: null, incremental: true, onMessage: message => seen.push(message.ts) });
+    return { claims, seen: seen.sort(), status: requests.filter(url => url.searchParams.get('channel') === 'status').length,
+      oldest: requests.filter(url => url.searchParams.get('channel') === 'errors').at(-1).searchParams.get('oldest') };
+  };
+  const first = await cycle(now);
+  assert.deepEqual([first.status, first.oldest, first.seen, first.claims.length], [1, null, ['1791373200.000100'], 1]);
+  const second = await cycle(now + 170000);
+  assert.equal(second.status, 1, 'a second cycle within 180 s reads no claim channel');
+  assert.equal(second.claims.length, 1);
+  assert.deepEqual([second.oldest, second.seen], ['1791373200.000100', ['1791373200.000100']]);
+  errors = [fehler('1791373260.000200', 'def@2'), ...errors];
+  const third = await cycle(now + 180000);
+  assert.equal(third.status, 2, 'claim channels are read again after 180 s');
+  assert.deepEqual([third.oldest, third.seen], ['1791373200.000100', ['1791373200.000100', '1791373260.000200']]);
+  assert.equal((await cycle(now + 240000)).oldest, '1791373260.000200');
+  // A copy deleted in Slack disappears with the next complete scan after 30 min.
+  errors = errors.filter(message => message.ts !== '1791373200.000100');
+  assert.deepEqual((await cycle(now + 1700000)).seen, ['1791373200.000100', '1791373260.000200']);
+  const rescan = await cycle(now + 1800000);
+  assert.deepEqual([rescan.oldest, rescan.seen], [null, ['1791373260.000200']]);
+  // The cleanup's invalidate still forces a complete scan.
+  await cycle(now + 1860000);
+  reader.invalidate('errors');
+  assert.equal((await cycle(now + 1920000)).oldest, null);
+});
+
+test('a 429 on one channel with a cache under 10 min keeps the snapshot; a stale cache never deletes', async () => {
+  const reader = createClaimReader();
+  let limited = false;
+  const config = { clickup: { workspace_id: 'test' }, slack: { channel_id: 'status' }, monitor_channels: { claims: ['flows'], errors: 'errors' }, hub: {} };
+  const collect = at => syncOnce({ publish: async () => {}, collect: () => collectSnapshot({ config, now: at, claimReader: reader, fleetReader: async () => [],
+    hubFetch: async target => {
+      const url = new URL(target);
+      if (url.hostname !== 'slack.com') return response(url.pathname.endsWith('/space') ? { spaces: [{ id: 'space' }] } : url.pathname.endsWith('/tag') ? { tags: [{ name: 'pre gen.' }] } : { tasks: [task('a')], last_page: true });
+      const channel = url.searchParams.get('channel');
+      if (limited && channel === 'flows') return limitedReply();
+      return response({ ok: true, messages: channel === 'status' ? [claimMessage()] : channel === 'errors' ? [fehler('1791373200.000100')] : [], has_more: false });
+    } }) });
+  const before = { ...reader.stats };
+  const first = await collect(now);
+  assert.equal(first.ok, true);
+  assert.equal(freshClaimCycle(before, reader.stats), true);
+  limited = true;
+  const cachedStats = { ...reader.stats };
+  const cached = await collect(now + 200000);
+  assert.equal(cached.ok, true, 'a 429 with a fresh cache still gives result.ok');
+  assert.equal(cached.snapshot.tasks[0].status, 'running');
+  assert.equal(cached.snapshot.blockedErrors.length, 1);
+  assert.equal(reader.stats.fallback, 1);
+  assert.equal(freshClaimCycle(cachedStats, reader.stats), false, 'error-copy cleanup waits for a fully fresh cycle');
+  const ttlStats = { ...reader.stats };
+  limited = false;
+  await collect(now + 260000);
+  assert.equal(freshClaimCycle(ttlStats, reader.stats), false, 'a cycle served from the 180 s cache never deletes either');
+  limited = true;
+  // 'flows' was last read completely at +260 s; ten minutes later the 429 counts again.
+  const expired = await collect(now + 260000 + 600000);
+  assert.equal(expired.ok, false);
+  assert.match(expired.snapshot.source.error, /HTTP 429/);
+});
+
+test('run status replies are re-read only for a new heartbeat or after 5 min, and the first 429 stops the cycle', async () => {
+  const cache = new Map();
+  const calls = [];
+  let limited = false;
+  const fetcher = async target => {
+    const url = new URL(target); const ts = url.searchParams.get('ts'); calls.push(ts);
+    if (limited) return limitedReply();
+    return response({ ok: true, messages: [{ ts }, statusReply(`⏳ ${calls.length} % · Schritt ${ts}`, { thread_ts: ts })] });
+  };
+  const read = (threads, at) => readRunStatuses(fetcher, 'status', threads, { cache, now: at, concurrency: 1 });
+  const threads = [{ ts: '1.1', heartbeat: 100 }, { ts: '2.1', heartbeat: 100 }];
+  assert.equal((await read(threads, now)).size, 2); assert.equal(calls.length, 2);
+  const cached = await read(threads, now + 60000);
+  assert.equal(calls.length, 2); assert.equal(cached.get('1.1').step, 'Schritt 1.1');
+  await read([{ ts: '1.1', heartbeat: 200 }, threads[1]], now + 120000);
+  assert.deepEqual(calls.slice(2), ['1.1'], 'only the thread with a new heartbeat is read');
+  await read([{ ts: '1.1', heartbeat: 200 }, threads[1]], now + 300000);
+  assert.deepEqual(calls.slice(3), ['2.1'], 'a status older than 5 min is read again');
+  limited = true;
+  const shown = await read([{ ts: '1.1', heartbeat: 300 }, { ts: '2.1', heartbeat: 300 }, { ts: '3.1', heartbeat: 300 }], now + 360000);
+  assert.deepEqual(calls.slice(4), ['1.1'], 'no further reads after the first 429');
+  assert.deepEqual([...shown.keys()].sort(), ['1.1', '2.1'], 'the last known status stays on display');
+});
+
+test('a snapshot cycle reuses the cached run status while the claim heartbeat is unchanged', async () => {
+  const source = runningSource();
+  const statusCache = new Map();
+  for (const at of [now, now + 60000]) {
+    const snapshot = await collectSnapshot({ now: at, ...source, statusCache, fleetReader: async () => [] });
+    assert.deepEqual([snapshot.tasks[0].progress, snapshot.tasks[0].step], [50, 'Bau der Mail']);
+    assert.equal(Object.hasOwn(snapshot.tasks[0], 'run'), false);
+  }
+  assert.deepEqual(source.calls, ['1791373200.001']);
+  await collectSnapshot({ now: now + 360000, ...source, statusCache, fleetReader: async () => [] });
+  assert.equal(source.calls.length, 2);
 });
