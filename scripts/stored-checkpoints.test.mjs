@@ -32,6 +32,15 @@ test('status-bound newsletter, upload and translation jobs match their exact att
     applyStoredCheckpoints([other],[saved({task_id:jobId.replace('1792080437073','1792080437074')})]);assert.equal(other.workerId,'mac-a');
   }
 });
+test('a newer saved blocked attempt supersedes delayed Slack metadata for exactly the same commission', () => {
+  const value=()=>row({run:{id:'20261015T164302Z-job',jobId:'task@123',taskId:'task'}});
+  const entry=saved({run_id:'20261015T170058Z-job',task_id:'task@123'});
+  const current=value();applyStoredCheckpoints([current],[entry]);assert.equal(current.workerId,undefined);assert.equal(current.attemptId,entry.run_id);
+  for(const overrides of [{status:'running'},{run:{id:'20261015T180058Z-job',jobId:'task@123',taskId:'task'}},
+    {run:{id:'20261015T164302Z-job',jobId:'task@124',taskId:'task'}}]){
+    const different={...value(),...overrides};applyStoredCheckpoints([different],[entry]);assert.equal(different.workerId,'mac-a');
+  }
+});
 test('central inventory reads only unowned descriptors and never creates a missing database', async t => {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'hub-storage-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   assert.deepEqual(await readStoredCheckpoints(root),[]);assert.equal(fs.existsSync(path.join(root,'state')),false);

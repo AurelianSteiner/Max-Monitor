@@ -839,11 +839,14 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
     if (row.status === 'completed') continue;
     const run = bindings.get(row.id);
     if (!run) continue;
-    const entry = entries.find(entry => !entry.owner && entry.run_id === run.id
-      && (entry.task_id === (run.jobId || run.taskId) || (row.workflow === 'correction' && row.id === `correction:${entry.task_id}`)));
+    const entry = entries.find(entry => !entry.owner
+      && (entry.task_id === (run.jobId || run.taskId) || (row.workflow === 'correction' && row.id === `correction:${entry.task_id}`))
+      && (entry.run_id === run.id || (['blocked','failed','queued'].includes(row.status)
+        && entry.ready_at === 8640000000000000 && /^\d{8}T\d{6}Z-/.test(entry.run_id) && /^\d{8}T\d{6}Z-/.test(run.id)
+        && entry.run_id.slice(0,16) > run.id.slice(0,16))));
     if (!entry) continue;
     row.workerId = undefined;
-    row.attemptId = run.id;
+    row.attemptId = entry.run_id;
     if (entry.ready_at === 8640000000000000) {
       if (!/PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')) row.status = 'blocked';
       if (!/PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')) row.phase = 'Blockiert · Fortschritt im RS Hub gesichert';
