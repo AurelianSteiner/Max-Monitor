@@ -205,6 +205,9 @@ export const ERROR_RESCAN_MS = 1800000;
 // older copies appear with that rescan.
 // A 429 reuses a read under 10 min old. Such a cycle feeds only the display:
 // stats tell the caller, and the error-copy cleanup waits for a fresh cycle.
+// A 429 or another failed read marks the claim channel stale (its data stays for
+// the display). due() lets the caller decide once per cycle whether every claim
+// channel is read (refresh), so the channels never drift into separate cycles.
 export function createClaimReader({ ttlMs = CLAIM_CACHE_MS, fallbackMs = RATE_LIMIT_FALLBACK_MS, rescanMs = ERROR_RESCAN_MS } = {}) {
   const cache = new Map();
   const stats = { fresh: 0, cached: 0, fallback: 0 };
@@ -212,11 +215,16 @@ export function createClaimReader({ ttlMs = CLAIM_CACHE_MS, fallbackMs = RATE_LI
     for (const message of entry.messages) options.onMessage?.(message);
     return entry.claims;
   };
+  const current = (entry, options) => {
+    if (!entry || entry.incremental || entry.stale || entry.lookbackDays !== options.lookbackDays) return false;
+    const age = options.now - entry.at;
+    return age >= 0 && age < ttlMs;
+  };
   const reader = async (hubFetch, channelId, options) => {
     const old = cache.get(channelId);
     const usable = Boolean(old) && old.lookbackDays === options.lookbackDays && old.incremental === Boolean(options.incremental);
     const age = usable ? options.now - old.at : NaN;
-    if (usable && !old.incremental && age >= 0 && age < ttlMs) { stats.cached += 1; return replay(old, options); }
+    if (usable && !options.refresh && current(old, options)) { stats.cached += 1; return replay(old, options); }
     const sinceFull = usable ? options.now - old.fullAt : NaN;
     const incremental = usable && old.incremental && typeof old.newest === 'string' && sinceFull >= 0 && sinceFull < rescanMs;
     const all = [], kept = [];
@@ -231,6 +239,7 @@ export function createClaimReader({ ttlMs = CLAIM_CACHE_MS, fallbackMs = RATE_LI
         if (message.metadata?.event_type === 'ai_newsletter_fehler' || parseWorkerIssue(message)) kept.push(message);
       } });
     } catch (error) {
+      if (usable && !old.incremental) cache.set(channelId, { ...old, stale: true });
       if (isRateLimited(error) && usable && age >= 0 && age < fallbackMs) { stats.fallback += 1; return replay(old, options); }
       throw error;
     }
@@ -249,6 +258,8 @@ export function createClaimReader({ ttlMs = CLAIM_CACHE_MS, fallbackMs = RATE_LI
     return claims;
   };
   reader.invalidate = channelId => cache.delete(channelId);
+  // True when any of these claim channels is missing, expired or stale.
+  reader.due = (channelIds, options) => channelIds.some(channelId => !current(cache.get(channelId), options));
   reader.stats = stats;
   return reader;
 }
@@ -815,9 +826,18 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
     })(),
     (async () => {
       const claims = [];
+      const channels = [...new Set([config.slack.channel_id, ...(config.monitor_channels?.claims || [])])];
+      const lookbackDays = Number(config.claims?.lookback_days) || 60;
+      // One decision per cycle: if any claim channel is missing, expired or stale
+      // (429 fallback, failed read), all are read now, so a completely fresh cycle
+      // (error-copy cleanup) recurs. After a fallback this cycle cannot be fresh;
+      // the rest follow their own cache instead of spending the shared budget.
+      let refresh = typeof claimReader.due === 'function' && claimReader.due(channels, { now, lookbackDays });
       // Sequential reads share Slack's token/rate limit with the actual workers.
-      for (const channel of [...new Set([config.slack.channel_id, ...(config.monitor_channels?.claims || [])])])
-        claims.push(...await claimReader(hubFetch, channel, { now, onMessage, lookbackDays: Number(config.claims?.lookback_days) || 60 }));
+      for (const channel of channels) {
+        claims.push(...await claimReader(hubFetch, channel, { now, onMessage, lookbackDays, ...(refresh ? { refresh } : {}) }));
+        if (refresh && claimReader.due([channel], { now, lookbackDays })) refresh = false;
+      }
       return claims;
     })(),
     Promise.resolve().then(() => fleetReader(config.hub, fleetDirectory ? { fleetDirectory } : {})),

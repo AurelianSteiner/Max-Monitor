@@ -126,7 +126,14 @@ Brücke dessen letzten vollständigen Stand, solange er jünger als zehn Minuten
 ist, statt den ganzen Abgleich zu verwerfen. Ein solcher Stand dient nur der
 Anzeige; Reservierungen treffen ausschließlich die Worker mit eigenen Lesungen,
 und die Bereinigung der Fehlerkopien läuft nur nach einem vollständig frisch
-gelesenen Abgleich.
+gelesenen Abgleich. Ob die Reservierungskanäle neu gelesen werden, entscheidet
+die Brücke je Abgleich für alle gemeinsam: Fehlt ein Kanal, ist sein Stand
+älter als 180 Sekunden oder stammt er aus einem 429-Ersatz bzw. einer
+fehlgeschlagenen Lesung, liest sie im selben Abgleich alle Kanäle neu. So
+kommt nach einem einzelnen 429 oder Übertragungsfehler spätestens im nächsten
+Abgleich wieder ein vollständig frischer Stand zustande, statt dass die Kanäle
+dauerhaft in getrennten Takten gelesen werden. Trifft ein solcher Abgleich
+erneut auf 429, nutzen die übrigen Kanäle ihren eigenen Zwischenstand.
 
 Sobald ein vollständiger Stand im Relay gespeichert wurde, meldet eine
 authentifizierte Live-Verbindung die Änderung an alle offenen Monitor-Fenster.

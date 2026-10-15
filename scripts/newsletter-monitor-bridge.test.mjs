@@ -748,15 +748,61 @@ test('a 429 on one channel with a cache under 10 min keeps the snapshot; a stale
   assert.equal(cached.snapshot.blockedErrors.length, 1);
   assert.equal(reader.stats.fallback, 1);
   assert.equal(freshClaimCycle(cachedStats, reader.stats), false, 'error-copy cleanup waits for a fully fresh cycle');
-  const ttlStats = { ...reader.stats };
+  const recoveryStats = { ...reader.stats };
   limited = false;
   await collect(now + 260000);
+  assert.equal(freshClaimCycle(recoveryStats, reader.stats), true, 'the stale channel makes the next cycle read all claim channels');
+  const ttlStats = { ...reader.stats };
+  await collect(now + 320000);
   assert.equal(freshClaimCycle(ttlStats, reader.stats), false, 'a cycle served from the 180 s cache never deletes either');
   limited = true;
   // 'flows' was last read completely at +260 s; ten minutes later the 429 counts again.
   const expired = await collect(now + 260000 + 600000);
   assert.equal(expired.ok, false);
   assert.match(expired.snapshot.source.error, /HTTP 429/);
+});
+
+test('one 429 or transport error on a claim channel never splits the channels into cycles without cleanup', async () => {
+  const config = { clickup: { workspace_id: 'test' }, slack: { channel_id: 'status' }, monitor_channels: { claims: ['flows', 'extra'], errors: 'errors' }, hub: {} };
+  const run = async ({ failure, failAt }) => {
+    const reader = createClaimReader();
+    const reads = [], fresh = [], perCycle = [];
+    let failing = false;
+    const hubFetch = async target => {
+      const url = new URL(target);
+      if (url.hostname !== 'slack.com') return response(url.pathname.endsWith('/space') ? { spaces: [{ id: 'space' }] } : url.pathname.endsWith('/tag') ? { tags: [{ name: 'pre gen.' }] } : { tasks: [task('a')], last_page: true });
+      const channel = url.searchParams.get('channel');
+      if (!url.pathname.endsWith('/conversations.history')) return response({ ok: true, messages: [] });
+      if (channel !== 'errors') reads.push(channel);
+      if (failing && channel === 'flows') return failure === 429 ? limitedReply() : { ok: false, status: 500, json: async () => ({}) };
+      return response({ ok: true, messages: channel === 'status' ? [claimMessage()] : [], has_more: false });
+    };
+    // Every 60 s plus a few ms of drift, like the live loop.
+    for (let cycle = 0; cycle < 20; cycle += 1) {
+      failing = failAt.includes(cycle);
+      const before = { ...reader.stats }, count = reads.length;
+      const result = await syncOnce({ publish: async () => {}, collect: () => collectSnapshot({ config, now: now + cycle * 60007,
+        claimReader: reader, fleetReader: async () => [], hubFetch }) });
+      perCycle.push(reads.length - count);
+      if (result.ok && freshClaimCycle(before, reader.stats)) fresh.push(cycle);
+    }
+    return { fresh, perCycle };
+  };
+  const baseline = await run({ failure: 429, failAt: [] });
+  assert.deepEqual(baseline.fresh, [0, 3, 6, 9, 12, 15, 18]);
+  assert.deepEqual(baseline.perCycle, [3, 0, 0, 3, 0, 0, 3, 0, 0, 3, 0, 0, 3, 0, 0, 3, 0, 0, 3, 0]);
+  // A 429 served from the fallback marks the channel stale: the next cycle reads all claim channels.
+  const limited = await run({ failure: 429, failAt: [3] });
+  assert.deepEqual(limited.fresh, [0, 4, 7, 10, 13, 16, 19], 'cleanup recurs right after a single 429');
+  assert.deepEqual(limited.perCycle, [3, 0, 0, 3, 3, 0, 0, 3, 0, 0, 3, 0, 0, 3, 0, 0, 3, 0, 0, 3]);
+  // A transport error stops the sequential loop: 'extra' stays unread, and the next cycle reads all channels.
+  const broken = await run({ failure: 500, failAt: [3] });
+  assert.deepEqual(broken.fresh, [0, 4, 7, 10, 13, 16, 19], 'cleanup recurs right after a transport error');
+  assert.deepEqual(broken.perCycle, [3, 0, 0, 2, 3, 0, 0, 3, 0, 0, 3, 0, 0, 3, 0, 0, 3, 0, 0, 3]);
+  // A repeated 429 stops forcing in that cycle: 'extra' (read 60 s earlier) comes from the cache.
+  const repeated = await run({ failure: 429, failAt: [3, 4] });
+  assert.deepEqual(repeated.fresh, [0, 5, 8, 11, 14, 17]);
+  assert.deepEqual(repeated.perCycle.slice(3, 6), [3, 2, 3]);
 });
 
 test('run status replies are re-read only for a new heartbeat or after 5 min, and the first 429 stops the cycle', async () => {
