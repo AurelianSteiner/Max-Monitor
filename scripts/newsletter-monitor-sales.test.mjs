@@ -76,6 +76,37 @@ test('partial, missing and unsafe Sales data cannot silently remove jobs', async
   await assert.rejects(readLocalSales(path.join(directory, 'missing'), now), /Sales-Jobablage/);
 });
 
+test('terminal backlog receipts without jobs do not freeze unrelated correction updates', async t => {
+  const directory = await fixture(t, [job()]);
+  const receipts = [
+    { status: 'superseded', existing_delivery_ts: ts(0) },
+    { status: 'duplicate', original_ts: ts(0) },
+    { status: 'existing-delivery', files: [1, 2, 3].map(i => ({ id: `F00000000${i}`, uploaded: true })) },
+  ];
+  for (const [index, value] of receipts.entries()) {
+    const dir = path.join(directory, ts(index + 1));
+    await fs.mkdir(dir);
+    await fs.writeFile(path.join(dir, 'existing-delivery.json'), JSON.stringify({ ...value,
+      authorized_by: 'backlog-audit.json', recorded_at: new Date(now - 1000).toISOString() }));
+  }
+  assert.deepEqual((await readLocalSales(directory, now)).map(row => row.id), [`sales:${ts(0)}`]);
+  const config = { clickup: { workspace_id: 'test' }, slack: { channel_id: 'test' }, hub: {} };
+  const snapshot = await collectSnapshot({ now, config,
+    hubFetch: async () => ({ ok: true, status: 200, json: async () => ({ spaces: [] }) }),
+    claimReader: async () => [], fleetReader: async () => [], salesReader: time => readLocalSales(directory, time) });
+  assert.equal(snapshot.source.lastSuccessAt, new Date(now).toISOString());
+  assert.deepEqual(snapshot.tasks.map(row => row.id), [`sales:${ts(0)}`]);
+
+  const receiptFile = path.join(directory, ts(1), 'existing-delivery.json');
+  for (const invalid of [{ status: 'running' }, { ...receipts[2], files: [] }, { ...receipts[2], files: [{ id: 'F1', uploaded: false }] }]) {
+    await fs.writeFile(receiptFile, JSON.stringify({ ...invalid, authorized_by: 'audit', recorded_at: new Date(now).toISOString() }));
+    await assert.rejects(readLocalSales(directory, now), /bisheriger Queue-Stand bleibt erhalten/);
+  }
+  await fs.writeFile(receiptFile, JSON.stringify({ ...receipts[0], authorized_by: 'audit', recorded_at: new Date(now).toISOString() }));
+  await fs.writeFile(path.join(directory, ts(1), 'job.json'), '{unfinished');
+  await assert.rejects(readLocalSales(directory, now), /bisheriger Queue-Stand bleibt erhalten/);
+});
+
 test('a failed Sales read preserves the last full relay queue and cache', async t => {
   const directory = await fixture(t, [job()]);
   const store = createFleetStore(path.join(directory, 'relay'), () => now);

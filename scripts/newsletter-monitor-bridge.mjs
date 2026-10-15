@@ -774,7 +774,25 @@ export async function readLocalSales(directory, now = Date.now()) {
     if (!/^\d+\.\d+$/.test(name)) continue;
     try {
       const file = path.join(directory, name, 'job.json');
-      const stat = await fs.lstat(file);
+      let stat;
+      try { stat = await fs.lstat(file); }
+      catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        // Backlog bookkeeping may contain only an existing-delivery receipt.
+        // It is terminal evidence, not an accepted job with missing state.
+        const receiptFile = path.join(directory, name, 'existing-delivery.json');
+        const receiptStat = await fs.lstat(receiptFile);
+        if (!receiptStat.isFile() || receiptStat.size > 16384) throw error;
+        const receipt = JSON.parse(await fs.readFile(receiptFile, 'utf8'));
+        const recorded = Date.parse(receipt.recorded_at);
+        const timestamp = value => /^\d{10}\.\d{6}$/.test(String(value || ''));
+        const delivered = receipt.status === 'existing-delivery' && Array.isArray(receipt.files)
+          && receipt.files.length === 3 && receipt.files.every(entry => /^F[A-Z0-9]+$/.test(entry.id || '') && entry.uploaded === true);
+        const replaced = receipt.status === 'superseded' && timestamp(receipt.existing_delivery_ts)
+          || receipt.status === 'duplicate' && timestamp(receipt.original_ts);
+        if (!receipt.authorized_by || !Number.isFinite(recorded) || recorded > now + 30000 || !(delivered || replaced)) throw error;
+        continue;
+      }
       if (!stat.isFile() || stat.size > 2 * 1024 * 1024) throw new Error('Ungültige Jobdatei');
       const job = JSON.parse(await fs.readFile(file, 'utf8'));
       if (job.status === 'aborted') continue;
