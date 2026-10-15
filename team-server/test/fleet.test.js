@@ -62,6 +62,24 @@ function task(id = "clickup:newsletter:abc", overrides = {}) {
   return { id, title: "Newsletter erstellen", workflow: "newsletter", status: "queued", tags: ["pre gen.", "pre gen · wartet"], url: "https://app.clickup.com/t/abc", ...overrides };
 }
 
+test('MacWorker 6 is named consistently without changing its enrollment or task ownership', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'max-monitor-worker6-'));
+  const store = createFleetStore(directory);
+  const workerId = 'mac-worker-6-64d66918';
+  try {
+    const result = store.heartbeat('DEMO1234', { role: 'member', member: { id: 'worker-6', name: 'MacWorker 6' } }, heartbeat(deviceA, { workerId }));
+    assert.equal(result.name, 'MacWorker 6');
+    assert.equal(result.workerId, workerId);
+    assert.equal(result.deviceName, 'Mac Studio');
+    store.updateQueue('DEMO1234', { source: { name: 'Test', lastSuccessAt: new Date().toISOString() }, tasks: [task(undefined, { packageId: 'abc', language: 'en' })] });
+    const snapshot = store.snapshot('DEMO1234');
+    assert.equal(snapshot.machines[0].name, 'MacWorker 6');
+    assert.equal(snapshot.events.find(event => event.type === 'machine_registered').title, 'MacWorker 6');
+    assert.equal(snapshot.queue.tasks[0].packageId, 'abc');
+    assert.equal(snapshot.queue.tasks[0].language, 'en');
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("shared authenticated relay supports fleet without changing existing report roles", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "max-monitor-relay-"));
   const oldEnv = { DATA_DIR: process.env.DATA_DIR, TEAM_TOKEN: process.env.TEAM_TOKEN, TEAM_TOKENS: process.env.TEAM_TOKENS };
