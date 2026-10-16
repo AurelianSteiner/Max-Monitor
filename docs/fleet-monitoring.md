@@ -43,7 +43,12 @@ daneben die dringendsten Einträge aus **Braucht Aufmerksamkeit** und darunter a
 mit Status, aktueller Aufgabe, Akku, 5h-/Wochenlimit und letzter Meldung. Wie bei
 den Workern erteilt nur der ClickUp-Status einen Auftrag (`pre-gen`, `klaviyo upload`,
 `revision intern`, `revision extern`); die Brücke liest diese Aufgaben mit derselben
-Statusabfrage und demselben Statusbeginn wie der Worker. „Markiert“ heißt: Der Status
+Statusabfrage und demselben Statusbeginn wie der Worker. Lehnt ClickUp den
+Statusbeginn einer Aufgabe ab (HTTP 4xx außer 429), wartet wie beim Worker nur diese
+Aufgabe: Sie erscheint ohne Statusbeginn als „Statusbeginn nicht lesbar (HTTP …) ·
+wird nicht reserviert“, die Quelle nennt ihre Anzahl, und die Brücke fragt sie erst
+nach 15 Minuten erneut ab. Nur 429, 5xx und Übertragungsfehler lassen den ganzen
+Abgleich scheitern; dann bleibt die letzte Queue erhalten. „Markiert“ heißt: Der Status
 ist gesetzt, aber noch kein Status-Tag; `pre gen · wartet` oder eine Reservierung
 zählt als „Wartet“. Warte- oder Lauf-Tags außerhalb dieses Status sind kein Auftrag
 und erscheinen nicht als offen; Blockaden und Abschlüsse bleiben sichtbar. Aufgaben

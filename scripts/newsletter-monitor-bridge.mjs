@@ -91,11 +91,18 @@ export function workflowMatches(workflow, tags) {
 const rateLimitError = message => Object.assign(new Error(message), { code: 'RATE_LIMITED' });
 export function isRateLimited(error) { return error?.code === 'RATE_LIMITED'; }
 
+// HTTP refusal of one task's read: 4xx except 429, never a 5xx or transport
+// error (worker src/clickup-source.js perTaskRefusal).
+export function perTaskRefusal(error) {
+  const status = Number(error?.status);
+  return status >= 400 && status < 500 && status !== 429;
+}
+
 async function requestJson(hubFetch, url, service) {
   const response = await hubFetch(url, { method: 'GET' });
   if (!response.ok) {
     const message = `${service}: HTTP ${response.status}.`;
-    throw response.status === 429 ? rateLimitError(message) : new Error(message);
+    throw Object.assign(response.status === 429 ? rateLimitError(message) : new Error(message), { status: response.status });
   }
   const data = await response.json();
   if (!data || typeof data !== 'object') throw new Error(`${service}: ungültige Antwort.`);
@@ -162,28 +169,53 @@ export async function listStatusTasks(hubFetch, workspaceId, statuses, { maxPage
   throw new Error('ClickUp: Statusliste unvollständig; bisherige Queue bleibt erhalten.');
 }
 
+// A refused status read is not repeated for 15 minutes (worker TASK_WARNING_MS):
+// the shared Hub token is not spent on up to 100 single reads per cycle.
+export const STATUS_REFUSAL_MS = 15 * 60000;
+
 // Status epochs exactly as the worker builds its job IDs (<id>@<since>): one
 // official batch per 100 tasks. A task whose status changed during the read
-// keeps no epoch until the next cycle; an unreadable batch fails the cycle.
-export async function readStatusEpochs(hubFetch, tasks, { groupSize = 100 } = {}) {
+// keeps no epoch until the next cycle. Like the worker (F26, Till 16.10.2026),
+// a refused batch is read task by task and a refused single read leaves only
+// that task without an epoch; 429, 5xx and transport errors fail the cycle.
+// refusals (taskId -> { status, at }) carries refused tasks across cycles.
+export async function readStatusEpochs(hubFetch, tasks, { groupSize = 100, refusals = new Map(), now = Date.now(), onRefused = () => {} } = {}) {
   const epochs = new Map();
   const record = (data, task) => {
     const current = data?.current_status;
     const since = current?.since ?? current?.total_time?.since;
     if (normalizeStatus(current?.status) === normalizeStatus(taskStatus(task)) && /^\d+$/.test(String(since ?? ''))) epochs.set(task.id, String(since));
   };
-  for (let offset = 0; offset < tasks.length; offset += groupSize) {
-    const group = tasks.slice(offset, offset + groupSize);
-    if (group.length === 1) {
-      record(await requestJson(hubFetch, `https://api.clickup.com/api/v2/task/${encodeURIComponent(group[0].id)}/time_in_status`, 'ClickUp'), group[0]);
-      continue;
+  for (const [id, entry] of refusals) if (!(now - entry.at >= 0 && now - entry.at < STATUS_REFUSAL_MS)) refusals.delete(id);
+  const single = async task => {
+    try { record(await requestJson(hubFetch, `https://api.clickup.com/api/v2/task/${encodeURIComponent(task.id)}/time_in_status`, 'ClickUp'), task); }
+    catch (error) {
+      if (!perTaskRefusal(error)) throw error;
+      refusals.set(task.id, { status: error.status, at: now });
+      onRefused(task, error.status);
     }
+  };
+  const pending = tasks.filter(task => !refusals.has(task.id));
+  for (let offset = 0; offset < pending.length; offset += groupSize) {
+    const group = pending.slice(offset, offset + groupSize);
+    if (group.length === 1) { await single(group[0]); continue; }
     const url = new URL('https://api.clickup.com/api/v2/task/bulk_time_in_status/task_ids');
     for (const task of group) url.searchParams.append('task_ids', task.id);
-    const times = await requestJson(hubFetch, url, 'ClickUp');
-    for (const task of group) record(times[task.id], task);
+    let times;
+    try { times = await requestJson(hubFetch, url, 'ClickUp'); }
+    catch (error) { if (!perTaskRefusal(error)) throw error; }
+    for (const task of group) {
+      if (times) record(times[task.id], task);
+      else await single(task);
+    }
   }
   return epochs;
+}
+
+// Row phase of an order whose status epoch ClickUp refused: the worker lists it
+// but never reserves it until the epoch is readable.
+function refusedPhase(task) {
+  return Number.isInteger(task.statusRefused) ? `Statusbeginn nicht lesbar (HTTP ${task.statusRefused}) · wird nicht reserviert` : undefined;
 }
 
 // AI Newsletter Creation src/workflow-status.js: only these ClickUp statuses
@@ -670,6 +702,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       if (starts.length && ['queued', 'running'].includes(status) && !backed
         && ((!ordered && !taskState.preGenFinished({ workflow: workflow.queueWorkflow ?? workflow.id, sourceStatus: taskStatus(task) }))
           || (ordered && normalized.has(normalizeTag('manuell'))))) continue;
+      if (ordered && !backed && status === 'queued' && !phase) phase = refusedPhase(task);
       const url = taskUrl(task);
       const name = displayText(task.name, 300, task.id);
       const title = workflow.titleSuffix ? `${displayText(name, 300 - workflow.titleSuffix.length - 3)} · ${workflow.titleSuffix}` : name;
@@ -748,7 +781,7 @@ function waitingCorrections(tasks, rows, updatedAt) {
     const has = name => normalized.has(normalizeTag(name));
     const [status, phase] = has('revision · blockiert') ? ['blocked', 'Korrektur blockiert']
       : has('revision · rückfrage slack') ? ['queued', 'Wartet · PM-Rückfrage']
-        : has('revision · läuft') ? ['running', 'Läuft laut ClickUp; Worker-Zuordnung fehlt'] : ['queued', undefined];
+        : has('revision · läuft') ? ['running', 'Läuft laut ClickUp; Worker-Zuordnung fehlt'] : ['queued', refusedPhase(task)];
     waiting.push({ id: `correction:korrektur-cu-${task.id}${since ? `@${since}` : ''}-${origin}`, title: displayText(task.name, 300, task.id),
       url: taskUrl(task), workflow: 'correction', status, phase,
       sourceStatus: displayText(taskStatus(task), 120), company: task.folder?.hidden ? undefined : displayText(task.folder?.name, 200),
@@ -1158,7 +1191,7 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
   return rows;
 }
 
-export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, checkpointReader, reservationReader, maxTasksOf, claimReader = listClaims, statusCache, now = Date.now() }) {
+export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, checkpointReader, reservationReader, maxTasksOf, claimReader = listClaims, statusCache, epochRefusals = new Map(), warn = () => {}, now = Date.now() }) {
   validateWorkflows(workflows);
   const issues = new Map();
   const onMessage = message => {
@@ -1177,10 +1210,16 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
       // the orders, read and dated exactly as the worker does.
       const tagged = await listTasks(hubFetch, config.clickup.workspace_id, variants);
       const started = await listStatusTasks(hubFetch, config.clickup.workspace_id, statuses);
-      const epochs = await readStatusEpochs(hubFetch, started);
+      const epochs = await readStatusEpochs(hubFetch, started, { refusals: epochRefusals, now,
+        onRefused: (task, status) => warn(`ClickUp: Statusbeginn von Aufgabe ${task.id} abgewiesen (HTTP ${status}); nur diese Aufgabe wartet, erneute Abfrage in 15 Minuten.`) });
       const byId = new Map(tagged.map(task => [task.id, task]));
-      for (const task of started) byId.set(task.id, { ...task, ...(epochs.has(task.id) ? { statusSince: epochs.get(task.id) } : {}) });
-      return { variants, started: started.length, tasks: [...byId.values()] };
+      let refused = 0;
+      for (const task of started) {
+        const refusal = !epochs.has(task.id) && epochRefusals.get(task.id);
+        if (refusal) refused += 1;
+        byId.set(task.id, { ...task, ...(epochs.has(task.id) ? { statusSince: epochs.get(task.id) } : {}), ...(refusal ? { statusRefused: refusal.status } : {}) });
+      }
+      return { variants, started: started.length, refused, tasks: [...byId.values()] };
     })(),
     (async () => {
       const claims = [];
@@ -1216,7 +1255,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
       name: SOURCE_NAME, error: displayText(error.message, 300, 'Quellenabfrage fehlgeschlagen.'),
     } };
   }
-  const { variants, started, tasks } = taskResult.value;
+  const { variants, started, refused, tasks } = taskResult.value;
   // The RS Hub register owns reservations like for the workers. If it cannot be
   // read, Slack's copy keeps the queue visible and the source says so.
   const register = reservationResult.status === 'fulfilled' ? reservationResult.value : null;
@@ -1241,7 +1280,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const blockedErrors = errorChannel ? buildBlockedErrors(errorMessages, errorChannel, queue, { manualUploadIds }) : undefined;
   return { tasks: queue, ...(blockedErrors === undefined ? {} : { blockedErrors }), workerIssues, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
     name: SOURCE_NAME, lastSuccessAt: new Date(now).toISOString(),
-    detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${started} im Startstatus · ${claims.length} Reservierungen${registerDetail ? ` · ${registerDetail}` : ''}${blockedErrors ? ` · ${blockedErrors.length} offen in #ai-fehler` : ''}${fleetDetail ? ` · ${fleetDetail}` : ''}`,
+    detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${started} im Startstatus${refused ? ` · ${refused} ohne lesbaren Statusbeginn` : ''} · ${claims.length} Reservierungen${registerDetail ? ` · ${registerDetail}` : ''}${blockedErrors ? ` · ${blockedErrors.length} offen in #ai-fehler` : ''}${fleetDetail ? ` · ${fleetDetail}` : ''}`,
   } };
 }
 
@@ -1373,6 +1412,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const controller = new AbortController();
   const claimReader = createClaimReader();
   const statusCache = new Map();
+  const epochRefusals = new Map();
   const saveSnapshot = async snapshot => {
     await fs.mkdir(path.dirname(options.cacheFile), { recursive: true, mode: 0o700 });
     const temporary = `${options.cacheFile}.${process.pid}.tmp`;
@@ -1400,7 +1440,8 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
           }); } catch { console.error(`${new Date().toISOString()} Status-Audit: Monitor nicht lesbar; regulärer Quellenabgleich läuft weiter.`); }
         }
         const readsBefore = { ...claimReader.stats };
-        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, statusCache, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
+        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, statusCache, epochRefusals, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
+          warn: message => console.error(`${new Date().toISOString()} ${displayText(message, 300)}`),
           previews, previousTasks: cached?.tasks, ...(typeof maxTasksPerMac === 'function' ? { maxTasksOf: maxTasksPerMac } : {}),
           ...(options.localHub ? { fleetReader: readLocalHubFleet,
             reservationReader: time => readHubReservations(hubRuntimeDirectory(options.localHub), { now: time, lookbackDays: Number(config.claims?.lookback_days) || 60 }),
