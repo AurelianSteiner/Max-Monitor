@@ -154,6 +154,12 @@ test('a released continuation with a stale revision or Pre-Gen running tag keeps
   assert.deepEqual(rows.map(row => [row.id, row.status, row.workerId]), [[`correction:${job}`, 'running', undefined]]);
   const snapshot = { queue: { tasks: rows, source: { status: 'fresh', stale: false, lastSuccessAt: new Date(at).toISOString() } } };
   assert.deepEqual(cleanupDecision({ task_id: job }, snapshot, at), { remove: false, reason: 'running-not-confirmed', task: rows[0] });
+  // A freshly reserved continuation of the same order does supersede the copy.
+  const live = parseClaim({ ts: '1792129000.000100', text: '*Korrektur · Kunde*\n<https://app.clickup.com/t/T|Herbst>',
+    metadata: { event_type: 'ai_korrektur_claim', event_payload: { task_id: job, run_id: '20261016T085000Z-a3', worker: 'macbook-2', state: 'running', heartbeat: at / 1000 - 30 } } });
+  snapshot.queue.tasks = buildQueue([order], [blocked, released, live], DEFAULT_WORKFLOWS, { now: at });
+  assert.deepEqual(snapshot.queue.tasks.map(row => [row.status, row.workerId, row.attemptId]), [['running', 'macbook-2', '20261016T085000Z-a3']]);
+  assert.equal(cleanupDecision({ task_id: job }, snapshot, at).remove, true);
   // The same holds for a Pre-Gen row that runs only by its ClickUp tag.
   const pregen = buildQueue([{ id: 'n', name: 'Mail', status: { status: 'pre-gen' }, tags: [{ name: 'pre gen · läuft' }], statusSince: since }],
     [], DEFAULT_WORKFLOWS, { now: at });
