@@ -51,8 +51,17 @@ nach 15 Minuten erneut ab. Nur 429, 5xx und Übertragungsfehler lassen den ganze
 Abgleich scheitern; dann bleibt die letzte Queue erhalten. „Markiert“ heißt: Der Status
 ist gesetzt, aber noch kein Status-Tag; `pre gen · wartet` oder eine Reservierung
 zählt als „Wartet“. Warte- oder Lauf-Tags außerhalb dieses Status sind kein Auftrag
-und erscheinen nicht als offen; Blockaden und Abschlüsse bleiben sichtbar. Aufgaben
-mit `manuell` parkt der Worker, sie erscheinen nicht als wartend. Ein Klick auf einen
+und erscheinen nicht als offen; Blockaden und Abschlüsse bleiben sichtbar. Aufträge,
+die der Worker nicht annimmt, erscheinen nicht als wartend; die Brücke prüft sie mit
+den Regeln des Workers aus `--worker-root`: ein vom PM gesetztes `manuell`, Pop-ups in
+`revision intern`, `revision extern` und `klaviyo upload`, Aufgaben der Testumgebung
+außerhalb eines gültigen Pre-Gen und Altbestand aus `config/workflow-cutover.json` mit
+unverändertem Statusbeginn. Die Prinz-Upload-Marke (`manuell` auf einem Ordner aus
+`config/manual-uploads.json`) bindet nur den Upload; spätere Korrekturen und
+Pre-Gen-Aufträge erscheinen normal (docs/ablauf.md, Till 16.10.2026). Die Quelle nennt
+die Zahl geparkter Aufträge; reservierte Läufe, Blockaden und Abschlüsse bleiben
+sichtbar. Fehlen diese Dateien in einer älteren Quellinstallation, parkt wie bisher
+nur der Tag `manuell`. Ein Klick auf einen
 Balken öffnet die Queue mit genau diesem Status- und Workflow-Filter. Das Dashboard ist
 bewusst immer hell, auch im macOS-Dunkelmodus.
 

@@ -233,6 +233,69 @@ function taskStatus(task) {
   return typeof task?.status === 'string' ? task.status : task?.status?.status;
 }
 
+// Worker job kind of a start status (worker src/workflow-status.js statusKind).
+const STATUS_KINDS = Object.freeze({ 'pre-gen': 'newsletter', 'klaviyo upload': 'klaviyo', 'revision intern': 'korrektur', 'revision extern': 'korrektur' });
+function statusKindOf(task) {
+  return STATUS_KINDS[normalizeStatus(taskStatus(task))] ?? null;
+}
+
+const hasManualTag = task => (task?.tags || []).some(tag => normalizeTag(typeof tag === 'string' ? tag : tag?.name) === normalizeTag('manuell'));
+
+// The worker's job ID of a dated order (src/clickup-source.js compactTask).
+function workerJobId(task, kind, since) {
+  const key = `${task.id}@${since}`;
+  if (kind === 'korrektur') return `korrektur-cu-${key}-${CORRECTION_STATUSES[normalizeStatus(taskStatus(task))]}`;
+  return kind === 'klaviyo' ? `${key}-klaviyo` : key;
+}
+
+// Why the worker's admit() (src/clickup-source.js) never reserves an order.
+export const PARK_REASONS = Object.freeze(['Testumgebung', 'manuell', 'Pop-up', 'Altbestand']);
+
+// The worker's own admission predicates, loaded from --worker-root:
+// test-workspace.js admission, upload-policy.js manualHold/uploadPolicy,
+// slack-kanaele.js aufgabenArt and the cutover jobs. Without them (an older
+// source installation) only the 'manuell' tag parks an order, as before.
+export function workerAdmission({ manualHold, uploadPolicy, admission, aufgabenArt, cutoverJobs } = {}) {
+  return {
+    // Klaviyo uploads the worker leaves to a person: the tag or a folder from
+    // config/manual-uploads.json (Prinz).
+    manualUpload: task => uploadPolicy ? Boolean(uploadPolicy(task)?.manual) : hasManualTag(task),
+    // The reason the worker would not reserve this order of kind newsletter,
+    // klaviyo or korrektur, or null. Without an epoch only the reasons that need
+    // none are checked; the worker never dates those orders either.
+    parked(task, kind, since) {
+      if (!kind) return null;
+      if (admission?.(task, kind)) return 'Testumgebung';
+      // The Prinz upload marker binds only the upload; a PM-set 'manuell' parks every kind.
+      if (manualHold ? manualHold(task, kind) : hasManualTag(task)) return 'manuell';
+      // Pop-ups have no automatic correction or upload (docs/ablauf.md, Till 16.10.2026).
+      if (['korrektur', 'klaviyo'].includes(kind) && aufgabenArt?.(task) === 'popup') return 'Pop-up';
+      if (since && cutoverJobs?.has(workerJobId(task, kind, since))) return 'Altbestand';
+      return null;
+    },
+  };
+}
+
+// Each worker file is optional: a missing or incomplete one keeps the tag-only
+// rule for its part and is named in missing.
+export function loadWorkerAdmission(root, load = require) {
+  const predicates = {}, missing = [];
+  const take = (relative, pick) => {
+    try {
+      const value = pick(load(path.join(root, relative)));
+      if (!value) throw new Error('unvollständig');
+      Object.assign(predicates, value);
+    } catch { missing.push(relative); }
+  };
+  take('src/upload-policy.js', module => typeof module?.manualHold === 'function' && typeof module.uploadPolicy === 'function'
+    && { manualHold: module.manualHold, uploadPolicy: module.uploadPolicy });
+  take('src/test-workspace.js', module => typeof module?.admission === 'function' && { admission: module.admission });
+  take('src/slack-kanaele.js', module => typeof module?.aufgabenArt === 'function' && { aufgabenArt: module.aufgabenArt });
+  take('config/workflow-cutover.json', data => Array.isArray(data?.jobs) && data.jobs.every(job => typeof job === 'string')
+    && { cutoverJobs: new Set(data.jobs) });
+  return { admission: workerAdmission(predicates), missing };
+}
+
 // Job kind, ClickUp ID and status epoch of a worker job ID (src/jobs.js, compactTask).
 function jobIdentity(value) {
   const jobId = String(value ?? '');
@@ -656,7 +719,8 @@ function taskUrl(task) {
 }
 
 // tasks may carry statusSince (the worker's status epoch, readStatusEpochs).
-export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, figmaBoardUrl } = {}) {
+// admission: the worker's admission predicates (workerAdmission, loadWorkerAdmission).
+export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, figmaBoardUrl, admission = workerAdmission() } = {}) {
   const updatedAt = new Date(now).toISOString();
   const rows = [];
   for (const task of tasks) {
@@ -672,7 +736,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       for (const name of ['queued', 'running', 'failed', 'blocked', 'completed']) {
         if ((workflow.stateTags?.[name] ?? []).some(tag => normalized.has(normalizeTag(tag)))) status = name;
       }
-      if ((workflow.claimWorkflow ?? workflow.id) === 'klaviyo' && normalized.has(normalizeTag('manuell')) && status !== 'completed') continue;
+      if ((workflow.claimWorkflow ?? workflow.id) === 'klaviyo' && admission.manualUpload(task) && status !== 'completed') continue;
       // In its start status only reservations of the current order (same epoch as
       // the worker's job ID) describe it. A live older attempt still holds its place
       // and a paused one bound to its Mac still blocks the order; a centrally saved
@@ -696,12 +760,13 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       if (!['completed', 'blocked', 'failed'].includes(status) && claim?.outcome !== 'completed' && claim?.paused && claim.portable) { status='queued'; phase='Wartet · Fortsetzung in der zentralen Queue'; }
       if (status === 'blocked' && !phase) phase = 'Blockiert';
       // Waiting or running without a reservation is an order only in the start
-      // status, and never for a task the worker parks as manual. Blocked and
-      // completed history stays; downstream Pre-Gen statuses complete it below.
+      // status, and never for an order the worker's admit() parks (manual, pop-up,
+      // test workspace, cutover). Blocked and completed history and reserved runs
+      // stay; downstream Pre-Gen statuses complete it below.
       const backed = Boolean(claim) && claim.outcome !== 'completed' && (LIVE_CLAIM_STATES.has(claim.state) || claim.paused === true);
       if (starts.length && ['queued', 'running'].includes(status) && !backed
         && ((!ordered && !taskState.preGenFinished({ workflow: workflow.queueWorkflow ?? workflow.id, sourceStatus: taskStatus(task) }))
-          || (ordered && normalized.has(normalizeTag('manuell'))))) continue;
+          || (ordered && admission.parked(task, statusKindOf(task), task.statusSince)))) continue;
       if (ordered && !backed && status === 'queued' && !phase) phase = refusedPhase(task);
       const url = taskUrl(task);
       const name = displayText(task.name, 300, task.id);
@@ -747,7 +812,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       ...completionEvidence([claim]),
       run: { id: claim.runId, jobId: claim.jobId, ts: threadOf(claim), taskId: claim.taskId, channelId: claim.channelId, heartbeat: threadBeat(claim) } });
   }
-  rows.push(...waitingCorrections(tasks, rows, updatedAt));
+  rows.push(...waitingCorrections(tasks, rows, updatedAt, admission));
   return rows.map(taskState.reconcileTask).sort((a, b) => a.id.localeCompare(b.id));
 }
 
@@ -765,7 +830,7 @@ function threadBeat(claim) {
 // A task in revision intern/extern is a correction order like in the worker,
 // with its job ID korrektur-cu-<id>@<since>-<origin>. A reservation of that
 // exact order (also per file) shows it; older rounds never hide a new one.
-function waitingCorrections(tasks, rows, updatedAt) {
+function waitingCorrections(tasks, rows, updatedAt, admission) {
   const attempts = rows.filter(row => row.workflow === 'correction' && row.run).map(row => ({ row, job: CORRECTION_JOB.exec(row.run.jobId) })).filter(entry => entry.job);
   const waiting = [];
   for (const task of tasks) {
@@ -773,9 +838,9 @@ function waitingCorrections(tasks, rows, updatedAt) {
     if (!origin) continue;
     const tags = task.tags.map(tag => typeof tag === 'string' ? tag : String(tag?.name ?? ''));
     const normalized = new Set(tags.map(normalizeTag));
-    // The worker parks manual tasks (clickup-source.js); nobody will reserve them.
-    if (normalized.has(normalizeTag('manuell'))) continue;
     const since = task.statusSince ? String(task.statusSince) : undefined;
+    // Orders the worker parks (clickup-source.js admit()); nobody will reserve them.
+    if (admission.parked(task, 'korrektur', since)) continue;
     // Without an epoch only an unfinished attempt of the same origin covers the task.
     if (attempts.some(({ row, job }) => job[1] === task.id && job[3] === origin && (since ? job[2] === since : row.status !== 'completed'))) continue;
     const has = name => normalized.has(normalizeTag(name));
@@ -1191,7 +1256,7 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
   return rows;
 }
 
-export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, checkpointReader, reservationReader, maxTasksOf, claimReader = listClaims, statusCache, epochRefusals = new Map(), warn = () => {}, now = Date.now() }) {
+export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, checkpointReader, reservationReader, maxTasksOf, claimReader = listClaims, statusCache, epochRefusals = new Map(), warn = () => {}, admission = workerAdmission(), now = Date.now() }) {
   validateWorkflows(workflows);
   const issues = new Map();
   const onMessage = message => {
@@ -1210,16 +1275,22 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
       // the orders, read and dated exactly as the worker does.
       const tagged = await listTasks(hubFetch, config.clickup.workspace_id, variants);
       const started = await listStatusTasks(hubFetch, config.clickup.workspace_id, statuses);
-      const epochs = await readStatusEpochs(hubFetch, started, { refusals: epochRefusals, now,
+      // Like the worker, parked orders (manual, pop-up, test workspace) are never
+      // dated; a cutover job is recognised only by its epoch.
+      const dated = started.filter(task => !admission.parked(task, statusKindOf(task)));
+      const epochs = await readStatusEpochs(hubFetch, dated, { refusals: epochRefusals, now,
         onRefused: (task, status) => warn(`ClickUp: Statusbeginn von Aufgabe ${task.id} abgewiesen (HTTP ${status}); nur diese Aufgabe wartet, erneute Abfrage in 15 Minuten.`) });
       const byId = new Map(tagged.map(task => [task.id, task]));
       let refused = 0;
+      const parked = new Map();
       for (const task of started) {
         const refusal = !epochs.has(task.id) && epochRefusals.get(task.id);
         if (refusal) refused += 1;
+        const reason = admission.parked(task, statusKindOf(task), epochs.get(task.id));
+        if (reason) parked.set(reason, (parked.get(reason) || 0) + 1);
         byId.set(task.id, { ...task, ...(epochs.has(task.id) ? { statusSince: epochs.get(task.id) } : {}), ...(refusal ? { statusRefused: refusal.status } : {}) });
       }
-      return { variants, started: started.length, refused, tasks: [...byId.values()] };
+      return { variants, started: started.length, refused, parked, tasks: [...byId.values()] };
     })(),
     (async () => {
       const claims = [];
@@ -1255,7 +1326,9 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
       name: SOURCE_NAME, error: displayText(error.message, 300, 'Quellenabfrage fehlgeschlagen.'),
     } };
   }
-  const { variants, started, refused, tasks } = taskResult.value;
+  const { variants, started, refused, parked, tasks } = taskResult.value;
+  const parkedTotal = [...parked.values()].reduce((sum, count) => sum + count, 0);
+  const parkedDetail = parkedTotal ? ` · ${parkedTotal} geparkt (${PARK_REASONS.filter(reason => parked.has(reason)).map(reason => `${parked.get(reason)} ${reason}`).join(', ')})` : '';
   // The RS Hub register owns reservations like for the workers. If it cannot be
   // read, Slack's copy keeps the queue visible and the source says so.
   const register = reservationResult.status === 'fulfilled' ? reservationResult.value : null;
@@ -1265,7 +1338,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const observedWorkers = workerResult.status === 'fulfilled' ? workerResult.value : undefined;
   const fleetDetail = workerResult.status === 'rejected'
     ? 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.' : undefined;
-  const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl });
+  const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl, admission });
   // Keep a confirmed date after its source thread leaves the history window.
   // Any currently visible attempt prevents borrowing an older success.
   retainCompletionDates(queue, previousTasks, claims);
@@ -1276,11 +1349,11 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   queue.push(...salesResult.value);
   for (let index = 0; index < queue.length; index++) queue[index] = taskState.reconcileTask(queue[index]);
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
-  const manualUploadIds = new Set(tasks.filter(task => (task.tags || []).some(tag => normalizeTag(typeof tag === 'string' ? tag : tag.name) === normalizeTag('manuell'))).map(task => task.id));
+  const manualUploadIds = new Set(tasks.filter(task => admission.manualUpload(task)).map(task => task.id));
   const blockedErrors = errorChannel ? buildBlockedErrors(errorMessages, errorChannel, queue, { manualUploadIds }) : undefined;
   return { tasks: queue, ...(blockedErrors === undefined ? {} : { blockedErrors }), workerIssues, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
     name: SOURCE_NAME, lastSuccessAt: new Date(now).toISOString(),
-    detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${started} im Startstatus${refused ? ` · ${refused} ohne lesbaren Statusbeginn` : ''} · ${claims.length} Reservierungen${registerDetail ? ` · ${registerDetail}` : ''}${blockedErrors ? ` · ${blockedErrors.length} offen in #ai-fehler` : ''}${fleetDetail ? ` · ${fleetDetail}` : ''}`,
+    detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${started} im Startstatus${parkedDetail}${refused ? ` · ${refused} ohne lesbaren Statusbeginn` : ''} · ${claims.length} Reservierungen${registerDetail ? ` · ${registerDetail}` : ''}${blockedErrors ? ` · ${blockedErrors.length} offen in #ai-fehler` : ''}${fleetDetail ? ` · ${fleetDetail}` : ''}`,
   } };
 }
 
@@ -1395,6 +1468,9 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     if (typeof PRE_GEN_FILE === 'string' && /^[A-Za-z0-9]+$/.test(PRE_GEN_FILE)) figmaBoardUrl = `https://www.figma.com/design/${PRE_GEN_FILE}`;
   } catch { /* Older source installations still publish the task's own Figma link. */ }
   const workflows = validateWorkflows(options.workflowsFile ? JSON.parse(await fs.readFile(options.workflowsFile, 'utf8')) : DEFAULT_WORKFLOWS);
+  // The queue shows only the orders the worker admits, by the worker's own rules.
+  const { admission, missing: missingRules } = loadWorkerAdmission(root);
+  if (missingRules.length) console.error(`${new Date().toISOString()} Worker-Regeln fehlen in --worker-root (${missingRules.join(', ')}); dafür parkt nur der Tag manuell.`);
   if (options.localHub) config.hub.hub_dir = options.localHub;
   const hubFetch = options.localHub ? createLocalHubFetch(config.hub, { localHub: options.localHub, transport }) : transport.createHubFetch(config.hub);
   const errorChannel = config.monitor_channels?.errors || (config.fehler?.enabled ? config.fehler.channel_id : undefined);
@@ -1440,7 +1516,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
           }); } catch { console.error(`${new Date().toISOString()} Status-Audit: Monitor nicht lesbar; regulärer Quellenabgleich läuft weiter.`); }
         }
         const readsBefore = { ...claimReader.stats };
-        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, statusCache, epochRefusals, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
+        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, statusCache, epochRefusals, admission, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
           warn: message => console.error(`${new Date().toISOString()} ${displayText(message, 300)}`),
           previews, previousTasks: cached?.tasks, ...(typeof maxTasksPerMac === 'function' ? { maxTasksOf: maxTasksPerMac } : {}),
           ...(options.localHub ? { fleetReader: readLocalHubFleet,

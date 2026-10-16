@@ -23,6 +23,10 @@ const HUB_ROOT = '/opt/rs-hub';
 const DEFAULT_SLACK_RATE_LIMITS = `${HUB_ROOT}/state/slack-rate-limits`;
 // The bridge loads these worker files; each one brings its own relative requires.
 const WORKER_ENTRY_POINTS = ['src/config.js', 'src/hub-transport.js', 'src/pre-gen.js'];
+// The worker's admission rules the queue mirrors (bridge loadWorkerAdmission).
+// Copied whenever the source has them; an older source without them still
+// installs and the bridge then parks orders by the 'manuell' tag only.
+const OPTIONAL_WORKER_ENTRY_POINTS = ['src/upload-policy.js', 'src/test-workspace.js', 'src/slack-kanaele.js', 'config/workflow-cutover.json'];
 const RELATIVE_REQUIRE = /\brequire\(\s*(['"])(\.{1,2}\/[^'"\n]+)\1\s*\)/g;
 
 export function installationSettings(values = {}, previous) {
@@ -90,10 +94,11 @@ function resolveWorkerModule(root, from, specifier) {
 // Every file the bridge can load from the worker: the transitive './' and '../'
 // require closure of the entry points, including requires inside functions.
 // A missing module fails the installation before anything is written.
-export function workerSourceFiles(workerRoot, entries = WORKER_ENTRY_POINTS) {
+export function workerSourceFiles(workerRoot, entries = WORKER_ENTRY_POINTS, optional = OPTIONAL_WORKER_ENTRY_POINTS) {
   const root = fs.realpathSync(workerRoot);
   const files = new Map();
-  const queue = entries.map(relative => ({ relative }));
+  const present = optional.filter(relative => { try { return fs.statSync(path.join(root, relative)).isFile(); } catch { return false; } });
+  const queue = [...entries, ...present].map(relative => ({ relative }));
   while (queue.length) {
     const { relative, from } = queue.shift();
     if (files.has(relative)) continue;
