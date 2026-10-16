@@ -123,6 +123,9 @@ Role changes preserve the MacWorker flag. Turning MacWorker off immediately reje
 new telemetry and hides stored device reports and liveness events. Stored telemetry
 is retained so the choice is reversible. Legacy members without a flag default to on;
 legacy admins and guests default to off. Automatic enrollment creates enabled members.
+An enrolled Mac's own disabled row also hides its exact Worker ID and device UUID
+when its app reports as a different enabled identity, including the owner. Its
+worker diagnostics and liveness events disappear with it; shared queue tasks remain.
 
 The owner appears as `team-owner` in the member list without an invitation token.
 `PATCH /v1/teams/:id/members/team-owner` accepts only `macWorker`, saved in
