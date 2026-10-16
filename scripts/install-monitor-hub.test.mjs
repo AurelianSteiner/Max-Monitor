@@ -50,6 +50,8 @@ test('queue service reads credentials only on the Hub, uses the existing local t
   assert.match(service, /^ReadWritePaths=\/opt\/rs-hub\/state\/slack-rate-limits$/m);
   // SQLite sidecars of the worker reservation register the queue reads (status-driven queue).
   assert.match(service, /^ReadWritePaths=-\/opt\/rs-hub\/state\/worker-reservations$/m);
+  // The worker Hub transport's discovery read cache (lock files) beside it.
+  assert.match(service, /^ReadWritePaths=-\/opt\/rs-hub\/state\/discovery-reads$/m);
   assert.ok(!service.includes(ownerToken));
   assert.ok(!service.includes('MONITOR_BRIDGE_TOKEN'));
   assert.ok(!service.includes('--once'));
@@ -285,6 +287,7 @@ test('the writable Slack budget follows the Hub transport runtime directory', (t
   const unit = queueService({ ...installationSettings({}, prior), slackRateLimits: '/var/lib/rs-hub/state/slack-rate-limits' });
   assert.match(unit, /^ReadWritePaths=\/var\/lib\/rs-hub\/state\/slack-rate-limits$/m);
   assert.match(unit, /^ReadWritePaths=-\/var\/lib\/rs-hub\/state\/worker-reservations$/m);
+  assert.match(unit, /^ReadWritePaths=-\/var\/lib\/rs-hub\/state\/discovery-reads$/m);
   assert.match(unit, /ReadOnlyPaths=\/opt\/rs-hub \/etc\/max-monitor/);
   for (const value of ['relative/path', '/opt/rs hub', '/opt/../etc']) {
     fs.writeFileSync(path.join(directory, '.env'), `HUB_RUNTIME_DIR=${value}\n`);
