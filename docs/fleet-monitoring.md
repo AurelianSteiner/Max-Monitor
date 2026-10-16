@@ -543,8 +543,11 @@ der nächste erfolgreiche Abgleich entfernt sie auch aus Max Monitor. So bleiben
 Löschungen und Änderungen älterer Meldungen nicht im Cache stehen. Die
 Reservierungskanäle behalten ihren bisherigen Cache; unvollständige oder
 fehlgeschlagene Abfragen bestätigen keine Behebung.
-Die zentrale Bereinigung entfernt eine Fehlerkopie nur, wenn die Aufgabe wieder
-läuft oder abgeschlossen ist. Bei pausierten, wartenden, markierten Aufgaben und
+Die zentrale Bereinigung entfernt eine Fehlerkopie nur, wenn die Aufgabe
+nachweislich wieder läuft oder abgeschlossen ist. „Läuft“ zählt nur mit Mac und
+Versuch, also aus einer frischen Reservierung oder einem Live-Bericht des Macs; ein
+bloßer ClickUp-Tag `· läuft` ohne Worker-Zuordnung genügt nicht und die Kopie bleibt
+(`running-not-confirmed`). Bei pausierten, wartenden, markierten Aufgaben und
 offener PM-Rückfrage bleibt die Kopie stehen (`still-open`). Antwortet Slack beim
 Lesen eines Fehlerthreads mit 429, endet die Bereinigung dieses Abgleichs ohne
 Löschung (`skipped: 'ratelimited'`).

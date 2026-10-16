@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { errorTaskKey, cleanupDecision, cleanupErrorCopies, createErrorCleanupWriter } from './error-copy-cleanup.mjs';
-import { argumentsFrom } from './newsletter-monitor-bridge.mjs';
+import { argumentsFrom, buildQueue, parseClaim, DEFAULT_WORKFLOWS } from './newsletter-monitor-bridge.mjs';
 const channel = 'C0C8HK2NDFE';
 const now = Date.parse('2026-10-13T20:20:00Z');
 const auth = { ok: true, user_id: 'UBOT', bot_id: 'BBOT' };
@@ -9,7 +9,9 @@ const payload = { kind: 'lauf', task_id: 'abc@123', run_id: '20261013T202000Z-ab
 const error = { id: `slack-error:${channel}:1791922800.123456`, workflow: 'newsletter', attemptId: payload.run_id };
 const parent = { ts: '1791922800.123456', user: auth.user_id, bot_id: auth.bot_id,
   metadata: { event_type: 'ai_newsletter_fehler', event_payload: payload } };
-const task = (status = 'completed') => ({ id: 'clickup:newsletter:abc', title: 'Mail', workflow: 'newsletter', status });
+const task = (status = 'completed') => ({ id: 'clickup:newsletter:abc', title: 'Mail', workflow: 'newsletter', status,
+  // A running row comes from a live reservation or Mac report: Mac and attempt.
+  ...(status === 'running' ? { workerId: 'macbook-1', attemptId: '20261013T203000Z-abc@123' } : {}) });
 const fleet = (tasks = [task()]) => ({ queue: { tasks, errors: [error], source: { status: 'fresh', stale: false,
   lastSuccessAt: new Date(now).toISOString() } } });
 
@@ -122,4 +124,40 @@ test('write transport is limited to the owned error channel and never posts or m
   assert.ok(sent.every(row => row.options.method === 'POST'));
   assert.throws(() => argumentsFrom(['--cleanup-error-copies'], {}), /zentralen Hub-Dienst/);
   assert.equal(argumentsFrom(['--local-hub', '/opt/rs-hub', '--enrollment-config', '/etc/max-monitor/enrollment.json', '--cleanup-error-copies'], {}).cleanupErrorCopies, true);
+});
+
+// AGENTS.md (Till 13.10.2026): only a freshly confirmed running continuation
+// removes a copy. A bare ClickUp '· läuft' tag confirms no run.
+test('a running row without its Mac and attempt never removes a copy and costs no Slack read', async () => {
+  const tagOnly = { id: 'clickup:newsletter:abc', workflow: 'newsletter', status: 'running', phase: 'Läuft laut ClickUp; Worker-Zuordnung fehlt' };
+  for (const row of [tagOnly, { ...tagOnly, workerId: 'macbook-1' }, { ...tagOnly, attemptId: '20261013T203000Z-abc@123' }])
+    assert.deepEqual([cleanupDecision(payload, fleet([row]), now).remove, cleanupDecision(payload, fleet([row]), now).reason], [false, 'running-not-confirmed']);
+  // A live Mac report carries the Mac and its run.
+  assert.equal(cleanupDecision(payload, fleet([{ ...tagOnly, workerId: 'macbook-1', runId: '20261013T203000Z-abc@123' }]), now).remove, true);
+  const result = await cleanupErrorCopies({ now: () => now, errorChannel: channel, readFleet: async () => fleet([tagOnly]),
+    hubFetch: async () => { throw Error('Must not read the thread'); },
+    slackWrite: async () => { throw Error('Must not authenticate or delete'); } });
+  assert.deepEqual(result, { deleted: [], kept: [{ id: error.id, reason: 'running-not-confirmed' }] });
+});
+
+test('a released continuation with a stale revision or Pre-Gen running tag keeps the blocked copy', () => {
+  const at = Date.parse('2026-10-16T09:00:00Z');
+  const since = '1792130000000';
+  const job = `korrektur-cu-T@${since}-intern`;
+  const claim = (run, state, ts, reactions = []) => parseClaim({ ts, reactions: reactions.map(name => ({ name })),
+    text: '*Korrektur · Kunde*\n<https://app.clickup.com/t/T|Herbst>', metadata: { event_type: 'ai_korrektur_claim',
+      event_payload: { task_id: job, run_id: run, worker: 'macbook-1', state, heartbeat: at / 1000 - 600 } } });
+  const blocked = claim('20261016T080000Z-a1', 'released', '1792125000.000100', ['x']);
+  const released = claim('20261016T083000Z-a2', 'released', '1792128000.000100');
+  const order = { id: 'T', name: 'Herbst', status: { status: 'revision intern' }, tags: [{ name: 'revision · läuft' }], statusSince: since };
+  const rows = buildQueue([order], [blocked, released], DEFAULT_WORKFLOWS, { now: at });
+  assert.deepEqual(rows.map(row => [row.id, row.status, row.workerId]), [[`correction:${job}`, 'running', undefined]]);
+  const snapshot = { queue: { tasks: rows, source: { status: 'fresh', stale: false, lastSuccessAt: new Date(at).toISOString() } } };
+  assert.deepEqual(cleanupDecision({ task_id: job }, snapshot, at), { remove: false, reason: 'running-not-confirmed', task: rows[0] });
+  // The same holds for a Pre-Gen row that runs only by its ClickUp tag.
+  const pregen = buildQueue([{ id: 'n', name: 'Mail', status: { status: 'pre-gen' }, tags: [{ name: 'pre gen · läuft' }], statusSince: since }],
+    [], DEFAULT_WORKFLOWS, { now: at });
+  assert.deepEqual(pregen.map(row => [row.id, row.status, row.workerId]), [['clickup:newsletter:n', 'running', undefined]]);
+  snapshot.queue.tasks = pregen;
+  assert.equal(cleanupDecision({ task_id: `n@${since}` }, snapshot, at).remove, false);
 });
