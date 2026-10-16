@@ -22,6 +22,13 @@
 #
 # Verwendung:
 #   ./scripts/build_without_xcode.sh [--open]
+#   ./scripts/build_without_xcode.sh --print-sdk   # nur die gewählte SDK ausgeben
+#
+# SDK: Ohne SDKROOT gilt die Standard-SDK von xcrun. Braucht deren SwiftUI das
+# Makro-Plugin SwiftUIMacros, das nur Xcode mitliefert (MacOSX27.sdk: @State ist
+# ein Makro), nimmt das Skript die neueste installierte SDK, mit der SwiftUI ohne
+# das Plugin übersetzt. Eine bestimmte SDK lässt sich weiterhin erzwingen:
+#   SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./scripts/build_without_xcode.sh
 #
 # Name und Bundle-ID lassen sich überschreiben, um einen Build parallel zu einer
 # bestehenden Installation zu betreiben:
@@ -43,6 +50,8 @@ BASE_VERSION="$(grep -m1 -oE 'MARKETING_VERSION = [0-9][^;]*' "$PROJECT_ROOT/$AP
 # offiziellen Release unterscheidbar bleibt. release.sh setzt U4C_VERSION.
 VERSION="${U4C_VERSION:-${BASE_VERSION}+dashboard}"
 DEPLOYMENT_TARGET="13.0"
+# Universal Binary: pro Architektur einmal linken, danach mit lipo zusammenführen.
+ARCHS=(arm64 x86_64)
 SPARKLE_VERSION="2.9.2"
 # SHA-256 von Sparkle-2.9.2.tar.xz, dem Release-Asset unter
 # github.com/sparkle-project/Sparkle/releases/download/2.9.2/. Das Archiv wandert
@@ -64,17 +73,99 @@ VENDOR_DIR="$PROJECT_ROOT/build/vendor"
 SPARKLE_DIR="$VENDOR_DIR/Sparkle-$SPARKLE_VERSION"
 
 OPEN_AFTER_BUILD=false
-[[ "${1:-}" == "--open" ]] && OPEN_AFTER_BUILD=true
+PRINT_SDK_ONLY=false
+case "${1:-}" in
+    --open)      OPEN_AFTER_BUILD=true ;;
+    --print-sdk) PRINT_SDK_ONLY=true ;;
+esac
 
 info()    { printf '\033[0;34mℹ️  %s\033[0m\n' "$1"; }
 success() { printf '\033[0;32m✅ %s\033[0m\n' "$1"; }
 fail()    { printf '\033[0;31m❌ %s\033[0m\n' "$1"; exit 1; }
 
+# ---------------------------------------------------------------- SDK-Auswahl
+# swiftc lädt Makro-Plugins aus der Toolchain und — bei Xcode — aus dem
+# Plattformordner neben der SDK. Die Command Line Tools haben kein SwiftUIMacros.
+swiftui_macros_plugin_available() {
+    local toolchain dir plugin
+    toolchain="$(dirname "$(dirname "$(xcrun --find swiftc)")")"
+    for dir in "$toolchain/lib/swift/host/plugins" \
+               "$toolchain/local/lib/swift/host/plugins" \
+               "$1/../../usr/lib/swift/host/plugins"; do
+        for plugin in "$dir"/*SwiftUIMacros*; do
+            [[ -e "$plugin" ]] && return 0
+        done
+    done
+    return 1
+}
+
+# Übersetzt die SwiftUI-Attribute, die die App nutzt, gegen eine SDK. Schlägt fehl,
+# wenn eines davon dort ein Makro ist, dessen Plugin der Toolchain fehlt.
+swiftui_probe() {
+    swiftc -typecheck -sdk "$1" -target "${ARCHS[0]}-apple-macos$DEPLOYMENT_TARGET" \
+        -swift-version 5 - 2>&1 <<'SWIFT'
+import SwiftUI
+final class ProbeModel: ObservableObject { @Published var count = 0 }
+struct ProbeView: View {
+    @State private var flag = false
+    @StateObject private var owned = ProbeModel()
+    @ObservedObject var shared: ProbeModel
+    @Binding var text: String
+    @AppStorage("probe") private var stored = 0
+    @Environment(\.colorScheme) private var scheme
+    var body: some View { Text(text) }
+}
+SWIFT
+}
+
+# Alle MacOSX<Version>.sdk eines Ordners, neueste zuerst. Symlinks wie MacOSX.sdk
+# oder MacOSX26.sdk zeigen auf eine versionierte SDK und zählen nur einmal.
+installed_sdks() {
+    local sdk real version major minor patch
+    for sdk in "$1"/MacOSX*.sdk; do
+        [[ -d "$sdk" ]] || continue
+        real="$(cd "$sdk" && pwd -P)"
+        version="$(basename "$real" .sdk)"
+        version="${version#MacOSX}"
+        [[ "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || continue
+        IFS=. read -r major minor patch <<< "$version"
+        printf '%05d%05d%05d\t%s\n' "$major" "${minor:-0}" "${patch:-0}" "$real"
+    done | sort -ru | cut -f2-
+}
+
 # ---------------------------------------------------------------- Abhängigkeiten
 command -v swiftc >/dev/null || fail "swiftc nicht gefunden — bitte 'xcode-select --install' ausführen"
 SDK_PATH="$(xcrun --show-sdk-path)"
 [[ -d "$SDK_PATH" ]] || fail "macOS SDK nicht gefunden"
+# Eine gesetzte SDKROOT und Toolchains mit SwiftUIMacros-Plugin (Xcode) bleiben
+# unberührt. Sonst muss die Standard-SDK die Probe bestehen; scheitert sie am
+# fehlenden Plugin, gilt die neueste installierte SDK, die sie besteht. Andere
+# Probe-Fehler bleiben bei der Standard-SDK, damit der Build sie zeigt.
+if [[ -z "${SDKROOT:-}" ]] && ! swiftui_macros_plugin_available "$SDK_PATH" \
+    && ! PROBE_OUTPUT="$(swiftui_probe "$SDK_PATH")" && [[ "$PROBE_OUTPUT" == *SwiftUIMacros* ]]; then
+    DEFAULT_SDK="$(cd "$SDK_PATH" && pwd -P)"
+    info "$(basename "$DEFAULT_SDK") braucht für SwiftUI das Plugin SwiftUIMacros, das dieser Toolchain fehlt — suche eine ältere SDK…"
+    SDK_PATH=""
+    TRIED_SDKS=("$(basename "$DEFAULT_SDK")")
+    while IFS= read -r candidate; do
+        [[ "$candidate" == "$DEFAULT_SDK" ]] && continue
+        if swiftui_probe "$candidate" >/dev/null; then
+            SDK_PATH="$candidate"
+            break
+        fi
+        TRIED_SDKS+=("$(basename "$candidate")")
+    done < <(installed_sdks "$(dirname "$DEFAULT_SDK")")
+    [[ -n "$SDK_PATH" ]] || fail "Keine installierte macOS-SDK lässt sich mit dieser Toolchain bauen (geprüft: ${TRIED_SDKS[*]}). $(basename "$DEFAULT_SDK") braucht für SwiftUI das Plugin SwiftUIMacros, das nur Xcode mitliefert. Abhilfe: Xcode installieren oder eine baubare SDK per SDKROOT=/Pfad/zu/MacOSX<Version>.sdk vorgeben."
+    info "Ausweich-SDK gewählt: $(basename "$SDK_PATH")"
+    # -sdk allein reicht nicht: clang trägt beim Linken sonst die Version der
+    # Standard-SDK ins Binary ein (LC_BUILD_VERSION), obwohl gegen die ältere gebaut.
+    export SDKROOT="$SDK_PATH"
+fi
 info "SDK: $SDK_PATH"
+if [[ "$PRINT_SDK_ONLY" == true ]]; then
+    printf '%s\n' "$SDK_PATH"
+    exit 0
+fi
 info "Produkt: $PRODUCT_NAME  ($BUNDLE_ID)"
 info "Version: $VERSION"
 
@@ -121,8 +212,6 @@ done < <(find "$PROJECT_ROOT/$APP_NAME" -name '*.swift' | sort)
 [[ ${#SOURCES[@]} -gt 0 ]] || fail "Keine Swift-Dateien gefunden"
 info "${#SOURCES[@]} Swift-Dateien"
 
-# Universal Binary: pro Architektur einmal linken, danach mit lipo zusammenführen.
-ARCHS=(arm64 x86_64)
 THIN_BINARIES=()
 for arch in "${ARCHS[@]}"; do
     out="$BUILD_DIR/$APP_NAME-$arch"
