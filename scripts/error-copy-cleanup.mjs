@@ -12,13 +12,21 @@ export function errorTaskKey(payload) {
   return newsletter ? `clickup:newsletter:${newsletter[1]}` : null;
 }
 
-// Only a running continuation or a completed task supersedes an error copy.
+// Only a confirmed running continuation or a completed task supersedes an error copy.
 // A pause, a queue acceptance, a marker or an open PM question keeps it
 // (ablauf.md, Till 13.10.2026: pauses stay visible in #ai-fehler).
 const OPEN_STATES = new Set(['queued', 'marked', 'paused', 'clarification']);
 
 function keepReason(status) {
   return OPEN_STATES.has(status) ? 'still-open' : 'still-blocked';
+}
+
+// A running row supersedes a copy only when a reservation or a live Mac report
+// backs it: it names the Mac and the attempt. A bare ClickUp '· läuft' tag (row
+// phase 'Worker-Zuordnung fehlt') confirms no run (AGENTS.md, Till 13.10.2026:
+// only a freshly confirmed running continuation).
+function confirmedRunning(task) {
+  return task.status === 'running' && Boolean(task.workerId) && Boolean(task.attemptId || task.runId);
 }
 
 export function cleanupDecision(payload, snapshot, now = Date.now()) {
@@ -31,6 +39,7 @@ export function cleanupDecision(payload, snapshot, now = Date.now()) {
   if (!id || matches.length !== 1) return { remove: false, reason: 'unknown-task' };
   const task = matches[0];
   if (!['running', 'completed'].includes(task.status)) return { remove: false, reason: keepReason(task.status), task };
+  if (task.status === 'running' && !confirmedRunning(task)) return { remove: false, reason: 'running-not-confirmed', task };
   return { remove: true, reason: 'no-longer-blocked', task };
 }
 
@@ -81,9 +90,13 @@ export async function cleanupErrorCopies({ readFleet, hubFetch, slackWrite, erro
   const review = candidates.filter(error => {
     const key = errorTaskKey({ task_id: String(error.attemptId || '').replace(/^\d{8}T\d{6}Z-/, '') });
     const task = known.get(key);
-    // Open and blocked tasks keep their copy; skip them before any Slack call.
+    // Open, blocked and unconfirmed running tasks keep their copy; skip them
+    // before any Slack call on the shared token.
     if (task?.workflow === error.workflow && (OPEN_STATES.has(task.status) || ['blocked', 'failed'].includes(task.status))) {
       kept.push({ id: error.id, reason: keepReason(task.status) }); return false;
+    }
+    if (task?.workflow === error.workflow && task.status === 'running' && !confirmedRunning(task)) {
+      kept.push({ id: error.id, reason: 'running-not-confirmed' }); return false;
     }
     return true;
   });

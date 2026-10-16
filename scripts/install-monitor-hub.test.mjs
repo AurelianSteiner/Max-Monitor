@@ -48,6 +48,8 @@ test('queue service reads credentials only on the Hub, uses the existing local t
   assert.match(service, /ReadWritePaths=\/var\/lib\/max-monitor-queue \/opt\/rs-hub\/state\/newsletter-continuations/);
   // The shared Slack budget of the Hub transport (worker slack-rate-limit.js).
   assert.match(service, /^ReadWritePaths=\/opt\/rs-hub\/state\/slack-rate-limits$/m);
+  // SQLite sidecars of the worker reservation register the queue reads (status-driven queue).
+  assert.match(service, /^ReadWritePaths=-\/opt\/rs-hub\/state\/worker-reservations$/m);
   assert.ok(!service.includes(ownerToken));
   assert.ok(!service.includes('MONITOR_BRIDGE_TOKEN'));
   assert.ok(!service.includes('--once'));
@@ -238,6 +240,27 @@ test('the worker source copy is the complete transitive relative require closure
   assert.equal(plan.settings.slackRateLimits, `${hubRoot}/state/slack-rate-limits`);
 });
 
+test('the admission rules of the worker are copied when the source has them, with their own requires', (t) => {
+  const rules = { ...currentWorker,
+    'src/upload-policy.js': "const { customers } = require('../config/manual-uploads.json');\nconst { MANUAL_UPLOAD_TAG } = require('./pre-gen');\n",
+    'config/manual-uploads.json': '{"customers":[]}',
+    'src/test-workspace.js': "const registry = require('../config/test-workspace.json');\nfunction destination() { require('./jobs'); }\n",
+    'config/test-workspace.json': '{}',
+    'src/slack-kanaele.js': "const { jobKind } = require('./jobs');\nconst { auswahlText } = require('./clickup-fields');\nmodule.exports = { KANAELE: {}, FEHLER_KANAL: { id: 'C0000000000' } };\n",
+    'src/clickup-fields.js': '',
+    'config/workflow-cutover.json': '{"schema":1,"jobs":[]}',
+  };
+  const relatives = workerSourceFiles(workerFixture(t, rules).workerRoot).map(file => file.relative);
+  for (const name of ['src/upload-policy.js', 'config/manual-uploads.json', 'src/test-workspace.js', 'config/test-workspace.json',
+    'src/slack-kanaele.js', 'src/clickup-fields.js', 'config/workflow-cutover.json']) assert.ok(relatives.includes(name), name);
+  // An older worker source without them still installs; the bridge then parks by tag only.
+  assert.ok(!workerSourceFiles(workerFixture(t, currentWorker).workerRoot).some(file => /upload-policy|cutover/.test(file.relative)));
+  // A present rule file must still bring its complete closure.
+  const broken = { ...rules };
+  delete broken['config/manual-uploads.json'];
+  assert.throws(() => workerSourceFiles(workerFixture(t, broken).workerRoot), /manual-uploads\.json.*fehlt/);
+});
+
 test('a missing or escaping worker module fails the install before anything is staged', (t) => {
   for (const [files, pattern] of [
     [{ ...currentWorker, 'src/slack-rate-limit.js': undefined }, /slack-rate-limit\.js.*fehlt/],
@@ -261,6 +284,7 @@ test('the writable Slack budget follows the Hub transport runtime directory', (t
   assert.equal(slackRateLimitDirectory(directory), '/var/lib/rs-hub/state/slack-rate-limits');
   const unit = queueService({ ...installationSettings({}, prior), slackRateLimits: '/var/lib/rs-hub/state/slack-rate-limits' });
   assert.match(unit, /^ReadWritePaths=\/var\/lib\/rs-hub\/state\/slack-rate-limits$/m);
+  assert.match(unit, /^ReadWritePaths=-\/var\/lib\/rs-hub\/state\/worker-reservations$/m);
   assert.match(unit, /ReadOnlyPaths=\/opt\/rs-hub \/etc\/max-monitor/);
   for (const value of ['relative/path', '/opt/rs hub', '/opt/../etc']) {
     fs.writeFileSync(path.join(directory, '.env'), `HUB_RUNTIME_DIR=${value}\n`);

@@ -23,6 +23,10 @@ const HUB_ROOT = '/opt/rs-hub';
 const DEFAULT_SLACK_RATE_LIMITS = `${HUB_ROOT}/state/slack-rate-limits`;
 // The bridge loads these worker files; each one brings its own relative requires.
 const WORKER_ENTRY_POINTS = ['src/config.js', 'src/hub-transport.js', 'src/pre-gen.js'];
+// The worker's admission rules the queue mirrors (bridge loadWorkerAdmission).
+// Copied whenever the source has them; an older source without them still
+// installs and the bridge then parks orders by the 'manuell' tag only.
+const OPTIONAL_WORKER_ENTRY_POINTS = ['src/upload-policy.js', 'src/test-workspace.js', 'src/slack-kanaele.js', 'config/workflow-cutover.json'];
 const RELATIVE_REQUIRE = /\brequire\(\s*(['"])(\.{1,2}\/[^'"\n]+)\1\s*\)/g;
 
 export function installationSettings(values = {}, previous) {
@@ -54,7 +58,10 @@ export function queueService(settings) {
   // The Hub transport books every Slack call in the shared per-method budget
   // of all Macs (worker src/slack-rate-limit.js); only that directory is writable.
   const slackRateLimits = settings.slackRateLimits || DEFAULT_SLACK_RATE_LIMITS;
-  return `# Managed by Max Monitor Hub installer\n[Unit]\nDescription=ClickUp and Newsletter queue monitor with error-copy cleanup\nAfter=network-online.target ${SERVICE}\nWants=network-online.target ${SERVICE}\n\n[Service]\nType=simple\nUser=root\nWorkingDirectory=/opt/rs-hub\nExecStart=${settings.nodeBinary} /opt/max-monitor/scripts/newsletter-monitor-bridge.mjs --worker-root /opt/max-monitor/newsletter-source --local-hub /opt/rs-hub --enrollment-config /etc/max-monitor/enrollment.json --cache /var/lib/max-monitor-queue/cache.json --interval 60 --cleanup-error-copies\nRestart=on-failure\nRestartSec=10\nStateDirectory=max-monitor-queue\nStateDirectoryMode=0700\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadOnlyPaths=/opt/rs-hub /etc/max-monitor\nReadWritePaths=/var/lib/max-monitor-queue /opt/rs-hub/state/newsletter-continuations\nReadWritePaths=${slackRateLimits}\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\n[Install]\nWantedBy=multi-user.target\n`;
+  // The read-only queue observer reads the worker reservation register like the
+  // checkpoint queue; SQLite needs its WAL sidecars there. '-': not yet created.
+  const reservations = path.posix.join(path.posix.dirname(slackRateLimits), 'worker-reservations');
+  return `# Managed by Max Monitor Hub installer\n[Unit]\nDescription=ClickUp and Newsletter queue monitor with error-copy cleanup\nAfter=network-online.target ${SERVICE}\nWants=network-online.target ${SERVICE}\n\n[Service]\nType=simple\nUser=root\nWorkingDirectory=/opt/rs-hub\nExecStart=${settings.nodeBinary} /opt/max-monitor/scripts/newsletter-monitor-bridge.mjs --worker-root /opt/max-monitor/newsletter-source --local-hub /opt/rs-hub --enrollment-config /etc/max-monitor/enrollment.json --cache /var/lib/max-monitor-queue/cache.json --interval 60 --cleanup-error-copies\nRestart=on-failure\nRestartSec=10\nStateDirectory=max-monitor-queue\nStateDirectoryMode=0700\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadOnlyPaths=/opt/rs-hub /etc/max-monitor\nReadWritePaths=/var/lib/max-monitor-queue /opt/rs-hub/state/newsletter-continuations\nReadWritePaths=${slackRateLimits}\nReadWritePaths=-${reservations}\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\n[Install]\nWantedBy=multi-user.target\n`;
 }
 
 // Same runtime directory as the transport's remote script:
@@ -87,10 +94,11 @@ function resolveWorkerModule(root, from, specifier) {
 // Every file the bridge can load from the worker: the transitive './' and '../'
 // require closure of the entry points, including requires inside functions.
 // A missing module fails the installation before anything is written.
-export function workerSourceFiles(workerRoot, entries = WORKER_ENTRY_POINTS) {
+export function workerSourceFiles(workerRoot, entries = WORKER_ENTRY_POINTS, optional = OPTIONAL_WORKER_ENTRY_POINTS) {
   const root = fs.realpathSync(workerRoot);
   const files = new Map();
-  const queue = entries.map(relative => ({ relative }));
+  const present = optional.filter(relative => { try { return fs.statSync(path.join(root, relative)).isFile(); } catch { return false; } });
+  const queue = [...entries, ...present].map(relative => ({ relative }));
   while (queue.length) {
     const { relative, from } = queue.shift();
     if (files.has(relative)) continue;
