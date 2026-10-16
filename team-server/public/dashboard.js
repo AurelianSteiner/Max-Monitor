@@ -7,6 +7,7 @@
   // Display names do not change task ownership or the SSH/enrollment identity.
   const workerDisplayNames = new Map([
     ["mac-worker-6-64d66918", "MacWorker 6"],
+    ["macbook-air-von-gustav-ccdf84ef", "MacWorker 7"],
     ["macbook-1", "Mac 1"],
     ["macbook-2", "Mac 2"],
     ["newsletter-mac-141b2976", "Mac 4"],
