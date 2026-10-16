@@ -136,7 +136,7 @@ test('snapshot carries the Slack inventory only after a complete configured erro
   const config = { clickup: { workspace_id: 'test' }, slack: { channel_id: 'status' }, monitor_channels: { errors: channel }, hub: {} };
   const collect = () => collectSnapshot({ config, now, fleetReader: async () => [], hubFetch: async target => {
     const url = new URL(target);
-    return { ok: true, json: async () => url.hostname !== 'slack.com' ? { spaces: [] }
+    return { ok: true, json: async () => url.hostname !== 'slack.com' ? { spaces: [], tasks: [] }
       : url.searchParams.get('channel') === channel ? { ok: true, messages: [error()], has_more: fail }
       : { ok: true, messages: [], has_more: false } };
   } });

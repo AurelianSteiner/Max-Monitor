@@ -30,8 +30,14 @@ function validateReport(raw, now = Date.now()) {
     return { id, runId: text(run.runId, 160, true), title: text(run.title, 300, true), workflow: run.workflow,
       status: run.status, url, progress: run.progress ?? undefined, step: text(run.step, 160) };
   });
+  // The worker's own admission count and maximum (src/mac-capacity.js): every
+  // place holder, also browser jobs, previews and transfers without a run row.
+  // Optional: older workers do not send them.
+  const places = value => value == null ? undefined : Number.isInteger(value) && value >= 0 && value <= 50 ? value : fail();
+  const occupiedTasks = places(raw.activity.occupiedTasks);
+  const maxTasks = places(raw.activity.maxTasks);
   // Idle is a positive observation, never the absence of a queue assignment.
-  if (raw.activity.state === 'idle' && (!raw.service.running || runs.length || now - Date.parse(raw.service.lastPollAt) > 180000
+  if (raw.activity.state === 'idle' && (!raw.service.running || runs.length || occupiedTasks > 0 || now - Date.parse(raw.service.lastPollAt) > 180000
     || !Number.isFinite(Date.parse(raw.service.lastPollAt)))) fail();
   const maintenance = raw.maintenance;
   if (maintenance && typeof maintenance.ok !== 'boolean') fail();
@@ -39,7 +45,8 @@ function validateReport(raw, now = Date.now()) {
     workerVersion: text(raw.workerVersion, 80), workerRevision: text(raw.workerRevision, 80),
     skillRelease: validateSkillRelease(raw.skillRelease, now),
     service: { running: raw.service.running, lastPollAt: date(raw.service.lastPollAt) },
-    activity: { state: raw.activity.state, acceptingTasks: raw.activity.acceptingTasks, runs },
+    activity: { state: raw.activity.state, acceptingTasks: raw.activity.acceptingTasks, runs,
+      ...(occupiedTasks === undefined ? {} : { occupiedTasks }), ...(maxTasks === undefined ? {} : { maxTasks }) },
     maintenance: maintenance ? { ok: maintenance.ok, checkedAt: date(maintenance.checkedAt), summary: text(maintenance.summary, 300, true) } : undefined,
   };
 }

@@ -924,8 +924,23 @@
   function blockedCorrectionLabel(items) {
     return `${items.length} ${items.length === 1 ? "Korrektur blockiert" : "Korrekturen blockiert"}`;
   }
+  // Used places against the Mac maximum exactly as the worker counts them for
+  // admission, also browser jobs, previews and transfers without a queue row.
+  // Paused work waits outside the places. Only a current observation counts.
+  function machineLoad(machine) {
+    const load = machine.load;
+    if (machine.status !== "online" || !load?.fresh || !Number.isInteger(load.occupied)) return null;
+    const age = Date.now() - (timestamp(load.observedAt) || 0);
+    return age <= (load.source === "agent" ? 45000 : 180000) ? load : null;
+  }
+  function loadText(load) {
+    return Number.isInteger(load.max) ? `${load.occupied} / ${load.max}` : String(load.occupied);
+  }
   function idleLabel(machine) {
     if (machine.status !== "online") return "—";
+    const load = machineLoad(machine);
+    if (load && Number.isInteger(load.max) && load.occupied >= load.max) return `voll belegt · ${loadText(load)}`;
+    if (load?.occupied > 0) return `belegt · ${loadText(load)}`;
     if (machine.activity?.fresh && machine.activity.state === "idle") return machine.activity.acceptingTasks ? "frei" : "Annahme pausiert";
     if (machine.acceptingTasks === false) return "Annahme pausiert · Tätigkeit ungeprüft";
     return "Tätigkeit ungeprüft";
@@ -1041,7 +1056,9 @@
       taskCell.append(current);
       if (failure && active.length) taskCell.append(node("span", "fleet-sub", `Zuletzt: ${active[0].title || active[0].id}`));
       else if (active[0]?.status === "queued") taskCell.append(node("span", "fleet-sub", "reserviert · startet gleich"));
-      if (active.length > 1) taskCell.append(node("span", "fleet-sub", `+ ${active.length - 1} weitere`));
+      const load = machineLoad(machine);
+      const more = [active.length > 1 ? `+ ${active.length - 1} weitere` : "", load && active.length ? `Plätze ${loadText(load)}` : ""].filter(Boolean).join(" · ");
+      if (more) taskCell.append(node("span", "fleet-sub", more));
       const blocked = blockedCorrections(machine);
       if (blocked.length) {
         const summary = node("span", "fleet-sub fleet-issue", blockedCorrectionLabel(blocked));
@@ -1113,10 +1130,12 @@
       const data = node("div", "machine-data");
       const [battery, source] = batteryText(machine);
       const active = activeTasks(machine);
+      const load = machineLoad(machine);
       const seenAt = machine.lastSeenAt || machine.receivedAt || machine.seenAt;
       for (const [name, value, hint, tooltip] of [
         ["Akku", battery, source === "Akku" ? "" : source],
-        ["Aufgaben", active.length || machine.activity?.fresh ? `${active.length} aktiv` : "ungeprüft", ""],
+        load ? ["Plätze", loadText(load), Number.isInteger(load.max) && load.occupied >= load.max ? "voll" : "", "Belegte Plätze / Maximum dieses Macs"]
+          : ["Aufgaben", active.length || machine.activity?.fresh ? `${active.length} aktiv` : "ungeprüft", ""],
         ["Meldung", relative(seenAt).replace(/^vor /, ""), "", exact(seenAt)],
       ]) {
         const datum = node("div");
@@ -1679,6 +1698,9 @@
         true,
       ),
       workingOn(machine),
+      detailField("Plätze", machineLoad(machine)
+        ? `${machine.load.occupied} von ${Number.isInteger(machine.load.max) ? machine.load.max : "?"} belegt · laut ${machine.load.source === "agent" ? "Worker" : "RS Hub"}, ${relative(machine.load.observedAt)}`
+        : machine.load ? "Keine aktuelle Meldung" : "Nicht gemeldet"),
       detailField(
         "Version",
         machine.appVersion || machine.workerVersion || "Unbekannt",

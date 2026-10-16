@@ -34,15 +34,20 @@ Mac 1: Claude-Konto 1 + Gerätebericht ─┐
 Mac 2: Claude-Konto 2 + Gerätebericht ─┼── HTTPS ── Team-Relay ── alle Max-Monitor-Apps
 Mac 3: Claude-Konto 3 + Gerätebericht ─┘                  ↑
                                                        │ Queue-Snapshot
-ClickUp + Slack-Reservierungen + Hub-Worker-Dateien ── Newsletter-Bridge
+ClickUp-Startstatus + RS-Hub-Reservierungen + Hub-Worker-Dateien ── Newsletter-Bridge
 ```
 
 Die **Übersicht** zeigt alles auf einer Seite: oben pro Workflow ein Balkendiagramm
 der Stufen **Markiert · Wartet · Läuft · Blockiert · Fertig** (bei Bedarf **Fehler**),
 daneben die dringendsten Einträge aus **Braucht Aufmerksamkeit** und darunter alle Macs
-mit Status, aktueller Aufgabe, Akku, 5h-/Wochenlimit und letzter Meldung. „Markiert“
-heißt: nur das Start-Tag (z. B. `pre gen.`) ist gesetzt; ein Status-Tag wie
-`pre gen · wartet` oder eine Worker-Reservierung zählt als „Wartet“. Ein Klick auf einen
+mit Status, aktueller Aufgabe, Akku, 5h-/Wochenlimit und letzter Meldung. Wie bei
+den Workern erteilt nur der ClickUp-Status einen Auftrag (`pre-gen`, `klaviyo upload`,
+`revision intern`, `revision extern`); die Brücke liest diese Aufgaben mit derselben
+Statusabfrage und demselben Statusbeginn wie der Worker. „Markiert“ heißt: Der Status
+ist gesetzt, aber noch kein Status-Tag; `pre gen · wartet` oder eine Reservierung
+zählt als „Wartet“. Warte- oder Lauf-Tags außerhalb dieses Status sind kein Auftrag
+und erscheinen nicht als offen; Blockaden und Abschlüsse bleiben sichtbar. Aufgaben
+mit `manuell` parkt der Worker, sie erscheinen nicht als wartend. Ein Klick auf einen
 Balken öffnet die Queue mit genau diesem Status- und Workflow-Filter. Das Dashboard ist
 bewusst immer hell, auch im macOS-Dunkelmodus.
 
@@ -154,13 +159,35 @@ lokalen Worker-Dienst, seine tatsächlich offenen Läufe und den letzten Poll di
 an den bestehenden RS Hub. Die Anzeige verwirft diese Aktivitätsmessung nach 45
 Sekunden. „frei“ setzt einen laufenden Dienst, keine offenen Läufe und einen frischen
 Poll voraus; ohne Nachweis steht „Tätigkeit ungeprüft“. Pausierte Annahme wird
-gesondert gezeigt. Der Wartungsdienst prüft alle 60 Sekunden mit dem vorhandenen
+gesondert gezeigt.
+
+**Plätze** zeigt die belegten Plätze gegen das Maximum des Macs (Tabelle in
+`AGENTS.md` des Worker-Repos), genau so, wie der Worker sie für die Annahme zählt:
+reservierte und laufende Läufe beider Arbeitsbereiche, Sales-Aufträge,
+Klaviyo-Browser-Aufträge, Vorschauen und Korrektur-Übertragungen. Pausierte Aufgaben
+warten außerhalb der Plätze. Quelle ist die frischere Worker-Meldung: der direkte
+Bericht (`activity.occupiedTasks`/`maxTasks`, 45 s gültig) oder der Hub-Herzschlag
+(`occupied_tasks`/`max_tasks`, 180 s gültig). Sendet ein älterer Worker kein Maximum,
+nimmt die Brücke es aus der Worker-Tabelle der installierten Newsletter-Quelle. Ein
+voller Mac heißt „voll belegt · 3 / 3“ statt „Annahme pausiert“; belegte Plätze ohne
+Queue-Zeile (z. B. ein Browser-Auftrag) zeigen „belegt · 1 / 6“. Der Wartungsdienst prüft alle 60 Sekunden mit dem vorhandenen
 Worker-Wächter; launchd startet einen beendeten Beobachter erneut. Aktive Läufe
 werden dafür nicht beendet. Claude-Kontingente werden alle fünf Minuten geprüft;
 Fehler führen zu gestaffelten Wiederholungen, statt den Account zurückzusetzen.
 
-Korrekturen erscheinen unabhängig vom alten Pre-Gen-Abschluss. Die aktuellen
-Slack-Reservierungen werden etwa alle drei Minuten neu gelesen: ❌ am finalen Claim bedeutet
+Reservierungen kommen auf dem Hub (`--local-hub`) aus dem RS-Hub-Reservierungsregister
+(`<HUB_RUNTIME_DIR>/state/worker-reservations/claims.sqlite`, nur lesend), aus dem
+auch die Worker ihre Aufträge annehmen. Das Register entscheidet Mac, Zustand und
+Pause; Slack liefert nur noch den Thread für Fortschritt und Blockiergrund, seine
+Reaktionen und den Zeitpunkt eines Abschlusses. Ist das Register nicht lesbar, zeigt
+die Quelle das an und die Slack-Kopie der Reservierungen hält die Queue sichtbar.
+
+Korrekturen erscheinen unabhängig vom alten Pre-Gen-Abschluss. Jede Aufgabe in
+`revision intern`/`revision extern` ist eine Korrektur mit der Worker-Kennung
+`korrektur-cu-<ID>@<Statusbeginn>-<intern|extern>`, auch ohne Reservierung; eine
+Reservierung derselben Runde (auch je Datei) ersetzt diese Zeile, ältere Runden
+verdecken eine neue nie. Die aktuellen
+Reservierungen werden etwa alle drei Minuten neu gelesen: ❌ am finalen Claim bedeutet
 blockiert, ✅ abgeschlossen. Die eigene Bot-Antwort liefert den Blockiergrund. Er
 bleibt samt zuständigem Mac sichtbar, auch wenn dieser bereits andere Aufgaben
 bearbeitet. Ein neuer Versuch ersetzt die alte Blockierung; freigegebene oder
@@ -592,7 +619,11 @@ Snapshot besteht aus:
       "lastSeenAt": "2026-10-07T12:00:00Z",
       "workerVersion": "V1.15",
       "workerRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "pendingClickup": 0
+      "pendingClickup": 0,
+      "acceptingTasks": true,
+      "occupiedTasks": 2,
+      "maxTasks": 3,
+      "places": { "korrektur": 3, "newsletter": 3, "klaviyo": 3, "translation": 3 }
     }
   ],
   "source": {
@@ -602,6 +633,10 @@ Snapshot besteht aus:
   }
 }
 ```
+
+`occupiedTasks`, `maxTasks` (je 0–50) und `places` sind optional; ältere Worker
+senden sie nicht. Das Relay zeigt daraus je Mac `load` (`occupied`, `max`, `source`
+`agent` oder `hub`, `observedAt`, `fresh`).
 
 Ein Verweis in `previews` wird nur übernommen, wenn das Bild vorher per
 `PUT /v1/teams/:id/fleet/previews/<sha256>` (Admin/Super, `image/jpeg`, höchstens

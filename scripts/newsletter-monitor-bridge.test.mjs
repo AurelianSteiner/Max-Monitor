@@ -17,6 +17,8 @@ import {
 const now = Date.parse('2026-10-07T12:00:00Z');
 const response = data => ({ ok: true, status: 200, json: async () => data });
 const task = (id, tags = ['pre gen.']) => ({ id, name: `Aufgabe ${id}`, tags: tags.map(name => ({ name })), date_updated: String(now), status: { status: 'offen' } });
+// Only the ClickUp start status commissions work (worker src/workflow-status.js).
+const taskIn = (status, id, tags) => ({ ...task(id, tags), status: { status } });
 const claimMessage = (state = 'running', overrides = {}) => ({ ts: '1791373200.001', metadata: {
   event_type: 'ai_newsletter_claim', event_payload: { task_id: 'a', run_id: 'run-1', worker: 'newsletter-mac-1', state, heartbeat: now / 1000 - 60, ...overrides },
 } });
@@ -64,14 +66,16 @@ test('Slack metadata pagination reads every page and fails without continuation 
 test('queue separates workflows and makes stale claims visible without inventing progress', () => {
   const claims = [parseClaim(claimMessage()), parseClaim(claimMessage('running', { task_id: 'stale', heartbeat: now / 1000 - 1900 }))];
   const queue = buildQueue([
-    task('a', ['pre gen.', 'klaviyo upload']), task('stale'), task('blocked', ['pre gen · blockiert']),
+    taskIn('pre-gen', 'a', ['pre gen.', 'klaviyo upload']), taskIn('klaviyo upload', 'u', ['klaviyo upload']), task('stale'), task('blocked', ['pre gen · blockiert']),
     task('done', ['pre gen · fertig']), task('ignored', ['unrelated']),
   ], claims, DEFAULT_WORKFLOWS, { now });
   assert.equal(queue.length, 5);
   assert.equal(queue.find(row => row.id === 'clickup:newsletter:a').status, 'running');
   assert.equal(queue.find(row => row.id === 'clickup:newsletter:a').workerId, 'newsletter-mac-1');
-  assert.equal(queue.find(row => row.id === 'clickup:upload:a').status, 'queued');
-  assert.equal(queue.find(row => row.id === 'clickup:upload:a').workerId, undefined);
+  // The old upload trigger on a Pre-Gen order is no upload order (only the status commissions it).
+  assert.equal(queue.some(row => row.id === 'clickup:upload:a'), false);
+  assert.equal(queue.find(row => row.id === 'clickup:upload:u').status, 'queued');
+  assert.equal(queue.find(row => row.id === 'clickup:upload:u').workerId, undefined);
   assert.equal(queue.find(row => row.id.endsWith(':stale')).status, 'blocked');
   assert.equal(queue.find(row => row.id.endsWith(':stale')).phase, 'Worker meldet sich nicht mehr');
   assert.equal(queue.find(row => row.id.endsWith(':blocked')).status, 'blocked');
@@ -80,7 +84,7 @@ test('queue separates workflows and makes stale claims visible without inventing
 });
 
 test('released claims do not mark a queued task running; explicit completed tag wins', () => {
-  const queue = buildQueue([task('a'), task('b', ['pre gen · fertig'])], [
+  const queue = buildQueue([taskIn('pre-gen', 'a'), task('b', ['pre gen · fertig'])], [
     parseClaim(claimMessage('released')), parseClaim(claimMessage('running', { task_id: 'b' })),
   ], DEFAULT_WORKFLOWS, { now });
   assert.equal(queue[0].status, 'queued'); assert.equal(queue[0].workerId, undefined);
@@ -97,8 +101,8 @@ test('a Klaviyo upload accepted by a Mac stays visible with its exact worker', (
   const claim = parseClaim(jobClaim('ai_klaviyo_upload_claim', '12451cu4xnc-klaviyo', 'macworker-5-schwarz'));
   assert.deepEqual([claim.taskId, claim.workflow, claim.workerId], ['12451cu4xnc', 'klaviyo', 'macworker-5-schwarz']);
   const queue = buildQueue([
-    task('12451cu4xnc', ['drogi', 'klaviyo upload · läuft']), task('waiting', ['klaviyo upload · wartet']),
-    task('stopped', ['klaviyo upload · blockiert']), task('done', ['klaviyo upload · fertig']), task('new', ['klaviyo upload']),
+    taskIn('klaviyo upload', '12451cu4xnc', ['drogi', 'klaviyo upload · läuft']), taskIn('klaviyo upload', 'waiting', ['klaviyo upload · wartet']),
+    taskIn('klaviyo upload', 'stopped', ['klaviyo upload · blockiert']), taskIn('klaviyo upload', 'done', ['klaviyo upload · fertig']), taskIn('klaviyo upload', 'new', ['klaviyo upload']),
   ], [claim], DEFAULT_WORKFLOWS, { now });
   const row = queue.find(item => item.id === 'clickup:upload:12451cu4xnc');
   assert.deepEqual([row.workflow, row.status, row.workerId, row.phase], ['upload', 'running', 'macworker-5-schwarz', 'In Bearbeitung']);
@@ -128,8 +132,8 @@ test('translations appear per language with their own reservation', () => {
 });
 
 test('language packages preserve exact source links and reject ambiguous or cross-customer links', () => {
-  const de = { ...task('de1'), name: 'DE | Herbst', folder: { id: 'customer-a' } };
-  const en = { ...task('en1'), name: 'EN | Herbst', folder: { id: 'customer-a' }, markdown_description: 'Deutsches Briefing: https://app.clickup.com/t/24553341/de1' };
+  const de = { ...taskIn('pre-gen', 'de1'), name: 'DE | Herbst', folder: { id: 'customer-a' } };
+  const en = { ...taskIn('pre-gen', 'en1'), name: 'EN | Herbst', folder: { id: 'customer-a' }, markdown_description: 'Deutsches Briefing: https://app.clickup.com/t/24553341/de1' };
   const rows = buildQueue([de, en], [], DEFAULT_WORKFLOWS, { now });
   assert.equal(rows.find(row => row.id.endsWith(':en1')).packageId, 'de1');
   assert.equal(rows.find(row => row.id.endsWith(':en1')).language, 'en');
@@ -139,7 +143,7 @@ test('language packages preserve exact source links and reject ambiguous or cros
     const input = { ...en, markdown_description: en.markdown_description + ' https://app.clickup.com/t/de2' };
     assert.equal(buildQueue([...sources, input], [], DEFAULT_WORKFLOWS, { now }).find(row => row.id.endsWith(':en1')).packageId, 'en1');
   }
-  const steps = buildQueue([task('single', ['pre gen · läuft', 'en translation'])], [], DEFAULT_WORKFLOWS, { now });
+  const steps = buildQueue([taskIn('pre-gen', 'single', ['pre gen · läuft', 'en translation'])], [], DEFAULT_WORKFLOWS, { now });
   assert.ok(steps.every(row => row.packageId === 'single'));
   assert.equal(steps.find(row => row.workflow === 'translation').language, 'en');
 });
@@ -281,19 +285,21 @@ test('legitimate multiline ClickUp display text is flattened and bounded without
   const source = task('86cbau0hv', ['pre gen · läuft', '\tCampaign\nQ4', 'x'.repeat(100)]);
   source.name = '  Newsletter\n\tHerbstaktion\u0000  ';
   source.status.status = 'in\narbeit';
-  const queue = buildQueue([source], [], DEFAULT_WORKFLOWS, { now });
+  // A live reservation keeps the row although its source status is not pre-gen.
+  const live = [parseClaim(claimMessage('running', { task_id: '86cbau0hv' }))];
+  const queue = buildQueue([source], live, DEFAULT_WORKFLOWS, { now });
   assert.equal(queue[0].id, 'clickup:newsletter:86cbau0hv');
   assert.equal(queue[0].title, 'Newsletter Herbstaktion');
   assert.equal(queue[0].sourceStatus, 'in arbeit');
   assert.equal(queue[0].status, 'running');
   assert.equal(queue[0].tags[1], 'Campaign Q4'); assert.equal(queue[0].tags[2].length, 80);
-  source.name = 'x'.repeat(500); assert.equal(buildQueue([source], [], DEFAULT_WORKFLOWS, { now })[0].title.length, 300);
+  source.name = 'x'.repeat(500); assert.equal(buildQueue([source], live, DEFAULT_WORKFLOWS, { now })[0].title.length, 300);
 });
 
 test('queue carries the ClickUp customer and prefers the generated Figma link', () => {
   const original = 'https://www.figma.com/design/original/Newsletter';
   const generated = 'https://www.figma.com/design/generated/Test?node-id=1-2';
-  const raw = { ...task('customer'), folder: { name: '  Beispiel\n  Unternehmen  ', hidden: false }, custom_fields: [
+  const raw = { ...taskIn('pre-gen', 'customer'), folder: { name: '  Beispiel\n  Unternehmen  ', hidden: false }, custom_fields: [
     { id: '3530f8a4-44e1-4ea5-894d-4d87fb5c418d', name: 'Figma Link', type: 'url', value: original },
     { id: 'ef2ba681-7e9d-40a3-b79a-dda5cd402015', name: 'Figma Pre-Gen', type: 'url', value: generated },
   ] };
@@ -301,12 +307,12 @@ test('queue carries the ClickUp customer and prefers the generated Figma link', 
   assert.equal(row.company, 'Beispiel Unternehmen');
   assert.equal(row.figmaUrl, generated);
   assert.equal(buildQueue([{ ...raw, folder: { name: 'hidden', hidden: true } }], [], DEFAULT_WORKFLOWS, { now })[0].company, undefined);
-  assert.equal(buildQueue([task('old')], [], DEFAULT_WORKFLOWS, { now })[0].figmaUrl, undefined);
+  assert.equal(buildQueue([taskIn('pre-gen', 'old')], [], DEFAULT_WORKFLOWS, { now })[0].figmaUrl, undefined);
 });
 
 test('Figma fallback uses the configured creation board and optional bad links cannot break the queue', () => {
   const board = 'https://www.figma.com/design/creation';
-  const raw = { ...task('both', ['pre gen.', 'klaviyo upload']), custom_fields: [
+  const raw = { ...taskIn('klaviyo upload', 'both', ['pre gen · fertig', 'klaviyo upload']), custom_fields: [
     { id: 'ef2ba681-7e9d-40a3-b79a-dda5cd402015', value: 'https://figma.com.evil.example/design/wrong' },
   ] };
   const rows = buildQueue([raw], [], DEFAULT_WORKFLOWS, { now, figmaBoardUrl: board });
@@ -316,7 +322,7 @@ test('Figma fallback uses the configured creation board and optional bad links c
   raw.custom_fields.push({ name: 'Figma Board', type: 'url', value: valid });
   assert.ok(buildQueue([raw], [], DEFAULT_WORKFLOWS, { now, figmaBoardUrl: board }).every(row => row.figmaUrl === valid));
   for (const value of ['javascript:alert(1)', 'https://user:pass@figma.com/design/key', 'http://figma.com/file/key', 'https://figma.com/login']) {
-    const row = buildQueue([{ ...task('unsafe'), custom_fields: [{ name: 'Figma Link', type: 'url', value }] }], [], DEFAULT_WORKFLOWS, { now })[0];
+    const row = buildQueue([{ ...taskIn('pre-gen', 'unsafe'), custom_fields: [{ name: 'Figma Link', type: 'url', value }] }], [], DEFAULT_WORKFLOWS, { now })[0];
     assert.equal(row.figmaUrl, undefined);
   }
 });
@@ -377,7 +383,7 @@ test('a genuine complete empty queue is published and cached only after relay ac
 
 test('missing Hub observations do not discard a verified ClickUp/Slack snapshot', async () => {
   const snapshot = await collectSnapshot({ now, config: { clickup: { workspace_id: '24553341' }, slack: { channel_id: 'test' }, hub: {} },
-    hubFetch: async target => String(target).includes('slack.com') ? response({ ok: true, messages: [], has_more: false }) : response({ spaces: [] }),
+    hubFetch: async target => String(target).includes('slack.com') ? response({ ok: true, messages: [], has_more: false }) : response({ spaces: [], tasks: [] }),
     fleetReader: async () => { throw new Error('unavailable'); } });
   assert.deepEqual(snapshot.tasks, []); assert.equal(snapshot.observedWorkers, undefined);
   assert.match(snapshot.source.detail, /Worker-Dateien nicht verfügbar/); assert.equal(snapshot.source.error, undefined);
@@ -385,7 +391,7 @@ test('missing Hub observations do not discard a verified ClickUp/Slack snapshot'
 
 test('an unavailable PM journal preserves the last complete snapshot instead of clearing clarification', async () => {
   const snapshot = await collectSnapshot({ now, config: { clickup: { workspace_id: 'test' }, slack: { channel_id: 'test' }, hub: {} },
-    hubFetch: async target => String(target).includes('slack.com') ? response({ ok: true, messages: [], has_more: false }) : response({ spaces: [] }),
+    hubFetch: async target => String(target).includes('slack.com') ? response({ ok: true, messages: [], has_more: false }) : response({ spaces: [], tasks: [] }),
     fleetReader: async () => [], questionReader: async () => { throw new Error('PM-Journal nicht erreichbar'); } });
   assert.equal(snapshot.tasks, undefined);assert.match(snapshot.source.error,/PM-Journal/);
 });
@@ -504,7 +510,7 @@ test('complete Slack warning scans clear resolved issues; partial scans preserve
     const url = new URL(target);
     if (url.hostname !== 'slack.com') {
       if (failTasks) throw new Error('ClickUp unavailable');
-      return response({ spaces: [] });
+      return response({ spaces: [], tasks: [] });
     }
     if (url.searchParams.get('channel') === 'errors') {
       if (failErrors) return response({ ok: true, messages, has_more: true });
@@ -538,7 +544,7 @@ test('the next warm-cache snapshot removes deleted worker errors while preservin
   const claimReader = createClaimReader();
   const hubFetch = async target => {
     const url = new URL(target);
-    if (url.hostname !== 'slack.com') return response({ spaces: [] });
+    if (url.hostname !== 'slack.com') return response({ spaces: [], tasks: [] });
     if (url.searchParams.get('channel') !== 'errors') return response({ ok: true, messages: [], has_more: false });
     const oldest = url.searchParams.get('oldest');
     errorReads.push(oldest);
@@ -561,7 +567,7 @@ test('a newer token-expiry warning cannot hide an existing Claude outage', async
   const warning = issueMessage({ ts: '1791374100.001', text: ':hourglass: Der Claude-Token läuft in 12 Tagen ab' });
   const snapshot = await collectSnapshot({ now, config: { clickup: { workspace_id: 'test' }, slack: { channel_id: 'test' }, hub: {} },
     hubFetch: async target => String(target).includes('slack.com')
-      ? response({ ok: true, messages: [warning, issueMessage()], has_more: false }) : response({ spaces: [] }), fleetReader: async () => [] });
+      ? response({ ok: true, messages: [warning, issueMessage()], has_more: false }) : response({ spaces: [], tasks: [] }), fleetReader: async () => [] });
   assert.equal(snapshot.workerIssues.length, 2);
   assert.ok(snapshot.workerIssues.some(issue => issue.severity === 'error' && /OAuth/.test(issue.message)));
 });

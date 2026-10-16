@@ -92,7 +92,7 @@ test('terminal backlog receipts without jobs do not freeze unrelated correction 
   assert.deepEqual((await readLocalSales(directory, now)).map(row => row.id), [`sales:${ts(0)}`]);
   const config = { clickup: { workspace_id: 'test' }, slack: { channel_id: 'test' }, hub: {} };
   const snapshot = await collectSnapshot({ now, config,
-    hubFetch: async () => ({ ok: true, status: 200, json: async () => ({ spaces: [] }) }),
+    hubFetch: async () => ({ ok: true, status: 200, json: async () => ({ spaces: [], tasks: [] }) }),
     claimReader: async () => [], fleetReader: async () => [], salesReader: time => readLocalSales(directory, time) });
   assert.equal(snapshot.source.lastSuccessAt, new Date(now).toISOString());
   assert.deepEqual(snapshot.tasks.map(row => row.id), [`sales:${ts(0)}`]);
@@ -118,7 +118,7 @@ test('a failed Sales read preserves the last full relay queue and cache', async 
   let saved = false;
   const result = await syncOnce({ cachedSource: source,
     collect: () => collectSnapshot({ now, config: { clickup: { workspace_id: 'test' }, slack: { channel_id: 'test' }, hub: {} },
-      hubFetch: async () => ({ ok: true, status: 200, json: async () => ({ spaces: [] }) }),
+      hubFetch: async () => ({ ok: true, status: 200, json: async () => ({ spaces: [], tasks: [] }) }),
       claimReader: async () => [], fleetReader: async () => [], salesReader: time => readLocalSales(directory, time) }),
     publish: snapshot => store.updateQueue('SALESTEST', snapshot), save: async () => { saved = true; } });
   assert.equal(result.ok, false);

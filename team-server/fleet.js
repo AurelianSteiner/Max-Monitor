@@ -22,6 +22,10 @@ const PREVIEW_ID = /^[a-f0-9]{64}$/;
 const MAX_PREVIEWS_PER_TASK = 24;
 const MAX_PREVIEW_BYTES = 2.5 * 1024 * 1024;
 const PREVIEW_ORPHAN_GRACE_MS = 60 * 60 * 1000;
+// Worker limits: occupied_tasks and per-kind places are bounded to 50; a
+// heartbeat counts as current for the same 180 s the workers use (ausgleich.js).
+const MAX_PLACES = 50;
+const LOAD_FRESH_MS = 180 * 1000;
 
 class FleetError extends Error {
   constructor(status, message) {
@@ -152,6 +156,31 @@ function integer(value, field, min, max) {
   return value;
 }
 
+// Same bounds as the worker heartbeat (hub-transport.js validPlaetze, occupied_tasks).
+function workerPlaces(value) {
+  if (value === undefined || value === null) return undefined;
+  object(value, "worker.places");
+  const kinds = ["newsletter", "klaviyo", "translation"];
+  if (Object.keys(value).some((kind) => ![...kinds, "korrektur"].includes(kind)) || kinds.some((kind) => !Object.hasOwn(value, kind)))
+    throw new FleetError(400, "worker.places ist ungültig");
+  return Object.fromEntries(Object.keys(value).sort().map((kind) => [kind, integer(value[kind], "worker.places", 0, MAX_PLACES)]));
+}
+
+// Used places against the Mac maximum. A fresh direct report (every 15 s) wins
+// over the Hub heartbeat (every 30–60 s); both carry the worker's own count.
+function machineLoad(machine, hub, time) {
+  const activity = machine.activity;
+  const maximum = (value) => Number.isInteger(value) ? value : undefined;
+  if (activity?.fresh && Number.isInteger(activity.occupiedTasks)) {
+    return optionalFields({ occupied: activity.occupiedTasks, max: maximum(activity.maxTasks) ?? maximum(hub?.maxTasks),
+      source: "agent", observedAt: activity.sampledAt, fresh: true });
+  }
+  if (!hub || !Number.isInteger(hub.occupiedTasks)) return undefined;
+  const age = time - Date.parse(hub.lastSeenAt);
+  return optionalFields({ occupied: hub.occupiedTasks, max: maximum(hub.maxTasks), source: "hub", observedAt: hub.lastSeenAt,
+    fresh: Number.isFinite(age) && age >= -5 * 60 * 1000 && age <= LOAD_FRESH_MS });
+}
+
 function previewList(value) {
   if (value === undefined || value === null) return undefined;
   if (!Array.isArray(value) || value.length > MAX_PREVIEWS_PER_TASK) throw new FleetError(400, "task.previews ist ungültig");
@@ -270,6 +299,10 @@ function validateQueue(body) {
         workerRevision: string(raw.workerRevision, "worker.workerRevision", 80, true),
         pendingClickup: raw.pendingClickup,
         acceptingTasks: boolean(raw.acceptingTasks, "worker.acceptingTasks"),
+        // The worker heartbeat's own admission count and maximum (all place holders).
+        occupiedTasks: raw.occupiedTasks === undefined ? undefined : integer(raw.occupiedTasks, "worker.occupiedTasks", 0, MAX_PLACES),
+        maxTasks: raw.maxTasks === undefined ? undefined : integer(raw.maxTasks, "worker.maxTasks", 0, MAX_PLACES),
+        places: workerPlaces(raw.places),
       });
     });
   }
@@ -851,6 +884,7 @@ function createFleetStore(dataDir, now = Date.now) {
     const successTime = Date.parse(source.lastSuccessAt || "");
     const stale = !Number.isFinite(successTime) || time - successTime > SILENT_AFTER_MS || successTime > time + 5 * 60 * 1000;
     const workers = new Map((state.observedWorkers || []).map((worker) => [worker.workerId, worker]));
+    const hubWorkers = new Map(workers);
     const links = linkedWorkers(state);
     const machines = state.machines.map((stored) => {
       const machine = withLinkedWorker(stored, links);
@@ -869,6 +903,9 @@ function createFleetStore(dataDir, now = Date.now) {
         workerRevision: worker.workerRevision,
         pendingClickup: worker.pendingClickup,
         acceptingTasks: worker.acceptingTasks,
+        occupiedTasks: worker.occupiedTasks,
+        maxTasks: worker.maxTasks,
+        places: worker.places,
       } : {}) };
     });
     for (const worker of workers.values()) {
@@ -894,6 +931,8 @@ function createFleetStore(dataDir, now = Date.now) {
         machine.workerLastSeenAt = report.sampledAt;
         machine.workerHeartbeatAgeSeconds = Math.max(0, (time - Date.parse(report.sampledAt)) / 1000);
       }
+      const load = machineLoad(machine, hubWorkers.get(machine.workerId), time);
+      if (load) machine.load = load;
     }
     const liveReports = (state.workerReports || []).filter(report => publicReport(report, time).activity?.fresh);
     const queueTasks = currentQueue(state, liveReports);

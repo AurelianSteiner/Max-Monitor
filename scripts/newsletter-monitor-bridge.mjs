@@ -2,6 +2,7 @@
 // Read-only source adapter; optional central maintenance deletes obsolete error copies.
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -31,12 +32,15 @@ const MAX_PREVIEWS_PER_TASK = 24;
 const PREVIEWS_PER_CYCLE = 40;
 const PREVIEW_RETENTION_MS = 7 * 86400000;
 
+// startStatuses: the ClickUp status that commissions this workflow (worker
+// src/workflow-status.js). Tags then only describe progress and history; a
+// waiting or running tag outside that status is no order.
 export const DEFAULT_WORKFLOWS = [
-  { id: 'newsletter', triggerTags: ['pre gen.'], claimWorkflow: 'newsletter', stateTags: {
+  { id: 'newsletter', triggerTags: ['pre gen.'], claimWorkflow: 'newsletter', startStatuses: ['pre-gen'], stateTags: {
     queued: ['pre gen · wartet', 'pre gen · pausiert'], running: ['pre gen · läuft'],
     blocked: ['pre gen · blockiert'], completed: ['pre gen · fertig'],
   } },
-  { id: 'upload', triggerTags: ['klaviyo upload'], claimWorkflow: 'klaviyo', stateTags: {
+  { id: 'upload', triggerTags: ['klaviyo upload'], claimWorkflow: 'klaviyo', startStatuses: ['klaviyo upload'], stateTags: {
     queued: ['klaviyo upload · wartet', 'klaviyo upload · pausiert'], running: ['klaviyo upload · läuft'],
     blocked: ['klaviyo upload · blockiert'], completed: ['klaviyo upload · fertig'],
   } },
@@ -65,6 +69,9 @@ export function validateWorkflows(value) {
     if (workflow.queueWorkflow !== undefined && !/^[a-z][a-z0-9-]{0,39}$/.test(workflow.queueWorkflow)) throw new Error(`Queue-Workflow ungültig: ${workflow.id}.`);
     if (workflow.titleSuffix !== undefined && (typeof workflow.titleSuffix !== 'string' || !/^[\p{L}\p{N} ]{1,20}$/u.test(workflow.titleSuffix))) throw new Error(`Titelzusatz ungültig: ${workflow.id}.`);
     if (!Array.isArray(workflow.triggerTags) || !workflow.triggerTags.length) throw new Error(`Start-Tags fehlen: ${workflow.id}.`);
+    if (workflow.startStatuses !== undefined && (!Array.isArray(workflow.startStatuses) || !workflow.startStatuses.length || workflow.startStatuses.length > 10
+      || workflow.startStatuses.some(status => typeof status !== 'string' || !normalizeStatus(status) || status.length > 60 || /[\u0000-\u001f\u007f]/.test(status))))
+      throw new Error(`Start-Status ungültig: ${workflow.id}.`);
     for (const [status, tags] of Object.entries(workflow.stateTags ?? {})) {
       if (!STATUSES.has(status) || !Array.isArray(tags)) throw new Error(`Status-Tags ungültig: ${workflow.id}.`);
     }
@@ -134,6 +141,101 @@ export async function listTasks(hubFetch, workspaceId, variants, { maxPages = 20
   throw new Error('ClickUp: Aufgabenliste unvollständig; bisherige Queue bleibt erhalten.');
 }
 
+// The worker's own order listing (src/clickup-source.js listTaggedTasksOnce):
+// every task in a start status is an order, whether or not a tag was written yet.
+export async function listStatusTasks(hubFetch, workspaceId, statuses, { maxPages = 200, pageSize = 100 } = {}) {
+  if (!statuses.length) return [];
+  const wanted = new Set(statuses.map(normalizeStatus));
+  const tasks = new Map();
+  for (let page = 0; page < maxPages; page += 1) {
+    const url = new URL(`https://api.clickup.com/api/v2/team/${encodeURIComponent(workspaceId)}/task`);
+    for (const [key, value] of Object.entries({ page, subtasks: true, include_closed: false })) url.searchParams.set(key, String(value));
+    for (const status of statuses) url.searchParams.append('statuses[]', status);
+    const result = await requestJson(hubFetch, url, 'ClickUp');
+    if (!Array.isArray(result.tasks)) throw new Error('ClickUp: Aufgabenliste fehlt.');
+    for (const task of result.tasks) {
+      if (!task || typeof task.id !== 'string' || !task.id || !Array.isArray(task.tags)) throw new Error('ClickUp: ungültige Aufgabe.');
+      if (wanted.has(normalizeStatus(taskStatus(task)))) tasks.set(task.id, task);
+    }
+    if (result.last_page === true || result.tasks.length < pageSize) return [...tasks.values()];
+  }
+  throw new Error('ClickUp: Statusliste unvollständig; bisherige Queue bleibt erhalten.');
+}
+
+// Status epochs exactly as the worker builds its job IDs (<id>@<since>): one
+// official batch per 100 tasks. A task whose status changed during the read
+// keeps no epoch until the next cycle; an unreadable batch fails the cycle.
+export async function readStatusEpochs(hubFetch, tasks, { groupSize = 100 } = {}) {
+  const epochs = new Map();
+  const record = (data, task) => {
+    const current = data?.current_status;
+    const since = current?.since ?? current?.total_time?.since;
+    if (normalizeStatus(current?.status) === normalizeStatus(taskStatus(task)) && /^\d+$/.test(String(since ?? ''))) epochs.set(task.id, String(since));
+  };
+  for (let offset = 0; offset < tasks.length; offset += groupSize) {
+    const group = tasks.slice(offset, offset + groupSize);
+    if (group.length === 1) {
+      record(await requestJson(hubFetch, `https://api.clickup.com/api/v2/task/${encodeURIComponent(group[0].id)}/time_in_status`, 'ClickUp'), group[0]);
+      continue;
+    }
+    const url = new URL('https://api.clickup.com/api/v2/task/bulk_time_in_status/task_ids');
+    for (const task of group) url.searchParams.append('task_ids', task.id);
+    const times = await requestJson(hubFetch, url, 'ClickUp');
+    for (const task of group) record(times[task.id], task);
+  }
+  return epochs;
+}
+
+// AI Newsletter Creation src/workflow-status.js: only these ClickUp statuses
+// commission work; progress tags never do. The worker lists exactly these.
+export const START_STATUSES = Object.freeze(['pre-gen', 'revision intern', 'revision extern', 'klaviyo upload']);
+const CORRECTION_STATUSES = Object.freeze({ 'revision intern': 'intern', 'revision extern': 'extern' });
+const CORRECTION_JOB = /^(?:korrektur-)?cu-([A-Za-z0-9_-]+)@(\d+)-(intern|extern)(?:-file-[a-f0-9]{31,32})?$/;
+const LIVE_CLAIM_STATES = new Set(['claiming', 'running']);
+
+export function normalizeStatus(value) {
+  return String(value ?? '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function taskStatus(task) {
+  return typeof task?.status === 'string' ? task.status : task?.status?.status;
+}
+
+// Job kind, ClickUp ID and status epoch of a worker job ID (src/jobs.js, compactTask).
+function jobIdentity(value) {
+  const jobId = String(value ?? '');
+  const correction = CORRECTION_JOB.exec(jobId);
+  const translation = /^(.+)-uebersetzung-(en|it|fr|se|sp)$/.exec(jobId);
+  const upload = /^(.+)-klaviyo$/.exec(jobId);
+  const base = correction?.[1] ?? translation?.[1] ?? upload?.[1] ?? jobId;
+  return { kind: correction ? 'correction' : translation ? 'translation' : upload ? 'klaviyo' : 'newsletter',
+    taskId: base.replace(/@\d+$/, ''), workflow: translation ? `translation-${translation[2]}` : undefined,
+    epoch: correction?.[2] ?? /@(\d+)$/.exec(base)?.[1] };
+}
+
+// Outcome, link and labels from the claim text the worker renders for both
+// Slack and the RS Hub register (src/slack-notifier.js claimText).
+function claimDetails(kind, state, paused, text, reactions) {
+  const link = /<([^|>]+)\|([^>]+)>/.exec(text.split('\n')[1] || '');
+  let url;
+  try { const candidate = new URL(link?.[1]); if (candidate.protocol === 'https:' && !candidate.username && !candidate.password && candidate.href.length <= 2000) url = candidate.href; } catch { /* Optional task link. */ }
+  // Completed corrections replace the parent text and need no separate reaction.
+  // Only the terminal label of this exact claim can confirm completion.
+  const terminalLine = text.split('\n')[1] || '';
+  const doneLabel = kind === 'correction' && state === 'final' && /^(?:✅|:white_check_mark:)\s*Fertig:/u.test(terminalLine);
+  return { doneLabel, ...claimOutcome(kind, state, paused, doneLabel, reactions),
+    url, company: kind === 'correction' ? displayText(text.split('\n')[0].replace(/^\*?Korrektur\s*·\s*/, '').replace(/[*`]/g, ''), 200) : undefined,
+    title: displayText((link?.[2] || text.split('\n')[0].replace(/[*`]/g, '')).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 300) };
+}
+
+function claimOutcome(kind, state, paused, doneLabel, reactions) {
+  return {
+    outcome: doneLabel || (['final', 'released'].includes(state) && reactions.includes('white_check_mark')) ? 'completed'
+      : paused && state === 'final' ? 'queued' : reactions.includes('x') ? 'blocked' : undefined,
+    awaitingPm: kind === 'correction' && state === 'final' && reactions.includes('question'),
+  };
+}
+
 export function parseClaim(message) {
   const kind = CLAIM_EVENTS[message?.metadata?.event_type];
   if (!kind) return null;
@@ -143,31 +245,113 @@ export function parseClaim(message) {
   if (!Number.isFinite(heartbeat) || heartbeat <= 0) return null;
   // Like the worker: event type and job ID must agree, or the claim belongs to no task.
   const jobId = String(value.task_id);
-  const correction = /^(?:korrektur-)?cu-([A-Za-z0-9_-]+)@\d+-(intern|extern)(?:-file-[a-f0-9]{31,32})?$/.exec(jobId);
-  const translation = /^(.+)-uebersetzung-(en|it|fr|se|sp)$/.exec(jobId);
-  const upload = /^(.+)-klaviyo$/.exec(jobId);
-  if (kind !== (correction ? 'correction' : translation ? 'translation' : upload ? 'klaviyo' : 'newsletter')) return null;
-  const text = String(message.text ?? '');
-  const link = /<([^|>]+)\|([^>]+)>/.exec(text.split('\n')[1] || '');
-  let url;
-  try { const candidate = new URL(link?.[1]); if (candidate.protocol === 'https:' && !candidate.username && !candidate.password && candidate.href.length <= 2000) url = candidate.href; } catch { /* Optional task link. */ }
+  const identity = jobIdentity(jobId);
+  if (kind !== identity.kind) return null;
   const reactions = (Array.isArray(message.reactions) ? message.reactions : []).map(item => item?.name);
-  // Completed corrections replace the parent text and need no separate reaction.
-  // Only the terminal label of this exact claim can confirm completion.
-  const terminalLine = text.split('\n')[1] || '';
-  const completed = kind === 'correction' && value.state === 'final' && /^(?:✅|:white_check_mark:)\s*Fertig:/u.test(terminalLine);
-  const awaitingPm = kind === 'correction' && value.state === 'final' && reactions.includes('question');
-  return { taskId: (correction?.[1] ?? translation?.[1] ?? upload?.[1] ?? jobId).replace(/@\d+$/, ''), jobId,
+  return { taskId: identity.taskId, jobId,
     runId: String(value.run_id), workerId: String(value.worker),
     state: value.state, heartbeat, completionTimestampKnown: Number.isFinite(Number(value.heartbeat)) && Number(value.heartbeat) > 0,
     ts: String(message.ts),
     ...(value.paused === true ? { paused: true, ...(value.portable === true ? { portable: true } : {}) } : {}),
-    workflow: typeof value.workflow === 'string' ? value.workflow : translation ? `translation-${translation[2]}` : kind,
-    outcome: completed || (['final', 'released'].includes(value.state) && reactions.includes('white_check_mark')) ? 'completed'
-      : value.paused === true && value.state === 'final' ? 'queued' : reactions.includes('x') ? 'blocked' : undefined,
-    awaitingPm,
-    url, company: kind === 'correction' ? displayText(text.split('\n')[0].replace(/^\*?Korrektur\s*·\s*/, '').replace(/[*`]/g, ''), 200) : undefined,
-    title: displayText((link?.[2] || text.split('\n')[0].replace(/[*`]/g, '')).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 300) };
+    workflow: typeof value.workflow === 'string' ? value.workflow : identity.workflow ?? kind,
+    reactions: reactions.filter(name => typeof name === 'string'),
+    ...claimDetails(kind, value.state, value.paused === true, String(message.text ?? ''), reactions) };
+}
+
+// One reservation of the RS Hub register (AI Newsletter Creation
+// src/hub-reservation-protocol.js). The workers admit and own work by exactly
+// these documents; Slack posts are their delayed delivery.
+export function parseRegisterClaim(doc) {
+  const id = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._@:-]{0,240}$/.test(value);
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc) || !id(doc.taskId) || !id(doc.runId)
+    || typeof doc.worker !== 'string' || !/^[a-z0-9][a-z0-9-]{1,40}$/.test(doc.worker) || !CLAIM_STATES.has(doc.state)
+    || typeof doc.ts !== 'string' || !/^\d+\.\d+$/.test(doc.ts)) return null;
+  const jobId = doc.taskId;
+  // Separate test orders and legacy Freigaben IDs are no monitor jobs (as in parseClaim).
+  if (/-klaviyo-pruefauftrag$/.test(jobId) || (/^korrektur-/.test(jobId) && !CORRECTION_JOB.test(jobId))) return null;
+  const heartbeat = Number(doc.heartbeat);
+  if (!Number.isFinite(heartbeat) || heartbeat <= 0) return null;
+  const identity = jobIdentity(jobId);
+  const reactions = Array.isArray(doc.reactions) ? doc.reactions.filter(name => typeof name === 'string') : [];
+  const paused = doc.paused === true;
+  return { taskId: identity.taskId, jobId, runId: doc.runId, workerId: doc.worker, state: doc.state,
+    // A heartbeat proves a live owner. The Hub renews it on every sync, also for
+    // terminal reservations, so it never dates a completion; a terminal one keeps
+    // its stable reservation time instead (row times bind operator decisions).
+    heartbeat: LIVE_CLAIM_STATES.has(doc.state) ? heartbeat : Number(doc.ts), completionTimestampKnown: false, ts: doc.ts,
+    threadTs: typeof doc.slackTs === 'string' && /^\d+\.\d+$/.test(doc.slackTs) ? doc.slackTs : null,
+    // Thread replies change with the Slack post, not with every Hub sync.
+    threadHeartbeat: null,
+    ...(paused ? { paused: true, ...(doc.portable === true ? { portable: true } : {}) } : {}),
+    workflow: identity.workflow ?? identity.kind, reactions, hub: true,
+    ...(typeof doc.channel === 'string' && /^C[A-Z0-9]{5,20}$/.test(doc.channel) ? { channelId: doc.channel } : {}),
+    ...claimDetails(identity.kind, doc.state, paused, String(doc.text ?? ''), reactions) };
+}
+
+// Same runtime directory as the worker transport's remote script:
+// HUB_RUNTIME_DIR from <hub>/.env, otherwise the Hub root itself.
+export function hubRuntimeDirectory(localHub, readFile = fsSync.readFileSync) {
+  let runtime = '';
+  try {
+    for (const line of String(readFile(path.join(localHub, '.env'), 'utf8')).split('\n')) {
+      const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
+      if (match?.[1] === 'HUB_RUNTIME_DIR') runtime = match[2].replace(/^['"]|['"]$/g, '');
+    }
+  } catch (error) { if (error.code !== 'ENOENT') throw new Error('RS-Hub-Konfiguration (.env) ist nicht lesbar.'); }
+  runtime ||= localHub;
+  if (!/^\/[A-Za-z0-9._/-]+$/.test(runtime) || runtime.split('/').includes('..')) throw new Error('HUB_RUNTIME_DIR des RS Hub ist kein sicherer absoluter Pfad.');
+  return runtime;
+}
+
+// Read-only view of the Hub reservation register. null: the Hub has not
+// switched to it (no register or no enabled marker); then Slack stays the source.
+export function readHubReservations(runtimeDir, { now = Date.now(), lookbackDays = 60,
+  openDatabase = file => new (require('node:sqlite').DatabaseSync)(file, { readOnly: true, timeout: 2000 }) } = {}) {
+  const root = path.join(runtimeDir, 'state', 'worker-reservations');
+  const file = path.join(root, 'claims.sqlite');
+  if (!fsSync.existsSync(path.join(root, 'enabled')) || !fsSync.existsSync(file)) return null;
+  const db = openDatabase(file);
+  try {
+    // Like the Slack history: terminal reservations within the lookback, live ones always.
+    const oldest = now / 1000 - lookbackDays * 86400;
+    const claims = [];
+    for (const row of db.prepare('SELECT doc FROM reservations').all()) {
+      let doc;
+      try { doc = JSON.parse(row.doc); } catch { continue; }
+      const claim = parseRegisterClaim(doc);
+      if (claim && (LIVE_CLAIM_STATES.has(claim.state) || Number(claim.ts) >= oldest)) claims.push(claim);
+    }
+    return claims;
+  } finally { db.close(); }
+}
+
+// The register decides ownership, state and pause exactly as for the workers.
+// Slack contributes only what the register cannot: the parent thread for
+// progress replies, its reactions and the time a terminal post was written.
+export function mergeHubClaims(slackClaims, hubClaims) {
+  if (!Array.isArray(hubClaims)) return slackClaims;
+  const posted = new Map();
+  for (const claim of slackClaims) {
+    const old = posted.get(claim.runId);
+    if (!old || compareSlackTs(claim.ts, old.ts) > 0) posted.set(claim.runId, claim);
+  }
+  const owned = new Set(hubClaims.map(claim => claim.runId));
+  const merged = slackClaims.filter(claim => !owned.has(claim.runId));
+  for (const hub of hubClaims) {
+    const slack = posted.get(hub.runId);
+    if (!slack) { merged.push(hub); continue; }
+    const live = LIVE_CLAIM_STATES.has(hub.state);
+    const settled = !live && !LIVE_CLAIM_STATES.has(slack.state);
+    const reactions = [...new Set([...(slack.reactions || []), ...hub.reactions])];
+    const kind = jobIdentity(hub.jobId).kind;
+    merged.push({ ...hub,
+      heartbeat: settled ? slack.heartbeat : hub.heartbeat,
+      completionTimestampKnown: settled && slack.completionTimestampKnown !== false,
+      threadTs: slack.ts, threadHeartbeat: slack.heartbeat, channelId: hub.channelId || slack.channelId, reactions,
+      url: hub.url || slack.url, title: hub.title || slack.title, company: hub.company ?? slack.company,
+      ...claimOutcome(kind, hub.state, hub.paused === true, hub.doneLabel || (slack.doneLabel && !live), reactions) });
+  }
+  return merged;
 }
 
 export async function listClaims(hubFetch, channelId, { now = Date.now(), maxPages = 100, lookbackDays = 60, oldest, onMessage = () => {} } = {}) {
@@ -431,20 +615,37 @@ function languagePackage(task, tasks, workflow) {
   return { packageId: sources.length === 1 ? sources[0].id : task.id, language };
 }
 
+function taskUrl(task) {
+  try {
+    const candidate = new URL(task.url);
+    if (candidate.protocol === 'https:' && !candidate.username && !candidate.password && String(task.url).length <= 2000) return candidate.href;
+  } catch { /* Use the canonical ClickUp task link. */ }
+  return `https://app.clickup.com/t/${encodeURIComponent(task.id)}`;
+}
+
+// tasks may carry statusSince (the worker's status epoch, readStatusEpochs).
 export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, figmaBoardUrl } = {}) {
   const updatedAt = new Date(now).toISOString();
   const rows = [];
   for (const task of tasks) {
     const tags = task.tags.map(tag => typeof tag === 'string' ? tag : String(tag?.name ?? ''));
+    const sourceStatus = normalizeStatus(taskStatus(task));
     for (const workflow of workflows) {
-      if (!workflowMatches(workflow, tags)) continue;
+      const starts = (workflow.startStatuses ?? []).map(normalizeStatus);
+      // Like the worker: the start status is the order, a tag never is.
+      const ordered = starts.includes(sourceStatus);
+      if (!ordered && !workflowMatches(workflow, tags)) continue;
       const normalized = new Set(tags.map(normalizeTag));
       let status = 'queued';
       for (const name of ['queued', 'running', 'failed', 'blocked', 'completed']) {
         if ((workflow.stateTags?.[name] ?? []).some(tag => normalized.has(normalizeTag(tag)))) status = name;
       }
       if ((workflow.claimWorkflow ?? workflow.id) === 'klaviyo' && normalized.has(normalizeTag('manuell')) && status !== 'completed') continue;
-      const matches = claims.filter(claim => claim.taskId === task.id && claim.workflow === (workflow.claimWorkflow ?? workflow.id));
+      // In its start status only reservations of the current order (same epoch as
+      // the worker's job ID) describe it; a live older attempt still holds its place.
+      const matches = claims.filter(claim => claim.taskId === task.id && claim.workflow === (workflow.claimWorkflow ?? workflow.id)
+        && !(ordered && task.statusSince && !LIVE_CLAIM_STATES.has(claim.state)
+          && jobIdentity(claim.jobId).epoch && jobIdentity(claim.jobId).epoch !== String(task.statusSince)));
       const claim = selectCurrentClaim(matches, now, staleMinutes);
       const active = claim && ['claiming', 'running'].includes(claim.state) ? [claim] : [];
       const fresh = active.find(claim => now - claim.heartbeat * 1000 <= staleMinutes * 60000);
@@ -460,11 +661,14 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       if (!['completed', 'blocked', 'failed'].includes(status) && claim?.outcome !== 'completed' && claim?.paused === true && ['claiming', 'running'].includes(claim.state)) { status = 'queued'; phase = 'Pausiert · wartet außerhalb der Worker-Plätze'; }
       if (!['completed', 'blocked', 'failed'].includes(status) && claim?.outcome !== 'completed' && claim?.paused && claim.portable) { status='queued'; phase='Wartet · Fortsetzung in der zentralen Queue'; }
       if (status === 'blocked' && !phase) phase = 'Blockiert';
-      let url = `https://app.clickup.com/t/${encodeURIComponent(task.id)}`;
-      try {
-        const candidate = new URL(task.url);
-        if (candidate.protocol === 'https:' && !candidate.username && !candidate.password && String(task.url).length <= 2000) url = candidate.href;
-      } catch { /* Use the canonical ClickUp task link. */ }
+      // Waiting or running without a reservation is an order only in the start
+      // status, and never for a task the worker parks as manual. Blocked and
+      // completed history stays; downstream Pre-Gen statuses complete it below.
+      const backed = Boolean(claim) && claim.outcome !== 'completed' && (LIVE_CLAIM_STATES.has(claim.state) || claim.paused === true);
+      if (starts.length && ['queued', 'running'].includes(status) && !backed
+        && ((!ordered && !taskState.preGenFinished({ workflow: workflow.queueWorkflow ?? workflow.id, sourceStatus: taskStatus(task) }))
+          || (ordered && normalized.has(normalizeTag('manuell'))))) continue;
+      const url = taskUrl(task);
       const name = displayText(task.name, 300, task.id);
       const title = workflow.titleSuffix ? `${displayText(name, 300 - workflow.titleSuffix.length - 3)} · ${workflow.titleSuffix}` : name;
       const evidence = status === 'completed' ? completionEvidence(matches) : {};
@@ -479,7 +683,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         workerId: claim?.paused && claim.portable ? undefined : claim?.workerId, attemptId: claim?.runId, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
         updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30),
         // Internal only: addRunDetails reads progress and renders of this attempt, then removes it.
-        run: claim ? { id: claim.runId, jobId: claim.jobId, ts: claim.ts, taskId: task.id, channelId: claim.channelId, heartbeat: claim.heartbeat } : undefined });
+        run: claim ? { id: claim.runId, jobId: claim.jobId, ts: threadOf(claim), taskId: task.id, channelId: claim.channelId, heartbeat: threadBeat(claim) } : undefined });
     }
   }
   // Revisions come from the approval workflow. They can run while the old
@@ -506,9 +710,49 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId,
       phase, progress: status === 'completed' ? 100 : undefined, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
       ...completionEvidence([claim]),
-      run: { id: claim.runId, jobId: claim.jobId, ts: claim.ts, taskId: claim.taskId, channelId: claim.channelId, heartbeat: claim.heartbeat } });
+      run: { id: claim.runId, jobId: claim.jobId, ts: threadOf(claim), taskId: claim.taskId, channelId: claim.channelId, heartbeat: threadBeat(claim) } });
   }
+  rows.push(...waitingCorrections(tasks, rows, updatedAt));
   return rows.map(taskState.reconcileTask).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// Slack parent of a reservation; a register-only reservation may have none yet.
+function threadOf(claim) {
+  return claim.threadTs === undefined ? claim.ts : claim.threadTs;
+}
+
+// Re-read key of that thread (readRunStatuses): the Slack post's heartbeat. The
+// register renews its own on every worker sync, which would re-read every cycle.
+function threadBeat(claim) {
+  return claim.threadHeartbeat === undefined ? claim.heartbeat : claim.threadHeartbeat;
+}
+
+// A task in revision intern/extern is a correction order like in the worker,
+// with its job ID korrektur-cu-<id>@<since>-<origin>. A reservation of that
+// exact order (also per file) shows it; older rounds never hide a new one.
+function waitingCorrections(tasks, rows, updatedAt) {
+  const attempts = rows.filter(row => row.workflow === 'correction' && row.run).map(row => ({ row, job: CORRECTION_JOB.exec(row.run.jobId) })).filter(entry => entry.job);
+  const waiting = [];
+  for (const task of tasks) {
+    const origin = CORRECTION_STATUSES[normalizeStatus(taskStatus(task))];
+    if (!origin) continue;
+    const tags = task.tags.map(tag => typeof tag === 'string' ? tag : String(tag?.name ?? ''));
+    const normalized = new Set(tags.map(normalizeTag));
+    // The worker parks manual tasks (clickup-source.js); nobody will reserve them.
+    if (normalized.has(normalizeTag('manuell'))) continue;
+    const since = task.statusSince ? String(task.statusSince) : undefined;
+    // Without an epoch only an unfinished attempt of the same origin covers the task.
+    if (attempts.some(({ row, job }) => job[1] === task.id && job[3] === origin && (since ? job[2] === since : row.status !== 'completed'))) continue;
+    const has = name => normalized.has(normalizeTag(name));
+    const [status, phase] = has('revision · blockiert') ? ['blocked', 'Korrektur blockiert']
+      : has('revision · rückfrage slack') ? ['queued', 'Wartet · PM-Rückfrage']
+        : has('revision · läuft') ? ['running', 'Läuft laut ClickUp; Worker-Zuordnung fehlt'] : ['queued', undefined];
+    waiting.push({ id: `correction:korrektur-cu-${task.id}${since ? `@${since}` : ''}-${origin}`, title: displayText(task.name, 300, task.id),
+      url: taskUrl(task), workflow: 'correction', status, phase,
+      sourceStatus: displayText(taskStatus(task), 120), company: task.folder?.hidden ? undefined : displayText(task.folder?.name, 200),
+      updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30) });
+  }
+  return waiting;
 }
 
 // AI Newsletter Creation src/slack-notifier.js statusText(): the worker posts one
@@ -721,7 +965,22 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
   return rows;
 }
 
-export function parseObservedWorkers(values) {
+const placeCount = value => Number.isInteger(value) && value >= 0 && value <= 50 ? value : undefined;
+
+// Places per kind exactly as the worker heartbeat bounds them (hub-transport.js validPlaetze).
+function parsePlaces(value) {
+  const kinds = ['newsletter', 'klaviyo', 'translation'];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).some(kind => ![...kinds, 'korrektur'].includes(kind))
+    || [...kinds, ...(Object.hasOwn(value, 'korrektur') ? ['korrektur'] : [])].some(kind => placeCount(value[kind]) === undefined)) return undefined;
+  return Object.fromEntries(Object.keys(value).sort().map(kind => [kind, value[kind]]));
+}
+
+// occupied_tasks is the worker's own admission count (src/mac-capacity.js: runs
+// of both workspaces, Sales receipts, browser jobs, previews, transfers; paused
+// work excluded). max_tasks is its own maximum; until a worker sends it, the
+// worker table of the installed source (maxTasksOf) supplies the same value.
+export function parseObservedWorkers(values, { maxTasksOf } = {}) {
   if (!Array.isArray(values)) throw new Error('Hub: Worker-Liste ungültig.');
   const byId = new Map();
   for (const value of values) {
@@ -730,12 +989,19 @@ export function parseObservedWorkers(values) {
       workerVersion: displayText(value.worker_version, 80), workerRevision: displayText(value.worker_revision, 80),
       pendingClickup: Number.isInteger(value.pending_clickup) && value.pending_clickup >= 0 && value.pending_clickup <= 100000 ? value.pending_clickup : undefined };
     if (typeof value.annahme === 'boolean') worker.acceptingTasks = value.annahme;
+    const occupied = placeCount(value.occupied_tasks);
+    let maximum = placeCount(value.max_tasks);
+    if (maximum === undefined && typeof maxTasksOf === 'function') { try { maximum = placeCount(maxTasksOf(value.worker_id)); } catch { /* No table, no maximum. */ } }
+    const places = parsePlaces(value.plaetze);
+    if (occupied !== undefined) worker.occupiedTasks = occupied;
+    if (maximum !== undefined) worker.maxTasks = maximum;
+    if (places) worker.places = places;
     if (!byId.has(worker.workerId) || Date.parse(worker.lastSeenAt) > Date.parse(byId.get(worker.workerId).lastSeenAt)) byId.set(worker.workerId, worker);
   }
   return [...byId.values()];
 }
 
-export async function readHubFleet(hub, { spawnImpl = spawn, fleetDirectory = path.join(hub.hub_dir, 'logs', 'ai-newsletter-fleet') } = {}) {
+export async function readHubFleet(hub, { spawnImpl = spawn, fleetDirectory = path.join(hub.hub_dir, 'logs', 'ai-newsletter-fleet'), maxTasksOf } = {}) {
   if (!/^[A-Za-z0-9_.@:-]+$/.test(hub.ssh_host) || !/^\/[A-Za-z0-9._/-]+$/.test(fleetDirectory)) throw new Error('Hub: SSH-Konfiguration ungültig.');
   const expand = value => value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
   const args = ['-i', expand(hub.identity_file), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
@@ -746,7 +1012,7 @@ export async function readHubFleet(hub, { spawnImpl = spawn, fleetDirectory = pa
   const program = `const fs=require('fs'),path=require('path');const dir=${JSON.stringify(fleetDirectory)};const rows=[];
     for(const name of fs.readdirSync(dir)){if(!/^[a-z0-9][a-z0-9._-]{0,79}\\.json$/i.test(name))continue;
       const file=path.join(dir,name),stat=fs.lstatSync(file);if(!stat.isFile()||stat.size>16384)continue;
-      try{const v=JSON.parse(fs.readFileSync(file,'utf8'));rows.push({worker_id:v.worker_id,seen_at:v.seen_at,worker_version:v.worker_version,worker_revision:v.worker_revision,pending_clickup:v.pending_clickup});}catch{}}
+      try{const v=JSON.parse(fs.readFileSync(file,'utf8'));rows.push({worker_id:v.worker_id,seen_at:v.seen_at,worker_version:v.worker_version,worker_revision:v.worker_revision,pending_clickup:v.pending_clickup,annahme:v.annahme,occupied_tasks:v.occupied_tasks,max_tasks:v.max_tasks,plaetze:v.plaetze});}catch{}}
     process.stdout.write(JSON.stringify(rows));`;
   const output = await new Promise((resolve, reject) => {
     const child = spawnImpl('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -760,10 +1026,10 @@ export async function readHubFleet(hub, { spawnImpl = spawn, fleetDirectory = pa
     child.stdin.on('error', () => {});
     child.stdin.end(program);
   });
-  return parseObservedWorkers(JSON.parse(output));
+  return parseObservedWorkers(JSON.parse(output), { maxTasksOf });
 }
 
-export async function readLocalHubFleet(hub, { fleetDirectory = path.join(hub.hub_dir, 'logs', 'ai-newsletter-fleet') } = {}) {
+export async function readLocalHubFleet(hub, { fleetDirectory = path.join(hub.hub_dir, 'logs', 'ai-newsletter-fleet'), maxTasksOf } = {}) {
   const names = await fs.readdir(fleetDirectory);
   if (names.length > 5000) throw new Error('Hub: zu viele Worker-Dateien.');
   const rows = [];
@@ -774,7 +1040,7 @@ export async function readLocalHubFleet(hub, { fleetDirectory = path.join(hub.hu
     if (!stat.isFile() || stat.size > 16384) continue;
     try { rows.push(JSON.parse(await fs.readFile(file, 'utf8'))); } catch { /* A broken worker file must not hide the others. */ }
   }
-  return parseObservedWorkers(rows);
+  return parseObservedWorkers(rows, { maxTasksOf });
 }
 
 export async function readLocalSales(directory, now = Date.now()) {
@@ -890,7 +1156,7 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
   return rows;
 }
 
-export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, checkpointReader, claimReader = listClaims, statusCache, now = Date.now() }) {
+export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, checkpointReader, reservationReader, maxTasksOf, claimReader = listClaims, statusCache, now = Date.now() }) {
   validateWorkflows(workflows);
   const issues = new Map();
   const onMessage = message => {
@@ -901,10 +1167,18 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   };
   const errorChannel = config.monitor_channels?.errors || (config.fehler?.enabled ? config.fehler.channel_id : undefined);
   const errorMessages = [];
-  const [taskResult, claimResult, workerResult, issueResult, salesResult, questionResult, checkpointResult] = await Promise.allSettled([
+  const statuses = [...new Set([...workflows.flatMap(workflow => workflow.startStatuses ?? []), ...Object.keys(CORRECTION_STATUSES)].map(normalizeStatus))];
+  const [taskResult, claimResult, workerResult, issueResult, salesResult, questionResult, checkpointResult, reservationResult] = await Promise.allSettled([
     (async () => {
       const variants = await discoverTags(hubFetch, config.clickup.workspace_id, workflows);
-      return { variants, tasks: await listTasks(hubFetch, config.clickup.workspace_id, variants) };
+      // Tags keep completed and blocked history visible; the start statuses are
+      // the orders, read and dated exactly as the worker does.
+      const tagged = await listTasks(hubFetch, config.clickup.workspace_id, variants);
+      const started = await listStatusTasks(hubFetch, config.clickup.workspace_id, statuses);
+      const epochs = await readStatusEpochs(hubFetch, started);
+      const byId = new Map(tagged.map(task => [task.id, task]));
+      for (const task of started) byId.set(task.id, { ...task, ...(epochs.has(task.id) ? { statusSince: epochs.get(task.id) } : {}) });
+      return { variants, started: started.length, tasks: [...byId.values()] };
     })(),
     (async () => {
       const claims = [];
@@ -922,7 +1196,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
       }
       return claims;
     })(),
-    Promise.resolve().then(() => fleetReader(config.hub, fleetDirectory ? { fleetDirectory } : {})),
+    Promise.resolve().then(() => fleetReader(config.hub, { ...(fleetDirectory ? { fleetDirectory } : {}), ...(maxTasksOf ? { maxTasksOf } : {}) })),
     // Deletions and edits must reach the next snapshot too. An incremental
     // read only sees newer messages and can retain resolved worker errors.
     errorChannel ? claimReader(hubFetch, errorChannel, { now, lookbackDays: null, refresh: true,
@@ -930,6 +1204,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
     Promise.resolve().then(() => salesReader ? salesReader(now) : []),
     Promise.resolve().then(() => questionReader ? questionReader() : { sets: [], jobs: [] }),
     Promise.resolve().then(() => checkpointReader ? checkpointReader() : []),
+    Promise.resolve().then(() => reservationReader ? reservationReader(now) : null),
   ]);
   // Clear resolved notices only after every configured warning channel was read completely.
   const workerIssues = claimResult.status === 'fulfilled' && issueResult.status === 'fulfilled' ? [...issues.values()] : undefined;
@@ -939,8 +1214,13 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
       name: SOURCE_NAME, error: displayText(error.message, 300, 'Quellenabfrage fehlgeschlagen.'),
     } };
   }
-  const { variants, tasks } = taskResult.value;
-  const claims = claimResult.value;
+  const { variants, started, tasks } = taskResult.value;
+  // The RS Hub register owns reservations like for the workers. If it cannot be
+  // read, Slack's copy keeps the queue visible and the source says so.
+  const register = reservationResult.status === 'fulfilled' ? reservationResult.value : null;
+  const claims = mergeHubClaims(claimResult.value, register);
+  const registerDetail = reservationResult.status === 'rejected' ? 'RS-Hub-Reservierungsregister nicht lesbar; Reservierungen aus Slack'
+    : register ? 'Reservierungen laut RS-Hub-Register' : undefined;
   const observedWorkers = workerResult.status === 'fulfilled' ? workerResult.value : undefined;
   const fleetDetail = workerResult.status === 'rejected'
     ? 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.' : undefined;
@@ -959,7 +1239,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const blockedErrors = errorChannel ? buildBlockedErrors(errorMessages, errorChannel, queue, { manualUploadIds }) : undefined;
   return { tasks: queue, ...(blockedErrors === undefined ? {} : { blockedErrors }), workerIssues, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
     name: SOURCE_NAME, lastSuccessAt: new Date(now).toISOString(),
-    detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${claims.length} Reservierungen${blockedErrors ? ` · ${blockedErrors.length} offen in #ai-fehler` : ''}${fleetDetail ? ` · ${fleetDetail}` : ''}`,
+    detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${started} im Startstatus · ${claims.length} Reservierungen${registerDetail ? ` · ${registerDetail}` : ''}${blockedErrors ? ` · ${blockedErrors.length} offen in #ai-fehler` : ''}${fleetDetail ? ` · ${fleetDetail}` : ''}`,
   } };
 }
 
@@ -1062,7 +1342,8 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   if (!options.workerRoot) throw new Error('NEWSLETTER_WORKER_ROOT oder --worker-root fehlt.');
   if (!options.dryRun) { relayEndpoint(options.relayUrl, options.teamId); if (!options.token) throw new Error('MONITOR_BRIDGE_TOKEN fehlt.'); }
   const root = path.resolve(options.workerRoot);
-  const { loadConfig } = require(path.join(root, 'src', 'config.js'));
+  // The worker's own Mac table (AGENTS.md) is the only source of a fallback maximum.
+  const { loadConfig, maxTasksPerMac } = require(path.join(root, 'src', 'config.js'));
   const transport = require(path.join(root, 'src', 'hub-transport.js'));
   const config = loadConfig(path.join(root, 'config', 'worker.local.json'), { root });
   try { config.monitor_channels = JSON.parse(await fs.readFile(path.join(root, 'config', 'monitor-channels.json'), 'utf8')); }
@@ -1118,7 +1399,9 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
         }
         const readsBefore = { ...claimReader.stats };
         const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, statusCache, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
-          previews, previousTasks: cached?.tasks, ...(options.localHub ? { fleetReader: readLocalHubFleet,
+          previews, previousTasks: cached?.tasks, ...(typeof maxTasksPerMac === 'function' ? { maxTasksOf: maxTasksPerMac } : {}),
+          ...(options.localHub ? { fleetReader: readLocalHubFleet,
+            reservationReader: time => readHubReservations(hubRuntimeDirectory(options.localHub), { now: time, lookbackDays: Number(config.claims?.lookback_days) || 60 }),
             salesReader: time => readLocalSales(path.join(options.localHub, 'sales-newsletter'), time),
             questionReader: () => readPmQuestions(path.join(options.localHub, '..', 'rs-pm-question-pilot', 'state.sqlite')),
             checkpointReader: () => readStoredCheckpoints(options.localHub) } : {}) }), cachedSource: cached?.source,
