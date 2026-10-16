@@ -244,3 +244,38 @@ test('the register is read from the Hub runtime directory of the transport', () 
   assert.equal(hubRuntimeDirectory('/opt/rs-hub', () => 'X=1\nHUB_RUNTIME_DIR="/var/lib/rs-hub"\n'), '/var/lib/rs-hub');
   assert.throws(() => hubRuntimeDirectory('/opt/rs-hub', () => 'HUB_RUNTIME_DIR=../escape'), /sicherer absoluter Pfad/);
 });
+
+// F29 (Till 16.10.2026): a centrally saved pause of an older epoch no longer describes the new order.
+test('an older-epoch central pause of an absent Mac is not shown as the new order; a Mac-bound pause still blocks it', async () => {
+  const order = task('N', 'pre-gen', ['pre gen · wartet'], { statusSince: since });
+  const oldRun = '20261010T080000Z-old';
+  const old = extra => slackClaim('ai_newsletter_claim', 'N@1791000000000', { run_id: oldRun, heartbeat: now / 1000 - 86400, paused: true, ...extra });
+  let [row] = buildQueue([order], [old({ portable: true })], DEFAULT_WORKFLOWS, { now });
+  assert.deepEqual([row.status, row.workerId, row.attemptId], ['queued', undefined, undefined]);
+  assert.notEqual(row.phase, 'Worker meldet sich nicht mehr');
+  // Bound to its Mac, the paused older attempt still blocks the order in the worker.
+  [row] = buildQueue([order], [old({})], DEFAULT_WORKFLOWS, { now });
+  assert.deepEqual([row.status, row.phase, row.attemptId], ['blocked', 'Worker meldet sich nicht mehr', oldRun]);
+  // A live, not paused older attempt still holds its place.
+  [row] = buildQueue([order], [slackClaim('ai_newsletter_claim', 'N@1791000000000', { run_id: oldRun })], DEFAULT_WORKFLOWS, { now });
+  assert.deepEqual([row.status, row.attemptId], ['running', oldRun]);
+  // The current order's own reservation wins.
+  const current = slackClaim('ai_newsletter_claim', `N@${since}`, { run_id: '20261016T085800Z-new', worker: 'macbook-2' }, { ts: '1792130300.000100' });
+  [row] = buildQueue([order], [old({ portable: true }), current], DEFAULT_WORKFLOWS, { now });
+  assert.deepEqual([row.status, row.workerId, row.attemptId], ['running', 'macbook-2', '20261016T085800Z-new']);
+  // Through the Hub snapshot the old run's stored checkpoint never relabels the new order.
+  const hubFetch = async target => {
+    const url = new URL(target);
+    if (url.hostname === 'slack.com') return response({ ok: true, messages: [], has_more: false });
+    if (url.pathname.endsWith('/space')) return response({ spaces: [] });
+    if (url.pathname.endsWith('/task')) return response({ tasks: [task('N', 'pre-gen', ['pre gen · wartet'])], last_page: true });
+    return response({ current_status: { status: 'pre-gen', since } });
+  };
+  const config = { clickup: { workspace_id: '24553341' }, slack: { channel_id: 'C0C6NMMGGJV' }, hub: {} };
+  const snapshot = await collectSnapshot({ now, config, hubFetch, fleetReader: async () => [],
+    reservationReader: () => [{ ...old({ portable: true }), hub: true }],
+    checkpointReader: async () => [{ run_id: oldRun, task_id: 'N@1791000000000', producer: 'macbook-1', owner: null, ready_at: now - 1000 }] });
+  const [hubRow] = snapshot.tasks;
+  assert.deepEqual([hubRow.id, hubRow.status, hubRow.attemptId, hubRow.workerId], ['clickup:newsletter:N', 'queued', undefined, undefined]);
+  assert.doesNotMatch(hubRow.phase || '', /Fortsetzung im RS Hub gesichert/);
+});

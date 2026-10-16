@@ -642,9 +642,11 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       }
       if ((workflow.claimWorkflow ?? workflow.id) === 'klaviyo' && normalized.has(normalizeTag('manuell')) && status !== 'completed') continue;
       // In its start status only reservations of the current order (same epoch as
-      // the worker's job ID) describe it; a live older attempt still holds its place.
+      // the worker's job ID) describe it. A live older attempt still holds its place
+      // and a paused one bound to its Mac still blocks the order; a centrally saved
+      // (portable) pause of an older epoch no longer describes it (F29, Till 16.10.2026).
       const matches = claims.filter(claim => claim.taskId === task.id && claim.workflow === (workflow.claimWorkflow ?? workflow.id)
-        && !(ordered && task.statusSince && !LIVE_CLAIM_STATES.has(claim.state)
+        && !(ordered && task.statusSince && (!LIVE_CLAIM_STATES.has(claim.state) || (claim.paused && claim.portable))
           && jobIdentity(claim.jobId).epoch && jobIdentity(claim.jobId).epoch !== String(task.statusSince)));
       const claim = selectCurrentClaim(matches, now, staleMinutes);
       const active = claim && ['claiming', 'running'].includes(claim.state) ? [claim] : [];
