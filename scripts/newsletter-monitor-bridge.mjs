@@ -923,7 +923,9 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
       return claims;
     })(),
     Promise.resolve().then(() => fleetReader(config.hub, fleetDirectory ? { fleetDirectory } : {})),
-    errorChannel ? claimReader(hubFetch, errorChannel, { now, lookbackDays: null, incremental: true,
+    // Deletions and edits must reach the next snapshot too. An incremental
+    // read only sees newer messages and can retain resolved worker errors.
+    errorChannel ? claimReader(hubFetch, errorChannel, { now, lookbackDays: null, refresh: true,
       onMessage: message => { errorMessages.push(message); onMessage(message); } }) : Promise.resolve(),
     Promise.resolve().then(() => salesReader ? salesReader(now) : []),
     Promise.resolve().then(() => questionReader ? questionReader() : { sets: [], jobs: [] }),

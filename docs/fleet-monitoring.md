@@ -509,11 +509,13 @@ ein laufender Wiederholungsversuch wird zusätzlich als laufend angezeigt.
 Alte ClickUp-Blockiert-Tags und abgebrochene Tests erzeugen keine zusätzlichen
 offenen Fehler. Die ursprünglichen Quelldaten und die Ereignishistorie bleiben erhalten.
 
-Die Bridge liest den Fehlerkanal alle 30 Minuten vollständig ohne Altersgrenze,
-einschließlich aller Seiten; dazwischen liest sie nur Meldungen, die neuer sind
-als die neueste bekannte. Nach der Behebung entfernt der Worker seine
-Fehlermeldung aus Slack; der nächste vollständige Abgleich (spätestens nach 30
-Minuten, nach einer eigenen Bereinigung sofort) entfernt sie aus Max Monitor.
+Die Bridge liest den Fehlerkanal in jedem regulären Abgleich vollständig ohne
+Altersgrenze, einschließlich aller Seiten. Nach der Behebung oder dem Ende
+einer aktiven Zugangssperre entfernt der Worker seine Fehlermeldung aus Slack;
+der nächste erfolgreiche Abgleich entfernt sie auch aus Max Monitor. So bleiben
+Löschungen und Änderungen älterer Meldungen nicht im Cache stehen. Die
+Reservierungskanäle behalten ihren bisherigen Cache; unvollständige oder
+fehlgeschlagene Abfragen bestätigen keine Behebung.
 Die zentrale Bereinigung entfernt eine Fehlerkopie nur, wenn die Aufgabe wieder
 läuft oder abgeschlossen ist. Bei pausierten, wartenden, markierten Aufgaben und
 offener PM-Rückfrage bleibt die Kopie stehen (`still-open`). Antwortet Slack beim

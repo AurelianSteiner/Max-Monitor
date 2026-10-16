@@ -527,6 +527,36 @@ test('complete Slack warning scans clear resolved issues; partial scans preserve
   assert.deepEqual((await collect()).workerIssues, []);
 });
 
+test('the next warm-cache snapshot removes deleted worker errors while preserving current errors', async () => {
+  const config = { clickup: { workspace_id: 'test' }, slack: { channel_id: 'status' },
+    fehler: { enabled: true, channel_id: 'errors' }, hub: {} };
+  const resolved = issueMessage();
+  const active = issueMessage({ ts: '1791374100.001', metadata: { event_type: 'ai_newsletter_fehler',
+    event_payload: { kind: 'update', worker: 'mac-2', sha: 'a'.repeat(40) } } });
+  let messages = [resolved, active];
+  const errorReads = [];
+  const claimReader = createClaimReader();
+  const hubFetch = async target => {
+    const url = new URL(target);
+    if (url.hostname !== 'slack.com') return response({ spaces: [] });
+    if (url.searchParams.get('channel') !== 'errors') return response({ ok: true, messages: [], has_more: false });
+    const oldest = url.searchParams.get('oldest');
+    errorReads.push(oldest);
+    return response({ ok: true, messages: messages.filter(message => !oldest || Number(message.ts) > Number(oldest)), has_more: false });
+  };
+  const collect = at => collectSnapshot({ config, now: at, fleetReader: async () => [], hubFetch, claimReader });
+  assert.equal((await collect(now)).workerIssues.length, 2);
+  messages = [active];
+  const second = await collect(now + 60000);
+  assert.deepEqual(second.workerIssues.map(issue => issue.workerId), ['mac-2']);
+  assert.equal(second.blockedErrors.length, 1, 'the error inventory agrees with the worker status');
+  messages = [];
+  const third = await collect(now + 120000);
+  assert.deepEqual(third.workerIssues, []);
+  assert.deepEqual(third.blockedErrors, []);
+  assert.deepEqual(errorReads, [null, null, null], 'each cycle confirms the complete current inventory');
+});
+
 test('a newer token-expiry warning cannot hide an existing Claude outage', async () => {
   const warning = issueMessage({ ts: '1791374100.001', text: ':hourglass: Der Claude-Token läuft in 12 Tagen ab' });
   const snapshot = await collectSnapshot({ now, config: { clickup: { workspace_id: 'test' }, slack: { channel_id: 'test' }, hub: {} },
