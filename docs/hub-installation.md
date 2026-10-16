@@ -60,9 +60,13 @@ Adresse. `--team-id`, `--port` und `--server-url` erlauben eine gezielte Anpassu
 `main` des Workers). Benötigt werden `src/config.js`, `src/hub-transport.js` und
 `src/pre-gen.js` samt allen Dateien, die sie über relative `require('./…')`
 laden, auch innerhalb von Funktionen (auf `main` vom 15.10.2026 15 Dateien, u. a.
-`read-coalescer.js`, `filestage-rate-limit.js` und `slack-rate-limit.js`). Der
-Installer kopiert genau diese Dateien und bricht vor jeder Änderung ab, wenn
-eine davon fehlt oder außerhalb von `--worker-root` liegt. Er erzeugt eine
+`read-coalescer.js`, `filestage-rate-limit.js` und `slack-rate-limit.js`). Hat der
+Quellcode die Annahmeregeln des Workers (`src/upload-policy.js`,
+`src/test-workspace.js`, `src/slack-kanaele.js`, `config/workflow-cutover.json`),
+kopiert der Installer auch diese samt ihren `require`s; die Queue zeigt dann nur
+Aufträge, die der Worker annimmt. Ohne sie parkt die Queue wie bisher nur Aufgaben mit
+dem Tag `manuell`. Der Installer kopiert genau diese Dateien und bricht vor jeder
+Änderung ab, wenn eine davon fehlt oder außerhalb von `--worker-root` liegt. Er erzeugt eine
 eigene minimale Monitor-Konfiguration mit `/usr/bin/false` als Claude-Binary;
 er kopiert keine lokale Mac-Konfiguration und startet keinen Newsletter-Worker.
 
