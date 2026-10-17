@@ -504,7 +504,12 @@ Passen Event und Kennung nicht zusammen, wird die Reservierung wie im Worker
 ignoriert. Eine frische Reservierung im Zustand `claiming` erscheint als
 „Reserviert“ und zählt beim Mac bereits als angenommene Aufgabe.
 Aktive Reservierungen werden nach der im Worker konfigurierten Stale-Frist
-(Standard 30 Minuten) als blockiert angezeigt. Ein konkreter Prozentfortschritt
+(Standard 30 Minuten) als blockiert angezeigt („Worker meldet sich nicht mehr“).
+Meldet derselbe Mac seinen eigenen Herzschlag noch frisch an den RS Hub (höchstens
+180 Sekunden alt), hängt nur die Reservierungsmeldung nach: Die Aufgabe wartet dann
+als „Wartet · Mac aktiv, Reservierungsmeldung an den RS Hub verzögert“ und ist nicht
+blockiert. Nach zwei Stunden ohne Reservierungs-Herzschlag gilt sie auch bei
+erreichbarem Mac wieder als blockiert (Fehleraudit 17.10.2026). Ein konkreter Prozentfortschritt
 wird nur bei einem belegten Abschluss als 100 % angezeigt.
 
 ## Skill-Versionen in der Kopfzeile

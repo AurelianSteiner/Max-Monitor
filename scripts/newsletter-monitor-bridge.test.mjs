@@ -894,3 +894,51 @@ test('a snapshot cycle reuses the cached run status while the claim heartbeat is
   await collectSnapshot({ now: now + 360000, ...source, statusCache, fleetReader: async () => [] });
   assert.equal(source.calls.length, 2);
 });
+
+// D11-M2 (Fehleraudit 17.10.2026): on 16.10. (18:31–20:17Z) twelve fresh Sales and
+// upload attempts showed "Worker meldet sich nicht mehr" while their Macs kept
+// reporting to the RS Hub; only the reservation heartbeat lagged behind (Hub
+// transport and Slack update failures). A live Mac's lagging reservation waits.
+test('a stale reservation of a Mac with a fresh fleet heartbeat waits instead of being blocked', () => {
+  const seen = (workerId, ageMs) => ({ workerId, name: workerId, lastSeenAt: new Date(now - ageMs).toISOString() });
+  const stale = parseClaim(claimMessage('running', { task_id: 'a', run_id: '20261016T183102Z-a', worker: 'macbook-2', heartbeat: now / 1000 - 1900 }));
+  const rows = workers => buildQueue([taskIn('pre-gen', 'a')], [stale], DEFAULT_WORKFLOWS, { now, workers });
+  let [row] = rows([seen('macbook-2', 60000)]);
+  assert.deepEqual([row.status, row.phase, row.workerId, row.attemptId],
+    ['queued', 'Wartet · Mac aktiv, Reservierungsmeldung an den RS Hub verzögert', 'macbook-2', '20261016T183102Z-a']);
+  // Without a fleet heartbeat, with an old one or with another Mac's, it stays blocked.
+  for (const workers of [undefined, [], [seen('macbook-2', 10 * 60000)], [seen('macbook-1', 0)]]) {
+    [row] = rows(workers);
+    assert.deepEqual([row.status, row.phase], ['blocked', 'Worker meldet sich nicht mehr'], JSON.stringify(workers));
+  }
+  // A reservation silent for hours is no lag of a live Mac.
+  const old = parseClaim(claimMessage('running', { task_id: 'a', worker: 'macbook-2', heartbeat: now / 1000 - 3 * 3600 }));
+  [row] = buildQueue([taskIn('pre-gen', 'a')], [old], DEFAULT_WORKFLOWS, { now, workers: [seen('macbook-2', 0)] });
+  assert.deepEqual([row.status, row.phase], ['blocked', 'Worker meldet sich nicht mehr']);
+  // A Mac-bound pause of a live Mac shows as paused outside the places.
+  const paused = parseClaim(claimMessage('running', { task_id: 'a', worker: 'macbook-2', heartbeat: now / 1000 - 1900, paused: true }));
+  [row] = buildQueue([taskIn('pre-gen', 'a')], [paused], DEFAULT_WORKFLOWS, { now, workers: [seen('macbook-2', 0)] });
+  assert.deepEqual([row.status, row.phase], ['queued', 'Pausiert · wartet außerhalb der Worker-Plätze']);
+});
+
+test('a correction reservation of a live Mac with a lagging heartbeat waits as well', () => {
+  const job = 'korrektur-cu-86cbgtpjr@1791373000000-intern';
+  const claim = parseClaim({ ts: '1791373200.003', text: '*Korrektur · JuCad*\n<https://app.clickup.com/t/86cbgtpjr|Warm Up>',
+    metadata: { event_type: 'ai_korrektur_claim', event_payload: { task_id: job, worker: 'mac-worker-6-64d66918', run_id: 'attempt-k', state: 'running', heartbeat: now / 1000 - 1900 } } });
+  const rows = workers => buildQueue([], [claim], DEFAULT_WORKFLOWS, { now, workers }).filter(row => row.workflow === 'correction');
+  assert.deepEqual(rows([{ workerId: 'mac-worker-6-64d66918', lastSeenAt: new Date(now - 30000).toISOString() }]).map(row => [row.status, row.phase, row.workerId]),
+    [['queued', 'Wartet · Mac aktiv, Reservierungsmeldung an den RS Hub verzögert', 'mac-worker-6-64d66918']]);
+  assert.deepEqual(rows([]).map(row => [row.status, row.phase]), [['blocked', 'Worker meldet sich nicht mehr']]);
+});
+
+test('the snapshot compares reservations with the Mac heartbeats it read from the RS Hub', async () => {
+  const snapshot = await collectSnapshot({ now, config: { clickup: { workspace_id: 'test' }, slack: { channel_id: 'test' }, hub: {} },
+    hubFetch: async target => {
+      const url = new URL(target);
+      if (url.hostname === 'slack.com') return response({ ok: true, messages: [claimMessage('running', { worker: 'macbook-2', heartbeat: now / 1000 - 1900 })], has_more: false });
+      if (url.pathname.endsWith('/space')) return response({ spaces: [{ id: 'space' }] });
+      if (url.pathname.endsWith('/tag')) return response({ tags: [{ name: 'pre gen.' }] });
+      return response({ tasks: [task('a')], last_page: true });
+    }, fleetReader: async () => [{ workerId: 'macbook-2', name: 'macbook-2', lastSeenAt: new Date(now - 45000).toISOString() }] });
+  assert.deepEqual([snapshot.tasks[0].status, snapshot.tasks[0].phase], ['queued', 'Wartet · Mac aktiv, Reservierungsmeldung an den RS Hub verzögert']);
+});

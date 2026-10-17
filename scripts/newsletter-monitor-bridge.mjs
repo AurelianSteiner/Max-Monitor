@@ -718,10 +718,39 @@ function taskUrl(task) {
   return `https://app.clickup.com/t/${encodeURIComponent(task.id)}`;
 }
 
+// A Mac whose own heartbeat reached the RS Hub this recently is alive (the
+// worker heartbeat's validity, docs/fleet-monitoring.md: 180 s).
+export const FLEET_FRESH_MS = 180000;
+// How long a live Mac's reservation may lag behind before it counts as silent.
+export const RESERVATION_LAG_MS = 2 * 3600000;
+export const RESERVATION_LAG_PHASE = 'Wartet · Mac aktiv, Reservierungsmeldung an den RS Hub verzögert';
+
+// D11-M2 (Fehleraudit 17.10.2026): a live reservation whose own heartbeat is stale
+// while its Mac's fleet heartbeat is fresh. The Mac works; only the reservation
+// sync lags (Hub transport, Slack update limits). It waits and is not blocked.
+// A reservation silent for longer than RESERVATION_LAG_MS stays blocked.
+function reservationLags(claim, seenAt, now) {
+  const seen = seenAt.get(claim?.workerId);
+  const macAge = now - seen, claimAge = now - claim?.heartbeat * 1000;
+  return Number.isFinite(macAge) && macAge >= -30000 && macAge <= FLEET_FRESH_MS
+    && Number.isFinite(claimAge) && claimAge <= RESERVATION_LAG_MS;
+}
+
+function fleetSeen(workers) {
+  const seen = new Map();
+  for (const worker of Array.isArray(workers) ? workers : []) {
+    const at = Date.parse(worker?.lastSeenAt);
+    if (typeof worker?.workerId === 'string' && Number.isFinite(at) && !(seen.get(worker.workerId) >= at)) seen.set(worker.workerId, at);
+  }
+  return seen;
+}
+
 // tasks may carry statusSince (the worker's status epoch, readStatusEpochs).
 // admission: the worker's admission predicates (workerAdmission, loadWorkerAdmission).
-export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, figmaBoardUrl, admission = workerAdmission() } = {}) {
+// workers: the Macs' heartbeats read from the RS Hub (parseObservedWorkers).
+export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, figmaBoardUrl, admission = workerAdmission(), workers } = {}) {
   const updatedAt = new Date(now).toISOString();
+  const seenAt = fleetSeen(workers);
   const rows = [];
   for (const task of tasks) {
     const tags = task.tags.map(tag => typeof tag === 'string' ? tag : String(tag?.name ?? ''));
@@ -752,6 +781,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       if (pausedTag && !fresh) { status = 'queued'; phase = 'Wartet · automatische Fortsetzung'; }
       if ((!pausedTag || fresh) && status !== 'completed' && status !== 'failed' && status !== 'blocked') {
         if (fresh) { status = fresh.state === 'running' ? 'running' : 'queued'; phase = fresh.state === 'running' ? 'In Bearbeitung' : 'Reserviert'; }
+        else if (active.length && reservationLags(active[0], seenAt, now)) { status = 'queued'; phase = RESERVATION_LAG_PHASE; }
         else if (active.length) { status = 'blocked'; phase = 'Worker meldet sich nicht mehr'; }
         else if (status === 'running') { phase = 'Läuft laut ClickUp; Worker-Zuordnung fehlt'; }
       }
@@ -799,9 +829,10 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
     if (claim.state === 'released' && claim.outcome !== 'completed') continue;
     const active = ['claiming', 'running'].includes(claim.state);
     const fresh = now - claim.heartbeat * 1000 <= staleMinutes * 60000;
+    const lagging = active && !fresh && reservationLags(claim, seenAt, now);
     const paused = claim.paused && claim.outcome !== 'completed';
-    const status = paused ? 'queued' : active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : 'blocked' : claim.outcome || 'blocked';
-    const phase = paused && claim.portable ? 'Wartet · Fortsetzung in der zentralen Queue' : paused ? active ? 'Pausiert · wartet außerhalb der Worker-Plätze' : 'Wartet · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : 'Worker meldet sich nicht mehr'
+    const status = paused ? 'queued' : active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : lagging ? 'queued' : 'blocked' : claim.outcome || 'blocked';
+    const phase = paused && claim.portable ? 'Wartet · Fortsetzung in der zentralen Queue' : paused ? active ? 'Pausiert · wartet außerhalb der Worker-Plätze' : 'Wartet · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : lagging ? RESERVATION_LAG_PHASE : 'Worker meldet sich nicht mehr'
       : status === 'completed' ? 'Korrektur abgeschlossen' : claim.awaitingPm ? 'PM-Rückfrage offen'
         : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
     const task = tasks.find(task => task.id === claim.taskId);
@@ -1338,7 +1369,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const observedWorkers = workerResult.status === 'fulfilled' ? workerResult.value : undefined;
   const fleetDetail = workerResult.status === 'rejected'
     ? 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.' : undefined;
-  const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl, admission });
+  const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl, admission, workers: observedWorkers });
   // Keep a confirmed date after its source thread leaves the history window.
   // Any currently visible attempt prevents borrowing an older success.
   retainCompletionDates(queue, previousTasks, claims);
