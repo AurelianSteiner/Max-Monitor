@@ -553,7 +553,11 @@ genau ein Eintrag unter „Blockiert“ in Pipeline, Queue und Aufmerksamkeitsli
 einschließlich Worker- und Updatefehlern. Aufgabe und Lauf bleiben zugeordnet;
 ein laufender Wiederholungsversuch wird zusätzlich als laufend angezeigt.
 Alte ClickUp-Blockiert-Tags und abgebrochene Tests erzeugen keine zusätzlichen
-offenen Fehler. Die ursprünglichen Quelldaten und die Ereignishistorie bleiben erhalten.
+offenen Fehler. Eine Kopie, die der Worker für einen zurückgezogenen Auftrag
+umgeschrieben hat („🛑 Abgebrochen: ClickUp-Status zurückgezogen“), ist kein
+offener Fehler und erscheint nicht unter „Blockiert“. Ein Ursachen-Beitrag, der
+mehrere Aufträge nennt, ergibt je Auftrag einen Eintrag mit demselben Slack-Link.
+Die ursprünglichen Quelldaten und die Ereignishistorie bleiben erhalten.
 
 Die Bridge liest den Fehlerkanal in jedem regulären Abgleich vollständig ohne
 Altersgrenze, einschließlich aller Seiten. Nach der Behebung oder dem Ende
@@ -562,14 +566,27 @@ der nächste erfolgreiche Abgleich entfernt sie auch aus Max Monitor. So bleiben
 Löschungen und Änderungen älterer Meldungen nicht im Cache stehen. Die
 Reservierungskanäle behalten ihren bisherigen Cache; unvollständige oder
 fehlgeschlagene Abfragen bestätigen keine Behebung.
-Die zentrale Bereinigung entfernt eine Fehlerkopie nur, wenn die Aufgabe
-nachweislich wieder läuft oder abgeschlossen ist. „Läuft“ zählt nur mit Mac und
+Die zentrale Bereinigung folgt der Regel „#ai-fehler nur bei menschlichem
+Handlungsbedarf“ (Till, 17.10.2026, Fehleraudit): Eine Kopie nach dieser Regel
+trägt ihren Grund (`grund`) in den Metadaten. Sie bleibt über automatische
+Fortsetzungen stehen und wird erst entfernt, wenn die Aufgabe nachweislich
+abgeschlossen ist; eine laufende Fortsetzung genügt nicht (`until-completed`, bei
+einer erschöpften Reparaturkette mit `eskaliert` `escalated-until-completed`). Ein
+Ursachen-Beitrag, der mehrere Aufträge nennt (`task_ids`), bleibt, bis alle
+genannten Aufgaben abgeschlossen sind (`cause-open`). Zieht ein Worker eine Kopie
+selbst zurück, verschwindet sie mit dem nächsten vollständigen Abgleich. Nur
+Kopien von vor dieser Regel (ohne `grund`) entfernt die Bereinigung weiter auch,
+wenn die Aufgabe nachweislich wieder läuft. „Läuft“ zählt nur mit Mac und
 Versuch, also aus einer frischen Reservierung oder einem Live-Bericht des Macs; ein
 bloßer ClickUp-Tag `· läuft` ohne Worker-Zuordnung genügt nicht und die Kopie bleibt
 (`running-not-confirmed`). Bei pausierten, wartenden, markierten Aufgaben und
-offener PM-Rückfrage bleibt die Kopie stehen (`still-open`). Antwortet Slack beim
+offener PM-Rückfrage bleibt die Kopie stehen (`still-open`). Welche Kopien
+ohnehin stehen bleiben, entscheidet die Bereinigung aus den Metadaten des
+vollständigen Kanalabrufs, ohne einen Fehlerthread zu lesen. Antwortet Slack beim
 Lesen eines Fehlerthreads mit 429, endet die Bereinigung dieses Abgleichs ohne
-Löschung (`skipped: 'ratelimited'`).
+Löschung (`skipped: 'ratelimited'`); ein einzelner nicht lesbarer Thread behält
+seine Kopie (`thread-unreadable`), die übrigen werden weiter geprüft. Ein Fehler
+der Bereinigung steht je Episode einmal im Log, ihr Ende ebenfalls einmal.
 Solche Einträge bieten einen direkten Slack-Link und können im Monitor nicht
 unabhängig abgehakt werden. Bei Quellenfehlern bleibt der letzte bestätigte Bestand
 mit einer sichtbaren Quellenwarnung erhalten. Ein erfolgreich leer gelesener
@@ -577,7 +594,9 @@ Fehlerkanal ergibt null Blockierungen, auch wenn alte ClickUp-Tags stehen bleibe
 
 Der vollständige Queue-Vertrag enthält dafür optional `blockedErrors`, eine Liste
 von Task-Datensätzen mit Status `blocked`, ID `slack-error:<channel>:<ts>` und
-`errorUrl` als passendem Slack-Permalink. `[]` bestätigt einen leeren Fehlerkanal;
+`errorUrl` als passendem Slack-Permalink. Nennt ein Ursachen-Beitrag mehrere
+Aufträge, erhält jeder weitere Auftrag eine eigene Zeile mit der ID
+`slack-error:<channel>:<ts>#<Auftragskennung>` und demselben Permalink. `[]` bestätigt einen leeren Fehlerkanal;
 ein fehlendes Feld bestätigt keinen leeren Kanal. Nach dem ersten solchen Snapshot
 lehnt der Relay erfolgreiche Snapshots ohne Fehlerinventar ab. Die folgenden
 manuellen Erledigungen gelten nur für Quellen ohne synchronisiertes Slack-Inventar.

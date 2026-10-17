@@ -312,7 +312,8 @@ function validateQueue(body) {
     // immutable Slack message identity. An incomplete scan never sends this.
     blockedErrors = validateQueue({ source: body.source, tasks: body.blockedErrors }).tasks;
     for (const row of blockedErrors) {
-      const match = /^slack-error:([A-Za-z0-9_-]+):(\d+\.\d+)$/.exec(row.id);
+      // A cause post naming several orders adds one row per further order: #<job>.
+      const match = /^slack-error:([A-Za-z0-9_-]+):(\d+\.\d+)(?:#[A-Za-z0-9_@-]{1,120})?$/.exec(row.id);
       let link;
       try { link = new URL(row.errorUrl); } catch { /* Rejected below. */ }
       if (!match || row.status !== 'blocked' || link?.protocol !== 'https:' || !link.hostname.endsWith('.slack.com')

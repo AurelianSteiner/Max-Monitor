@@ -167,3 +167,92 @@ test('a released continuation with a stale revision or Pre-Gen running tag keeps
   snapshot.queue.tasks = pregen;
   assert.equal(cleanupDecision({ task_id: `n@${since}` }, snapshot, at).remove, false);
 });
+
+// #ai-fehler nur bei menschlichem Handlungsbedarf (Till, 17.10.2026, Fehleraudit):
+// a copy under the new policy names its reason (grund). The worker keeps it across
+// automatic continuations and removes it only with the confirmed success; deleting
+// it at a running continuation would bring back posting and deleting per attempt.
+test('an escalated repair-chain copy survives a confirmed running continuation and goes with the completion', () => {
+  const escalated = { ...payload, grund: 'erschoepft', eskaliert: true, versuche: 4 };
+  assert.deepEqual([cleanupDecision(escalated, fleet([task('running')]), now).remove, cleanupDecision(escalated, fleet([task('running')]), now).reason],
+    [false, 'escalated-until-completed']);
+  assert.equal(cleanupDecision(escalated, fleet([task('completed')]), now).remove, true);
+  for (const state of ['queued', 'paused', 'blocked'])
+    assert.equal(cleanupDecision(escalated, fleet([task(state)]), now).remove, false, state);
+  // Any other copy of the new policy (master data, PM decision, long portal pause) too.
+  for (const grund of ['stammdaten', 'mensch', 'entscheidung', 'pause_lang', 'technisch', 'rueckfrage_offen']) {
+    const copy = { ...payload, grund };
+    assert.deepEqual([cleanupDecision(copy, fleet([task('running')]), now).remove, cleanupDecision(copy, fleet([task('running')]), now).reason],
+      [false, 'until-completed'], grund);
+    assert.equal(cleanupDecision(copy, fleet([task('completed')]), now).remove, true, grund);
+  }
+  // A copy from before the 17.10. rollout keeps the rule of 13.10.
+  assert.equal(cleanupDecision(payload, fleet([task('running')]), now).remove, true);
+  assert.equal(cleanupDecision({ ...payload, paused: true }, fleet([task('running')]), now).remove, true);
+});
+
+test('a cause post naming several tasks stays until every listed task is completed', () => {
+  const cause = { kind: 'lauf', task_id: 'abc@123', run_id: payload.run_id, grund: 'stammdaten', ursache: 'f'.repeat(64),
+    task_ids: ['abc@123', 'def@124', 'ghi@125-klaviyo'], run_ids: [payload.run_id, '20261013T202100Z-def@124', '20261013T202200Z-ghi@125-klaviyo'] };
+  const rows = (a, d, g) => [task(a), { id: 'clickup:newsletter:def', workflow: 'newsletter', status: d },
+    { id: 'clickup:upload:ghi', workflow: 'upload', status: g }];
+  assert.deepEqual([cleanupDecision(cause, fleet(rows('completed', 'completed', 'blocked')), now).remove,
+    cleanupDecision(cause, fleet(rows('completed', 'completed', 'blocked')), now).reason], [false, 'cause-open']);
+  assert.equal(cleanupDecision(cause, fleet(rows('completed', 'running', 'completed')), now).remove, false);
+  assert.equal(cleanupDecision(cause, fleet(rows('completed', 'completed', 'completed')), now).remove, true);
+  // A listed task the snapshot does not show keeps the post; so does an invalid job ID.
+  assert.equal(cleanupDecision(cause, fleet(rows('completed', 'completed', 'completed').slice(0, 2)), now).reason, 'unknown-task');
+  assert.equal(cleanupDecision({ ...cause, task_ids: [...cause.task_ids, 'not a job'] }, fleet(rows('completed', 'completed', 'completed')), now).reason, 'unknown-task');
+});
+
+test('the history payload keeps a policy copy of a running task without any Slack call', async () => {
+  const escalated = { ...payload, grund: 'erschoepft', eskaliert: true, versuche: 5 };
+  const result = await cleanupErrorCopies({ now: () => now, errorChannel: channel, readFleet: async () => fleet([task('running')]),
+    payloadOf: ts => ts === parent.ts ? escalated : null,
+    hubFetch: async () => { throw Error('Must not read the thread'); },
+    slackWrite: async () => { throw Error('Must not authenticate or delete'); } });
+  assert.deepEqual(result, { deleted: [], kept: [{ id: error.id, reason: 'escalated-until-completed' }] });
+  // Copies of unknown tasks (for example a replaced correction epoch) cost no read either.
+  const unknown = await cleanupErrorCopies({ now: () => now, errorChannel: channel, readFleet: async () => fleet([]),
+    payloadOf: () => payload, hubFetch: async () => { throw Error('Must not read the thread'); },
+    slackWrite: async () => { throw Error('Must not authenticate or delete'); } });
+  assert.deepEqual(unknown, { deleted: [], kept: [{ id: error.id, reason: 'unknown-task' }] });
+});
+
+test('without a history payload the thread parent decides: an escalated copy of a running task is kept', async () => {
+  const escalated = { ...payload, grund: 'erschoepft', eskaliert: true, versuche: 5 };
+  let writes = 0;
+  const result = await cleanupErrorCopies({ now: () => now, errorChannel: channel, readFleet: async () => fleet([task('running')]),
+    hubFetch: async () => ({ ok: true, json: async () => ({ ok: true, messages: [{ ...parent, metadata: { event_type: 'ai_newsletter_fehler', event_payload: escalated } }] }) }),
+    slackWrite: async method => { if (method === 'auth.test') return auth; writes++; return { ok: true }; } });
+  assert.equal(writes, 0);
+  assert.deepEqual(result, { deleted: [], kept: [{ id: error.id, reason: 'escalated-until-completed' }] });
+});
+
+test('one unreadable error thread keeps its copy and the cleanup continues with the next one', async () => {
+  const second = { ...error, id: `slack-error:${channel}:1791922800.222222` };
+  const snapshot = fleet([task()]); snapshot.queue.errors = [error, second];
+  const writes = [];
+  const result = await cleanupErrorCopies({ now: () => now, errorChannel: channel, readFleet: async () => snapshot,
+    hubFetch: async url => new URL(url).searchParams.get('ts') === parent.ts
+      ? { ok: false, status: 500, json: async () => ({ ok: false, error: 'internal_error' }) }
+      : { ok: true, json: async () => ({ ok: true, messages: [{ ...parent, ts: '1791922800.222222' }] }) },
+    slackWrite: async (method, body) => { if (method === 'auth.test') return auth; writes.push(body.ts); return { ok: true }; } });
+  assert.deepEqual(result.deleted, [second.id]);
+  assert.deepEqual(result.kept, [{ id: error.id, reason: 'thread-unreadable' }]);
+  assert.deepEqual(writes, ['1791922800.222222']);
+});
+
+test('a cause post shown as one row per task is read and deleted once', async () => {
+  const cause = { kind: 'lauf', task_id: 'abc@123', run_id: payload.run_id, grund: 'stammdaten', task_ids: ['abc@123', 'def@124'] };
+  const snapshot = fleet([task(), { id: 'clickup:newsletter:def', workflow: 'newsletter', status: 'completed' }]);
+  snapshot.queue.errors = [error, { id: `${error.id}#def@124`, workflow: 'newsletter', attemptId: '20261013T202100Z-def@124' }];
+  let reads = 0; const writes = [];
+  const result = await cleanupErrorCopies({ now: () => now, errorChannel: channel, readFleet: async () => snapshot,
+    payloadOf: () => cause,
+    hubFetch: async () => { reads++; return { ok: true, json: async () => ({ ok: true, messages: [{ ...parent, metadata: { event_type: 'ai_newsletter_fehler', event_payload: cause } }] }) }; },
+    slackWrite: async (method, body) => { if (method === 'auth.test') return auth; writes.push(body.ts); return { ok: true }; } });
+  assert.equal(reads, 1);
+  assert.deepEqual(writes, [parent.ts]);
+  assert.deepEqual(result.deleted, [error.id, `${error.id}#def@124`]);
+});
