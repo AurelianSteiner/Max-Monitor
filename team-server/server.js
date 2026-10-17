@@ -732,11 +732,12 @@ const server = http.createServer((req, res) => {
       let body;
       try { body = JSON.parse(raw); } catch { return send(res, 400, { error: "kein gültiges JSON" }); }
       if (!body || typeof body !== "object" || Array.isArray(body) ||
-          (body.role === undefined && body.macWorker === undefined) ||
+          (body.role === undefined && body.macWorker === undefined && body.name === undefined) ||
+          (body.name !== undefined && (typeof body.name !== "string" || !body.name.trim() || body.name.trim().length > 120 || /[\r\n\u0000-\u001f]/.test(body.name))) ||
           (body.role !== undefined && !["member", "admin", "guest"].includes(body.role)) ||
           (body.macWorker !== undefined && typeof body.macWorker !== "boolean")) return send(res, 400, { error: "Rolle oder MacWorker-Einstellung ist ungültig" });
       if (memberMatch[1] === "team-owner") {
-        if (body.role !== undefined) return send(res, 409, { error: "Die Inhaberrolle bleibt erhalten" });
+        if (body.role !== undefined || body.name !== undefined) return send(res, 409, { error: "Die Inhaberidentität bleibt erhalten" });
         let owner;
         try {
           owner = ownerIdentity(teamId, true);
@@ -756,7 +757,8 @@ const server = http.createServer((req, res) => {
       try { members = readMembers(teamId, true); } catch { return send(res, 500, { error: "Mitglieder konnten nicht gelesen werden" }); }
       const member = members.find((entry) => entry.id === memberMatch[1]);
       if (!member) return send(res, 404, { error: "Mitglied nicht gefunden" });
-      member.macWorker = body.macWorker ?? isMacWorker(member);
+      if (body.macWorker !== undefined || body.role !== undefined) member.macWorker = body.macWorker ?? isMacWorker(member);
+      if (body.name !== undefined) member.name = body.name.trim();
       if (body.role !== undefined) member.role = body.role;
       try { writeMembers(teamId, members); } catch { return send(res, 500, { error: "Rolle konnte nicht gespeichert werden" }); }
       // Invalidate open dashboards immediately after a role change. Their next

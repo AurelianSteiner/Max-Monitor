@@ -7,8 +7,9 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../public/dashboard.js'), 'utf8');
 const marker = '  function attentionEntries(';
 const context = { window: {}, location: { pathname: '/fleet', search: '' }, URLSearchParams, Intl };
+context.workerIdentities = require('../worker-identities.json');
 vm.runInNewContext(source.replace(marker,
-  '  globalThis.check = { stageOf, matchesStatus, completionLabel, runningPackage, workerName, tasks, setTasks: items => snapshot = { queue: { tasks: items } } }; return;\n' + marker), context);
+  '  globalThis.check = { stageOf, matchesStatus, completionLabel, runningPackage, workerName, tasks, setTasks: items => snapshot = { workerIdentities: globalThis.workerIdentities, queue: { tasks: items } } }; return;\n' + marker), context);
 const ui = context.check;
 const master = { id: 'clickup:newsletter:de1', workflow: 'newsletter', packageId: 'de1', status: 'running', workerId: 'mac-worker-6-64d66918' };
 const en = { id: 'clickup:translation-en:de1', workflow: 'translation', status: 'queued', tags: ['en translation'] };
@@ -21,7 +22,7 @@ test('waiting EN belongs to Running while its package runs; execution ownership 
   assert.equal(ui.completionLabel(en), 'Paket läuft');
   assert.equal(en.status, 'queued');
   assert.equal(en.workerId, undefined);
-  assert.equal(ui.workerName(master.workerId), 'MacWorker 6');
+  assert.equal(ui.workerName(master.workerId), 'Orange');
 });
 
 test('explicit source binding joins separate EN tasks, never matching titles alone', () => {

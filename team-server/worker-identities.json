@@ -1,0 +1,11 @@
+{
+  "macbook-1": {"name": "Rot", "color": "#B52B36", "textColor": "#FFFFFF"},
+  "macbook-2": {"name": "Blau", "color": "#2458A6", "textColor": "#FFFFFF"},
+  "mac-f121ae17": {"name": "Grün", "color": "#277450", "textColor": "#FFFFFF"},
+  "newsletter-mac-141b2976": {"name": "Gelb", "color": "#E6BE35", "textColor": "#252214"},
+  "macworker-5-schwarz": {"name": "Schwarz", "color": "#17191D", "textColor": "#FFFFFF"},
+  "mac-worker-6-64d66918": {"name": "Orange", "color": "#CA6027", "textColor": "#FFFFFF"},
+  "macbook-air-von-gustav-ccdf84ef": {"name": "Lila", "color": "#76519E", "textColor": "#FFFFFF"},
+  "macbook-air-von-nachteule-cdb5c505": {"name": "Türkis", "color": "#238A91", "textColor": "#FFFFFF"},
+  "macbook-von-till-main-2": {"name": "MacBook von Till", "personal": true}
+}
