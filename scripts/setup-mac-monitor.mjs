@@ -330,15 +330,24 @@ async function swiftToolchain(runner) {
 export const BUILD_RETRY_MS = 6 * 3600000;
 const CAUSE_MAX = 200;
 
-// The line of a failed build's output that names its cause: the last compiler or
-// build-script error, else the last line. Without colours, paths below the repo,
-// credentials-like tokens; at most CAUSE_MAX characters. null without output.
+// The line of a failed build's output that names its cause: the build script's
+// own verdict (❌), else the last located compiler diagnostic (file:line:col:
+// error:), else the last other error line, else the last line. swiftc quotes the
+// source line after a diagnostic, and a source line may itself contain "error:"
+// or "fehlgeschlagen"; the driver closes with a summary such as "error:
+// emit-module command failed" (review A14-02). Without colours, paths below the
+// repo or the home folder, credentials-like tokens; at most CAUSE_MAX characters.
+// null without output.
 export function buildCause(output) {
   const lines = String(output || '').replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').split(/\r?\n/)
     .map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
   if (!lines.length) return null;
-  const line = [...lines].reverse().find(value => /\berror:|^❌|\bfatal\b|fehlgeschlagen|nicht gefunden|failed/i.test(value)) || lines.at(-1);
+  const last = pattern => [...lines].reverse().find(value => pattern.test(value));
+  const line = last(/^❌/) || last(/:\d+:\d+: (?:fatal )?error: /)
+    || last(/\berror:|\bfatal\b|fehlgeschlagen|nicht gefunden|failed/i) || lines.at(-1);
+  const home = os.homedir();
   const safe = line.split(ROOT + path.sep).join('').replace(/\/(?:[^\s/]+\/)*?(Usage4Claude(?:\.xcodeproj)?\/)/g, '$1')
+    .split(home && home !== path.sep ? home : '\0').join('~')
     .replace(/\b(?:xox[abposr]-|sk-|gh[opsu]_)[A-Za-z0-9_-]+/g, '[ENTFERNT]').replace(/Bearer\s+\S+/gi, 'Bearer [ENTFERNT]');
   return safe.length > CAUSE_MAX ? safe.slice(0, CAUSE_MAX - 1) + '…' : safe;
 }
@@ -546,11 +555,30 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   }
 }
 
-export async function setup(options, { runner = run, workerReader = readWorker,
+function defaultReceiptPath(options) {
+  return path.join(os.homedir(), 'Library', 'Application Support',
+    options.bundleId && options.bundleId !== BUNDLE_ID ? options.bundleId : 'Max Monitor', 'Worker Setup', 'installation.json');
+}
+
+// Every failed background update (--update-only) keeps its cause in the receipt,
+// from the worker profile and release manifest on, not only failures of the app
+// update itself: the sporadic Mac 5 failures had no build failure (A14-02,
+// Fehleraudit 17.10.2026). An interactive enrollment never records one.
+export async function setup(options, dependencies = {}) {
+  if (!options.updateOnly || options.dryRun) return setupSteps(options, dependencies);
+  const receiptPath = dependencies.receiptPath ?? defaultReceiptPath(options);
+  const now = dependencies.now ?? Date.now;
+  try { return await setupSteps(options, {...dependencies, receiptPath}); }
+  catch (error) {
+    await recordUpdateFailure(receiptPath, error, new Date(now()).toISOString()).catch(()=>{});
+    throw error;
+  }
+}
+
+async function setupSteps(options, { runner = run, workerReader = readWorker,
   appReader = appInformation, artifactReader = workerArtifactBundle, manifestReader = workerArtifactManifest,
   platform = process.platform, log = console.log, pause = delay, now = Date.now,
-  receiptPath = path.join(os.homedir(), 'Library', 'Application Support',
-    options.bundleId && options.bundleId !== BUNDLE_ID ? options.bundleId : 'Max Monitor', 'Worker Setup', 'installation.json') } = {}) {
+  receiptPath = defaultReceiptPath(options) } = {}) {
   if (platform !== 'darwin' && !options.dryRun) throw new Error('Max Monitor benötigt macOS.');
   const worker = await workerReader(options);
   if (options.dryRun) return {schema:1,mode:'dry-run',workerId:worker.workerId,
@@ -571,15 +599,8 @@ export async function setup(options, { runner = run, workerReader = readWorker,
       if (found) { options = {...options, appPath:candidate}; app = found; break; }
     }
   }
-  if (options.updateOnly) {
-    try {
-      return await updateExistingMonitor(options,{worker,app,revision,release,releaseCurrent,
-        receipt,receiptPath,runner,appReader,artifactReader,log,pause,now});
-    } catch (error) {
-      await recordUpdateFailure(receiptPath, error, new Date(now()).toISOString()).catch(()=>{});
-      throw error;
-    }
-  }
+  if (options.updateOnly) return updateExistingMonitor(options,{worker,app,revision,release,releaseCurrent,
+    receipt,receiptPath,runner,appReader,artifactReader,log,pause,now});
   let initialStatus = null;
   if (app && !app.legacy) {
     try { initialStatus = await appStatus(app, true, runner); } catch {

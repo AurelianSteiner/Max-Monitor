@@ -392,6 +392,41 @@ test('the last update failure stays in the receipt with its cause after a later 
   assert.deepEqual(receipt.lastFailure,{at:'2026-10-17T00:04:00.000Z',message,since:'2026-10-17T00:04:00.000Z',count:1});
 });
 
+// Review A14-02: the sporadic Mac 5 failures had no build failure, so they can
+// come from any step of the background update, also before the app check.
+test('a background update that fails before the app check also keeps its cause', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  await f.writeReceipt();
+  f.dependencies.now = () => Date.parse('2026-10-17T01:59:00Z');
+  f.dependencies.manifestReader = async () => { throw new Error('Worker-Release nicht lesbar: ENOENT releases/worker-native.json'); };
+  await assert.rejects(setup({...f.options,appBundle:null,updateOnly:true},f.dependencies),/ENOENT/);
+  let receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+  assert.deepEqual(receipt.lastFailure,{at:'2026-10-17T01:59:00.000Z',message:'Worker-Release nicht lesbar: ENOENT releases/worker-native.json',
+    since:'2026-10-17T01:59:00.000Z',count:1});
+  assert.equal(receipt.sourceRevision,REVISION,'nothing else in the receipt changes');
+  f.dependencies.workerReader = async () => { throw new Error('Worker-Konfiguration fehlt.'); };
+  await assert.rejects(setup({...f.options,appBundle:null,updateOnly:true},f.dependencies),/Worker-Konfiguration fehlt/);
+  receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+  assert.equal(receipt.lastFailure.message,'Worker-Konfiguration fehlt.');
+  // An interactive enrollment never writes a failure into the receipt.
+  await assert.rejects(setup({...f.options},f.dependencies),/Worker-Konfiguration fehlt/);
+  assert.equal(JSON.parse(await fs.readFile(f.receiptPath,'utf8')).lastFailure.count,1);
+});
+
+// Review A14-02: swiftc prints the source line after its diagnostic. A source
+// line such as `let error: ErrorDetail` or a German "fehlgeschlagen" string must
+// not replace the diagnostic, nor may the driver's closing summary line.
+test('the build cause is the compiler diagnostic, not the quoted source line or the driver summary', () => {
+  assert.equal(buildCause("/x/Usage4Claude/Models/A.swift:279:9: error: cannot find type 'ErrorDetail' in scope\n    let error: ErrorDetail\n               ^~~~~~~~~~~\n"),
+    "Usage4Claude/Models/A.swift:279:9: error: cannot find type 'ErrorDetail' in scope");
+  assert.equal(buildCause('Usage4Claude/B.swift:3:1: error: missing return\n    log("Laden fehlgeschlagen")\n    ^\n'),
+    'Usage4Claude/B.swift:3:1: error: missing return');
+  assert.equal(buildCause('Usage4Claude/C.swift:1:1: error: boom\nerror: emit-module command failed with exit code 1 (use -v to see invocation)\n'),
+    'Usage4Claude/C.swift:1:1: error: boom');
+  assert.equal(buildCause(`curl: (6) Could not resolve host\n${os.homedir()}/Library/Caches/sparkle: error: download failed\n`),
+    '~/Library/Caches/sparkle: error: download failed');
+});
+
 test('a deferred build ends the background run without an error exit and prints its state as JSON', async () => {
   const previous = process.exitCode;
   const out = [], err = [];
