@@ -223,3 +223,19 @@ test('a copy rewritten for a withdrawn order is no blocked row', () => {
   open.metadata.event_payload = { ...open.metadata.event_payload, state: 'blockiert' };
   assert.deepEqual(buildBlockedErrors([withdrawn, open], channel, [task()]).map(row => row.id), [`slack-error:${channel}:1791823000.000011`]);
 });
+
+// Review D12-07: the relay rejects a whole snapshot when one row breaks its
+// bounds (task.id <= 160, task.attemptId <= 200 characters). A cause row whose
+// ID or run would exceed them is left out instead of stopping the queue.
+test('cause rows stay within the relay bounds, so one long job never rejects the snapshot', t => {
+  const long = 'x'.repeat(118) + '@1';
+  const message = error('abc@123', '1791823000.000012');
+  message.metadata.event_payload = { ...message.metadata.event_payload, grund: 'stammdaten',
+    task_ids: ['abc@123', long, 'def@124'], run_ids: ['attempt-abc@123', `20261017T080000Z-${long}`, `20261017T080001Z-${'d'.repeat(200)}`] };
+  const rows = buildBlockedErrors([message], channel, [task()]);
+  assert.deepEqual(rows.map(row => row.id), [`slack-error:${channel}:1791823000.000012`, `slack-error:${channel}:1791823000.000012#def@124`]);
+  assert.ok(rows.every(row => row.id.length <= 160 && (row.attemptId === undefined || row.attemptId.length <= 200)));
+  const { store } = storeFor(t);
+  store.updateQueue('TEAM1234', { source, tasks: [task()], blockedErrors: rows });
+  assert.equal(store.snapshot('TEAM1234').queue.errors.length, 2);
+});

@@ -594,16 +594,19 @@ const WITHDRAWN_RUN_STATE = 'abgebrochen_tag_entfernt';
 // Till, 17.10.2026): task_ids with their run_ids at the same index.
 const CAUSE_JOB = /^[A-Za-z0-9_@-]{1,120}$/;
 const MAX_CAUSE_ROWS = 50;
-function causeJobs(value, primary) {
+// The relay rejects the whole snapshot when one row breaks its bounds
+// (team-server/fleet.js validateQueue: task.id 160, task.attemptId 200).
+const MAX_ROW_ID = 160, MAX_ATTEMPT_ID = 200;
+function causeJobs(value, primary, rowId) {
   const jobs = Array.isArray(value?.task_ids) ? value.task_ids.slice(0, MAX_CAUSE_ROWS) : [];
   const runs = Array.isArray(value?.run_ids) && value.run_ids.length === value.task_ids.length ? value.run_ids : [];
   const seen = new Set([primary]);
   const result = [];
   jobs.forEach((job, index) => {
-    if (typeof job !== 'string' || !CAUSE_JOB.test(job) || seen.has(job)) return;
+    if (typeof job !== 'string' || !CAUSE_JOB.test(job) || seen.has(job) || `${rowId}#${job}`.length > MAX_ROW_ID) return;
     seen.add(job);
     const run = runs[index];
-    result.push({ job, attemptId: typeof run === 'string' && /^[A-Za-z0-9_.@:-]{1,240}$/.test(run) ? run : undefined });
+    result.push({ job, attemptId: typeof run === 'string' && run.length <= MAX_ATTEMPT_ID && /^[A-Za-z0-9_.@:-]+$/.test(run) ? run : undefined });
   });
   return result;
 }
@@ -649,7 +652,7 @@ export function buildBlockedErrors(messages, channelId, tasks = [], { manualUplo
         progress: undefined, updatedAt });
     }
     if (!lauf) continue;
-    for (const { job, attemptId } of causeJobs(value, jobId)) {
+    for (const { job, attemptId } of causeJobs(value, jobId, id)) {
       const other = errorJob(job, true);
       if (other.kind === 'upload' && manualUploadIds.has(other.taskId)) continue;
       const row = tasks.find(task => task.id === other.sourceId);
