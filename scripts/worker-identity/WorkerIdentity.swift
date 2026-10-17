@@ -29,7 +29,7 @@ func renderWallpaper(_ identity: Identity, at url: URL) throws {
     try bitmap.representation(using: .png, properties: [:])!.write(to: url, options: .atomic)
 }
 
-final class IdentityApp: NSObject, NSApplicationDelegate {
+final class IdentityApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let identity: Identity
     let directory: URL
     var statusItem: NSStatusItem!
@@ -56,7 +56,7 @@ final class IdentityApp: NSObject, NSApplicationDelegate {
             button.setAccessibilityLabel(identity.name + " · Mac-Worker")
         }
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: identity.name + " · Mac-Worker", action: nil, keyEquivalent: ""))
+        menu.delegate = self
         statusItem.menu = menu
         let original = directory.appendingPathComponent("original-wallpapers.json")
         if !FileManager.default.fileExists(atPath: original.path) {
@@ -74,6 +74,29 @@ final class IdentityApp: NSObject, NSApplicationDelegate {
             name: NSApplication.didChangeScreenParametersNotification, object: nil)
     }
     @objc func screensChanged() { applyWallpaper() }
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        menu.addItem(NSMenuItem(title: identity.name + " · Mac-Worker", action: nil, keyEquivalent: ""))
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/scutil")
+        process.arguments = ["--get", "ComputerName"]
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+        let current = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if current != identity.name {
+            menu.addItem(.separator())
+            let item = NSMenuItem(title: "macOS-Namen auf " + identity.name + " setzen …", action: #selector(finishComputerName), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+    }
+    @objc func finishComputerName() {
+        // Open only after an explicit menu click; the human enters admin authentication in Terminal.
+        NSWorkspace.shared.open(directory.appendingPathComponent("finish-computer-name.command"))
+    }
     func applyWallpaper() {
         let wallpaper = directory.appendingPathComponent("wallpaper.png")
         do {

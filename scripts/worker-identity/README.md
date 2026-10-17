@@ -26,6 +26,10 @@ installer verifies the explicit worker ID and hashes of production config and
 launch agent. It verifies that the worker PID remains unchanged. Changing the
 cosmetic macOS ComputerName may require local admin authentication; do not expand
 sudo permissions or alter network hostnames to work around it.
+For a pending ComputerName, the color menu offers “macOS-Namen auf … setzen”.
+It opens a local Terminal command only after a human clicks the menu item. The
+human supplies macOS administrator authentication there; no password is collected
+or stored by the companion.
 
 To remove, unload only the identity launch agent, restore saved desktop images
 and ComputerName, then remove the companion app/launch agent. Do not touch the

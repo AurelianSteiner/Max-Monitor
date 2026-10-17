@@ -3,7 +3,7 @@
 Payload: {identity, binaryBase64, wallpaperBase64, expected}. For fleet deployment
 the existing Max Monitor SSH transport supplies this payload in memory.
 """
-import base64, hashlib, json, os, pathlib, plistlib, re, shutil, subprocess, sys, time
+import base64, hashlib, json, os, pathlib, plistlib, re, shlex, shutil, subprocess, sys, time
 
 def run(args, **kwargs):
     return subprocess.run(args, capture_output=True, text=True, timeout=20, **kwargs)
@@ -33,6 +33,9 @@ def install(payload):
         (directory/'before.json').write_text(json.dumps(expected,ensure_ascii=False,indent=2)+'\n')
     (directory/'applied.json').unlink(missing_ok=True)
     (directory/'identity.json').write_text(json.dumps(identity,ensure_ascii=False)+'\n')
+    finish=directory/'finish-computer-name.command'
+    finish.write_text('#!/bin/zsh\nset -e\n/usr/bin/sudo /usr/sbin/scutil --set ComputerName '+shlex.quote(identity['name'])+'\n/usr/sbin/scutil --get ComputerName\necho "Fertig. Dieses Fenster kann geschlossen werden."\n')
+    finish.chmod(0o700)
     (directory/'wallpaper.png').write_bytes(base64.b64decode(payload['wallpaperBase64']))
     app = home/'Applications/RS Worker Identity.app'
     assert not app.exists() or previous
