@@ -416,11 +416,11 @@ ClickUp-Aufgabe bleiben als `completed` sichtbar.
 
 Standardmäßig werden diese Workflows erkannt:
 
-| Workflow | Start-Tags | Status-Tags |
+| Workflow | Auftrag / historische Tags | Status-Tags |
 | --- | --- | --- |
-| `newsletter` (Pre-Gen) | `pre gen.` | `pre gen · wartet`, `pre gen · läuft`, `pre gen · pausiert`, `pre gen · blockiert`, `pre gen · fertig` |
-| `upload` (Klaviyo-Upload) | `klaviyo upload` | `klaviyo upload · wartet`, `klaviyo upload · läuft`, `klaviyo upload · blockiert`, `klaviyo upload · fertig` |
-| `translation-en` … `translation-sp` (Übersetzung) | `en translation` (auch `en translations`), ebenso `it`, `fr`, `se`, `sp` | `<sprache> translation · blockiert`, `<sprache> translation · fertig` |
+| `newsletter` (Pre-Gen) | Status `pre-gen`; Tags nur für Fortschritt und Historie | `pre gen · wartet`, `pre gen · läuft`, `pre gen · pausiert`, `pre gen · blockiert`, `pre gen · fertig` |
+| `upload` (Klaviyo-Upload) | Status `klaviyo upload`; Tags nur für Fortschritt und Historie | `klaviyo upload · wartet`, `klaviyo upload · läuft`, `klaviyo upload · blockiert`, `klaviyo upload · fertig` |
+| `translation-en` … `translation-sp` (Übersetzung) | Alte Sprach-Tags erzeugen keinen Auftrag; aktive oder pausierte Reservierungen bleiben sichtbar | `<sprache> translation · blockiert`, `<sprache> translation · fertig` |
 
 Die Tags entsprechen genau denen des Newsletter-Workers (`AI Newsletter Creation`,
 `src/pre-gen.js`). Übersetzungen erscheinen je Sprache als eigene Zeile mit dem
@@ -430,9 +430,11 @@ unter **Läuft** mit „Paket läuft“. Die Zuordnung nutzt dieselbe ClickUp-Au
 oder einen eindeutigen Briefing-Link zur DE-Aufgabe desselben Kunden. Status und
 Worker-Plätze der einzelnen Fassung bleiben erhalten; Blockaden, Pausen und
 PM-Rückfragen bleiben in ihrer bisherigen Ansicht.
-Ist eine EN-Mail unter derselben ClickUp-ID bereits im Review, blendet die Ansicht
-ihren unreservierten alten Übersetzungs-Tag-Eintrag aus. Die abgeschlossene Mail
-bleibt erhalten; aktive oder blockierte Übersetzungen werden nicht ausgeblendet.
+Unreservierte alte Übersetzungs-Tags erzeugen keine wartende Zeile, auch wenn die
+Sprachfassung eine eigene ClickUp-ID hat. Abgeschlossene und blockierte
+Übersetzungen bleiben als Historie erhalten.
+Offene PM-Fragen des aktuellen Versuchs erscheinen auch nach zentraler Sicherung
+als „Wartet · PM-Rückfrage“, ohne einen Platz auf dem ursprünglichen Mac zu belegen.
 Groß-/Kleinschreibung, Leerzeichen und Satzzeichen werden beim Abgleich
 normalisiert; ClickUp-Abfragen verwenden trotzdem die genaue vorhandene
 Schreibweise. Alle Tags werden in **einer** seitenweisen ClickUp-Abfrage gelesen
