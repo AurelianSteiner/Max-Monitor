@@ -104,3 +104,26 @@ test('capability freshness boundary and ready require all full-access receipt fi
   for (const delta of [{ fullAccess: false }, { writesEnabled: false }, { scope: 'restricted' }, { connected: false }])
     assert.equal(publicCapabilities(validateCapabilities(receipt(delta), now), now).ready, false);
 });
+
+// Wire payload frozen from Worker integration.capabilityReceipt; successful Hub
+// replies intentionally use null rather than a synthetic success reason code.
+test('Worker capabilityReceipt null success reason survives relay wire serialization', () => {
+  const wire = JSON.parse(JSON.stringify(receipt({ reasonCode: null })));
+  const accepted = validateCapabilities(wire, now);
+  assert.equal(accepted.reasonCode, null);
+  assert.equal(publicCapabilities(accepted, now).ready, true);
+  assert.equal(validateCapabilities(receipt({ connected: false, reasonCode: null }), now), undefined);
+});
+
+test('actual Worker producer wire fixture roundtrips through the real report and public fleet contract', () => {
+  const wire = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/worker-capability-receipt.json'), 'utf8'));
+  const checked = Date.parse(wire.receipt.checkedAt);
+  const accepted = validateReport(report({ sampledAt: wire.receipt.checkedAt, service: { running: true, lastPollAt: wire.receipt.checkedAt }, rsHubMcp: wire.receipt, integrationContract: wire.contract }), checked);
+  const visible = publicReport(accepted, checked);
+  assert.equal(visible.rsHubMcp.connected, true);
+  assert.equal(visible.rsHubMcp.reasonCode, null);
+  assert.equal(visible.rsHubMcp.ready, true);
+  assert.equal(visible.rsHubMcp.fullAccess, true);
+  assert.equal(visible.integrationContract.worker.revision, 'b'.repeat(40));
+  assert.equal(visible.integrationContract.rsHubMcp.ready, true);
+});

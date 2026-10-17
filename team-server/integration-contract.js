@@ -15,7 +15,8 @@ function validateCapabilities(raw, now = Date.now()) {
     || (raw.toolCount != null && (!Number.isInteger(raw.toolCount) || raw.toolCount < 0 || raw.toolCount > 1000))
     || (raw.version != null && !text(raw.version))
     || (raw.releaseRevision != null && !revision(raw.releaseRevision))
-    || !text(raw.reasonCode) || !/^[a-z0-9][a-z0-9._:-]{0,79}$/i.test(raw.reasonCode)) return undefined;
+    || !(raw.connected && raw.reasonCode === null)
+      && (!text(raw.reasonCode) || !/^[a-z0-9][a-z0-9._:-]{0,79}$/i.test(raw.reasonCode))) return undefined;
   const contracts = raw.contracts && typeof raw.contracts === 'object' && !Array.isArray(raw.contracts)
     ? Object.fromEntries(['incidents', 'blockers', 'release'].filter(key => Number.isInteger(raw.contracts[key])
       && raw.contracts[key] >= 1 && raw.contracts[key] <= 100).map(key => [key, raw.contracts[key]])) : undefined;
@@ -39,8 +40,8 @@ function newerCapabilities(current, candidate) {
 }
 function validateIntegrationContract(raw, now = Date.now()) {
   if (raw?.schema !== 1 || !revision(raw.worker?.revision) || !text(raw.worker?.version)
-    || (raw.skills?.revision !== undefined && !revision(raw.skills.revision))
-    || (raw.skills?.contractDigest !== undefined && !/^[a-f0-9]{64}$/.test(raw.skills.contractDigest))) return undefined;
+    || (raw.skills?.revision != null && !revision(raw.skills.revision))
+    || (raw.skills?.contractDigest != null && !/^[a-f0-9]{64}$/.test(raw.skills.contractDigest))) return undefined;
   const receipt = validateCapabilities(raw.rsHubMcp, now);
   return { schema: 1, worker: { revision: raw.worker.revision, version: raw.worker.version },
     ...(raw.skills ? { skills: { ...(raw.skills.revision ? { revision: raw.skills.revision } : {}),

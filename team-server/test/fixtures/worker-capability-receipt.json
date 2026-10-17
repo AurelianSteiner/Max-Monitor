@@ -1,0 +1,48 @@
+{
+  "producer": "AI Newsletter Creation/src/integration-contract.js capabilityReceipt + integrationContract",
+  "receipt": {
+    "schema": "rs-hub-capabilities/v1",
+    "checkedAt": "2026-10-18T01:00:00.000Z",
+    "connected": true,
+    "fullAccess": true,
+    "writesEnabled": true,
+    "scope": "all-customers",
+    "version": "1.8.6",
+    "toolCount": 29,
+    "releaseRevision": null,
+    "contracts": {
+      "incidents": 1,
+      "blockers": 1,
+      "release": 1
+    },
+    "reasonCode": null
+  },
+  "contract": {
+    "schema": 1,
+    "worker": {
+      "revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "version": "V1.718"
+    },
+    "skills": {
+      "revision": null,
+      "contractDigest": null
+    },
+    "rsHubMcp": {
+      "schema": "rs-hub-capabilities/v1",
+      "checkedAt": "2026-10-18T01:00:00.000Z",
+      "connected": true,
+      "fullAccess": true,
+      "writesEnabled": true,
+      "scope": "all-customers",
+      "version": "1.8.6",
+      "toolCount": 29,
+      "releaseRevision": null,
+      "contracts": {
+        "incidents": 1,
+        "blockers": 1,
+        "release": 1
+      },
+      "reasonCode": null
+    }
+  }
+}
