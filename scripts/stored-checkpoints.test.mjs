@@ -4,11 +4,36 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { readStoredCheckpoints, applyStoredCheckpoints } from './newsletter-monitor-bridge.mjs';
+import { readStoredCheckpoints, applyStoredCheckpoints, buildQueue, addRunDetails, DEFAULT_WORKFLOWS } from './newsletter-monitor-bridge.mjs';
+import { applyPmQuestions } from './pm-question-status.mjs';
 
 const row = extra => ({ id:'correction:korrektur-cu-task@1-intern', workflow:'correction', status:'blocked', workerId:'mac-a',
   blockedReason:'Saved technical blocker', phase:'Korrektur blockiert', run:{id:'run-a',taskId:'task'}, ...extra });
 const saved = extra => ({run_id:'run-a',task_id:'korrektur-cu-task@1-intern',producer:'mac-a',owner:null,ready_at:8640000000000000,...extra});
+
+test('a stored upload with an open PM question waits without occupying its producer Mac', async () => {
+  const now=Date.parse('2026-10-17T12:00:00Z');
+  const task={id:'task',name:'Upload',status:{status:'klaviyo upload'},tags:[{name:'klaviyo upload · rückfrage slack'}]};
+  const claim={taskId:'task',jobId:'task@1-klaviyo',runId:'run-a',workerId:'mac-a',workflow:'klaviyo',state:'final',heartbeat:now/1000,ts:'1792238400.001'};
+  for(const newer of [false,true]) {
+    const rows=buildQueue([task],[claim],DEFAULT_WORKFLOWS,{now});
+    assert.equal(rows[0].status,'queued');
+    const bindings=new Map(rows.map(row=>[row.id,row.run]));
+    await addRunDetails(rows,{hubFetch:async()=>{throw Error('no extra Slack read');},now});
+    assert.equal(rows[0].run,undefined);
+    applyStoredCheckpoints(rows,[saved({task_id:'task@1-klaviyo'})],bindings);
+    assert.equal(rows[0].status,'blocked');
+    if(newer) rows[0].attemptId='newer-run';
+    applyPmQuestions(rows,{sets:[{id:'question',mode:'production',stage:'klaviyo',taskId:'task',workerId:'mac-a',runId:'run-a',threadTs:'1792238400.002',
+      questions:[{id:'Q1',title:'Welcher Coupon?',status:'open'}]}]},bindings);
+    assert.equal(rows[0].status,newer?'blocked':'queued');
+    assert.equal(rows[0].workerId,undefined);
+    if(!newer) {
+      assert.equal(rows[0].phase,'Wartet · PM-Rückfrage');
+      assert.equal(rows[0].blockedReason,'Q1: Welcher Coupon?');
+    }
+  }
+});
 
 test('a saved blocker stays blocked centrally and no longer belongs to its producer Mac', () => {
   const value = row(); applyStoredCheckpoints([value],[saved()]);
