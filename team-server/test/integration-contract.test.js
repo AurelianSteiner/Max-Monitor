@@ -127,3 +127,24 @@ test('actual Worker producer wire fixture roundtrips through the real report and
   assert.equal(visible.integrationContract.worker.revision, 'b'.repeat(40));
   assert.equal(visible.integrationContract.rsHubMcp.ready, true);
 });
+
+test('full rights without exact required Hub protocol contracts never advertise ready', () => {
+  for (const contracts of [undefined, null, {}, { incidents: 1, blockers: 1 },
+    { incidents: 2, blockers: 1, release: 1 }, { incidents: 1, blockers: '1', release: 1 }]) {
+    const accepted = validateCapabilities(receipt({ contracts }), now);
+    assert.equal(accepted.connected, true);
+    assert.equal(accepted.fullAccess, true);
+    assert.equal(publicCapabilities(accepted, now).fresh, true);
+    assert.equal(publicCapabilities(accepted, now).ready, false);
+    assert.equal(publicReport(validateReport(report({ rsHubMcp: accepted }), now), now).agentStatus, 'online');
+  }
+});
+
+test('Worker and relay readiness use exact ten-minute freshness with separate future clock allowance', () => {
+  const accepted = validateCapabilities(receipt(), now);
+  assert.equal(publicCapabilities(accepted, now + 600000).ready, true);
+  assert.equal(publicCapabilities(accepted, now + 600001).ready, false);
+  const future = validateCapabilities(receipt({ checkedAt: iso(30000) }), now);
+  assert.equal(publicCapabilities(future, now).ready, true);
+  assert.equal(validateCapabilities(receipt({ checkedAt: iso(30001) }), now), undefined);
+});

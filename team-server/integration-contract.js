@@ -1,6 +1,6 @@
 // Bounded public evidence only. Capability health is independent of liveness.
 const SHA = /^[a-f0-9]{40,64}$/;
-const MCP_FRESH_MS = 10 * 60 * 1000 + 30000;
+const MCP_FRESH_MS = 10 * 60 * 1000;
 const text = (value, limit = 80) => typeof value === 'string' && value.length > 0 && value.length <= limit
   && !/[\u0000-\u001f\u007f]/.test(value) ? value : undefined;
 const revision = value => typeof value === 'string' && SHA.test(value) ? value : undefined;
@@ -32,7 +32,8 @@ function publicCapabilities(receipt, now = Date.now()) {
   const at = Date.parse(receipt.checkedAt);
   const fresh = Number.isFinite(at) && now - at <= MCP_FRESH_MS && at <= now + 30000;
   return { ...receipt, fresh, ready: Boolean(fresh && receipt.connected && receipt.fullAccess && receipt.writesEnabled
-    && receipt.scope === 'all-customers') };
+    && receipt.scope === 'all-customers'
+    && ['incidents', 'blockers', 'release'].every(key => receipt.contracts?.[key] === 1)) };
 }
 function newerCapabilities(current, candidate) {
   if (!candidate) return current;

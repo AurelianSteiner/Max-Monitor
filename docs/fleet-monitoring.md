@@ -748,9 +748,9 @@ Optional liefert der Worker `rsHubMcp` mit Schema `rs-hub-capabilities/v1`:
 Protokollkennungen `contracts.incidents`, `contracts.blockers`, `contracts.release`.
 `scope` ist `all-customers`, `restricted` oder `unknown`. Bei einer gescheiterten
 Verbindung können die nicht beobachtbaren Rechte `null` sein. Der Relay berechnet
-`fresh` ausschließlich aus dem echten Prüfzeitpunkt (höchstens zehn Minuten plus
-30 Sekunden Toleranz) und `ready` ausschließlich aus frischem Vollzugriff mit
-Schreibfreigabe auf alle Kunden. Ein neuer Herzschlag erneuert keinen alten
+`fresh` ausschließlich aus dem echten Prüfzeitpunkt (höchstens zehn Minuten; bis zu 30 Sekunden Uhrvorlauf sind separat erlaubt) und `ready` ausschließlich aus frischem Vollzugriff mit
+Schreibfreigabe auf alle Kunden und exakt passenden Protokollkennungen
+`incidents=1`, `blockers=1`, `release=1`. Ein neuer Herzschlag erneuert keinen alten
 Rechtenachweis. Eine verzögert gelieferte alte Erfolgsmeldung ersetzt keinen
 neueren fehlgeschlagenen Test. Eine MCP-Störung ändert weder den Dienstbeleg noch
 den letzten Aufgabenpoll oder die Mac-Erreichbarkeit.
