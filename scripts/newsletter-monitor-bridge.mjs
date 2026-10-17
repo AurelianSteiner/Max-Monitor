@@ -1226,7 +1226,7 @@ export async function readLocalHubFleet(hub, { fleetDirectory = path.join(hub.hu
 
 export async function readLocalSales(directory, now = Date.now()) {
   const rows = [];
-  const statuses = { reserved: 'queued', running: 'running', delivery: 'running', blocked: 'blocked', done: 'completed' };
+  const statuses = { reserved: 'queued', running: 'running', delivery: 'running', paused: 'queued', blocked: 'blocked', done: 'completed' };
   const phases = { reserved: 'Reserviert', running: 'In Bearbeitung', delivery: 'PDF-Upload', blocked: 'Sales blockiert', done: 'Fertig' };
   let names;
   try { names = await fs.readdir(directory); }
@@ -1257,7 +1257,7 @@ export async function readLocalSales(directory, now = Date.now()) {
       if (!stat.isFile() || stat.size > 2 * 1024 * 1024) throw new Error('Ungültige Jobdatei');
       const job = JSON.parse(await fs.readFile(file, 'utf8'));
       if (job.status === 'aborted') continue;
-      const paused = ['reserved', 'running', 'delivery'].includes(job.status) && job.monitor?.paused === true;
+      const paused = job.status === 'paused' || (['reserved', 'running', 'delivery'].includes(job.status) && job.monitor?.paused === true);
       const status = Object.hasOwn(statuses, job.status) ? paused ? 'queued' : statuses[job.status] : undefined;
       const stamp = job.observed_at || job.updated_at || job.created_at;
       const finished = job.completed_at || job.finished_at || job.done_at || job.delivered_at;

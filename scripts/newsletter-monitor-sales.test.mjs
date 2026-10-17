@@ -137,3 +137,28 @@ test('paused Sales work remains queued with its owner and resumes the same attem
   assert.equal(resumed.status, 'running');
   assert.equal(resumed.attemptId, paused.attemptId);
 });
+
+test('stored quota checkpoints permit a fresh complete queue and retain the attempt on transfer', async t => {
+  const directory = await fixture(t, [job({ status: 'paused', observed_at: now - 3600000,
+    monitor: { paused: false }, continuation: { status: 'stored' } })]);
+  const config = { clickup: { workspace_id: 'test' }, slack: { channel_id: 'test' }, hub: {} };
+  const snapshot = await collectSnapshot({ now, config,
+    hubFetch: async () => ({ ok: true, status: 200, json: async () => ({ spaces: [], tasks: [] }) }),
+    claimReader: async () => [], fleetReader: async () => [], salesReader: time => readLocalSales(directory, time) });
+  assert.equal(snapshot.source.lastSuccessAt, new Date(now).toISOString());
+  assert.equal(snapshot.tasks[0].status, 'queued');
+  const store = createFleetStore(path.join(directory, 'relay'), () => now);
+  store.updateQueue('SALESTEST', snapshot);
+  const [paused] = store.snapshot('SALESTEST').queue.tasks;
+  assert.equal(paused.sourceStatus, 'paused');
+  assert.equal(paused.status, 'paused');
+  assert.equal(paused.phase, 'Pausiert · wartet außerhalb der Worker-Plätze');
+  assert.equal(paused.workerId, 'macbook-1');
+  assert.notEqual(paused.progress, 100);
+  await fs.writeFile(path.join(directory, ts(0), 'job.json'), JSON.stringify(job({ worker: 'mac-f121ae17' })));
+  store.updateQueue('SALESTEST', { ...snapshot, tasks: await readLocalSales(directory, now) });
+  const [resumed] = store.snapshot('SALESTEST').queue.tasks;
+  assert.equal(resumed.status, 'running');
+  assert.equal(resumed.workerId, 'mac-f121ae17');
+  assert.equal(resumed.attemptId, paused.attemptId);
+});
