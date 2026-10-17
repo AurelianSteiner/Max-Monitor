@@ -348,7 +348,7 @@ function machineLiveness(machine, worker, now) {
 }
 
 function workerDisplayName(workerId, fallback) {
-  return workerId === "mac-worker-6-64d66918" ? "MacWorker 6" : workerId || fallback;
+  return require("./worker-identities.json")[workerId]?.name || workerId || fallback;
 }
 
 function publicMachine(machine, now) {
@@ -960,6 +960,8 @@ function createFleetStore(dataDir, now = Date.now) {
     return {
       schema: 1,
       generatedAt: new Date(time).toISOString(),
+      // Cosmetic aliases only; enrollment, SSH, task ownership and stored IDs stay unchanged.
+      workerIdentities: require("./worker-identities.json"),
       heartbeatIntervalSeconds: HEARTBEAT_INTERVAL_SECONDS,
       ...(state.latestSkillRelease ? { skillRelease: { ...state.latestSkillRelease,
         fresh: (state.workerReports || []).some(report => report.skillRelease?.revision === state.latestSkillRelease.revision
