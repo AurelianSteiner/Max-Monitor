@@ -575,9 +575,47 @@ export function parseWorkerIssue(message) {
     reportedAt: new Date(time).toISOString() };
 }
 
+// Workflow kind, ClickUp ID and monitor task ID of a job in an error copy.
+function errorJob(jobId, lauf) {
+  const correction = /^(?:korrektur-)?cu-([A-Za-z0-9_-]+)@\d+-(?:intern|extern)(?:-file-[a-f0-9]{31,32})?$/.exec(jobId);
+  const translation = /^(.+)-uebersetzung-(en|it|fr|se|sp)$/.exec(jobId);
+  const upload = /^(.+)-klaviyo$/.exec(jobId);
+  const kind = correction ? 'correction' : translation ? `translation-${translation[2]}` : upload ? 'upload' : lauf ? 'newsletter' : 'worker-errors';
+  const taskId = (correction?.[1] || translation?.[1] || upload?.[1] || jobId).replace(/@\d+$/, '');
+  return { kind, taskId, sourceId: correction ? `correction:${jobId}` : `clickup:${kind}:${taskId}`,
+    workflow: kind.startsWith('translation-') ? 'translation' : kind };
+}
+
+// Worker run state of an order whose ClickUp status was withdrawn (src/slack-notifier.js
+// fehlerKopieText abgebrochen: „🛑 Abgebrochen: ClickUp-Status zurückgezogen“).
+const WITHDRAWN_RUN_STATE = 'abgebrochen_tag_entfernt';
+
+// Further orders of a cause post (#ai-fehler nur bei menschlichem Handlungsbedarf,
+// Till, 17.10.2026): task_ids with their run_ids at the same index.
+const CAUSE_JOB = /^[A-Za-z0-9_@-]{1,120}$/;
+const MAX_CAUSE_ROWS = 50;
+// The relay rejects the whole snapshot when one row breaks its bounds
+// (team-server/fleet.js validateQueue: task.id 160, task.attemptId 200).
+const MAX_ROW_ID = 160, MAX_ATTEMPT_ID = 200;
+function causeJobs(value, primary, rowId) {
+  const jobs = Array.isArray(value?.task_ids) ? value.task_ids.slice(0, MAX_CAUSE_ROWS) : [];
+  const runs = Array.isArray(value?.run_ids) && value.run_ids.length === value.task_ids.length ? value.run_ids : [];
+  const seen = new Set([primary]);
+  const result = [];
+  jobs.forEach((job, index) => {
+    if (typeof job !== 'string' || !CAUSE_JOB.test(job) || seen.has(job) || `${rowId}#${job}`.length > MAX_ROW_ID) return;
+    seen.add(job);
+    const run = runs[index];
+    result.push({ job, attemptId: typeof run === 'string' && run.length <= MAX_ATTEMPT_ID && /^[A-Za-z0-9_.@:-]+$/.test(run) ? run : undefined });
+  });
+  return result;
+}
+
 // One row per still-present bot error in #ai-fehler, independent of historical
-// ClickUp tags, claim outcomes and canceled Sales tests. Removing the error in
-// Slack removes this row on the next complete scan. Never synthesize completion.
+// ClickUp tags, claim outcomes and canceled Sales tests. A cause post that names
+// several orders (task_ids) gives one row per order, each with the same Slack
+// link. Removing the error in Slack removes its rows on the next complete scan.
+// Never synthesize completion.
 export function buildBlockedErrors(messages, channelId, tasks = [], { manualUploadIds = new Set() } = {}) {
   const rows = new Map();
   const slackText = text => String(text || '').replace(/<[^|>]+\|([^>]+)>/g, '$1')
@@ -589,15 +627,12 @@ export function buildBlockedErrors(messages, channelId, tasks = [], { manualUplo
     if (!value && !issue) continue;
     const time = Number(message.ts) * 1000;
     if (!/^\d+\.\d+$/.test(message.ts) || !Number.isFinite(time) || time <= 0 || time > 8640000000000000) throw new Error('Slack: Fehlermeldung ohne gültige Nachrichten-ID.');
+    const lauf = value?.kind === 'lauf';
+    // KOR-10: the worker rewrote this copy for a withdrawn order; no open error.
+    if (lauf && value.state === WITHDRAWN_RUN_STATE) continue;
     const text = String(message.text || '');
     const jobId = String(value?.task_id || '');
-    const correction = /^(?:korrektur-)?cu-([A-Za-z0-9_-]+)@\d+-(?:intern|extern)(?:-file-[a-f0-9]{31,32})?$/.exec(jobId);
-    const translation = /^(.+)-uebersetzung-(en|it|fr|se|sp)$/.exec(jobId);
-    const upload = /^(.+)-klaviyo$/.exec(jobId);
-    const kind = correction ? 'correction' : translation ? `translation-${translation[2]}` : upload ? 'upload' : value?.kind === 'lauf' ? 'newsletter' : 'worker-errors';
-    const taskId = (correction?.[1] || translation?.[1] || upload?.[1] || jobId).replace(/@\d+$/, '');
-    if (kind === 'upload' && manualUploadIds.has(taskId)) continue;
-    const sourceId = correction ? `correction:${jobId}` : `clickup:${kind}:${taskId}`;
+    const { kind, taskId, sourceId, workflow } = errorJob(jobId, lauf);
     const source = tasks.find(task => task.id === sourceId);
     const taskLink = /<(https:\/\/app\.clickup\.com\/t\/[A-Za-z0-9_-]+)\|([^>]+)>/.exec(text);
     // Existing worker copies contain a permalink to their original channel.
@@ -607,12 +642,27 @@ export function buildBlockedErrors(messages, channelId, tasks = [], { manualUplo
     const diagnosis = issue?.message || parseBlockedReason(body) || 'Offene Fehlermeldung in #ai-fehler';
     const company = displayText(slackText(text.split('\n')[0]).replace(/[*`]/g, '').split(' · ').slice(1).join(' · '), 200);
     const id = `slack-error:${channelId}:${message.ts}`;
-    rows.set(id, { ...source, id, status: 'blocked', workflow: kind.startsWith('translation-') ? 'translation' : kind,
-      title: displayText(slackText(taskLink?.[2] || source?.title || (issue ? `Worker · ${issue.workerId} · ${issue.stage}` : text.split('\n')[0])), 300, 'Fehler in #ai-fehler'),
-      url: taskLink?.[1] || source?.url, errorUrl,
-      company: source?.company || company, workerId: value?.worker || issue?.workerId,
-      phase: 'Offen in #ai-fehler', blockedReason: diagnosis, attemptId: value?.run_id,
-      progress: undefined, updatedAt: new Date(time).toISOString() });
+    const updatedAt = new Date(time).toISOString();
+    if (!(kind === 'upload' && manualUploadIds.has(taskId))) {
+      rows.set(id, { ...source, id, status: 'blocked', workflow,
+        title: displayText(slackText(taskLink?.[2] || source?.title || (issue ? `Worker · ${issue.workerId} · ${issue.stage}` : text.split('\n')[0])), 300, 'Fehler in #ai-fehler'),
+        url: taskLink?.[1] || source?.url, errorUrl,
+        company: source?.company || company, workerId: value?.worker || issue?.workerId,
+        phase: 'Offen in #ai-fehler', blockedReason: diagnosis, attemptId: value?.run_id,
+        progress: undefined, updatedAt });
+    }
+    if (!lauf) continue;
+    for (const { job, attemptId } of causeJobs(value, jobId, id)) {
+      const other = errorJob(job, true);
+      if (other.kind === 'upload' && manualUploadIds.has(other.taskId)) continue;
+      const row = tasks.find(task => task.id === other.sourceId);
+      rows.set(`${id}#${job}`, { ...row, id: `${id}#${job}`, status: 'blocked', workflow: other.workflow,
+        title: displayText(row?.title || job, 300, 'Fehler in #ai-fehler'),
+        url: row?.url || `https://app.clickup.com/t/${encodeURIComponent(other.taskId)}`, errorUrl,
+        company: row?.company || company, workerId: value.worker,
+        phase: 'Offen in #ai-fehler', blockedReason: diagnosis, attemptId,
+        progress: undefined, updatedAt });
+    }
   }
   return [...rows.values()];
 }
@@ -718,10 +768,39 @@ function taskUrl(task) {
   return `https://app.clickup.com/t/${encodeURIComponent(task.id)}`;
 }
 
+// A Mac whose own heartbeat reached the RS Hub this recently is alive (the
+// worker heartbeat's validity, docs/fleet-monitoring.md: 180 s).
+export const FLEET_FRESH_MS = 180000;
+// How long a live Mac's reservation may lag behind before it counts as silent.
+export const RESERVATION_LAG_MS = 2 * 3600000;
+export const RESERVATION_LAG_PHASE = 'Wartet · Mac aktiv, Reservierungsmeldung an den RS Hub verzögert';
+
+// D11-M2 (Fehleraudit 17.10.2026): a live reservation whose own heartbeat is stale
+// while its Mac's fleet heartbeat is fresh. The Mac works; only the reservation
+// sync lags (Hub transport, Slack update limits). It waits and is not blocked.
+// A reservation silent for longer than RESERVATION_LAG_MS stays blocked.
+function reservationLags(claim, seenAt, now) {
+  const seen = seenAt.get(claim?.workerId);
+  const macAge = now - seen, claimAge = now - claim?.heartbeat * 1000;
+  return Number.isFinite(macAge) && macAge >= -30000 && macAge <= FLEET_FRESH_MS
+    && Number.isFinite(claimAge) && claimAge <= RESERVATION_LAG_MS;
+}
+
+function fleetSeen(workers) {
+  const seen = new Map();
+  for (const worker of Array.isArray(workers) ? workers : []) {
+    const at = Date.parse(worker?.lastSeenAt);
+    if (typeof worker?.workerId === 'string' && Number.isFinite(at) && !(seen.get(worker.workerId) >= at)) seen.set(worker.workerId, at);
+  }
+  return seen;
+}
+
 // tasks may carry statusSince (the worker's status epoch, readStatusEpochs).
 // admission: the worker's admission predicates (workerAdmission, loadWorkerAdmission).
-export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, figmaBoardUrl, admission = workerAdmission() } = {}) {
+// workers: the Macs' heartbeats read from the RS Hub (parseObservedWorkers).
+export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, figmaBoardUrl, admission = workerAdmission(), workers } = {}) {
   const updatedAt = new Date(now).toISOString();
+  const seenAt = fleetSeen(workers);
   const rows = [];
   for (const task of tasks) {
     const tags = task.tags.map(tag => typeof tag === 'string' ? tag : String(tag?.name ?? ''));
@@ -752,6 +831,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       if (pausedTag && !fresh) { status = 'queued'; phase = 'Wartet · automatische Fortsetzung'; }
       if ((!pausedTag || fresh) && status !== 'completed' && status !== 'failed' && status !== 'blocked') {
         if (fresh) { status = fresh.state === 'running' ? 'running' : 'queued'; phase = fresh.state === 'running' ? 'In Bearbeitung' : 'Reserviert'; }
+        else if (active.length && reservationLags(active[0], seenAt, now)) { status = 'queued'; phase = RESERVATION_LAG_PHASE; }
         else if (active.length) { status = 'blocked'; phase = 'Worker meldet sich nicht mehr'; }
         else if (status === 'running') { phase = 'Läuft laut ClickUp; Worker-Zuordnung fehlt'; }
       }
@@ -799,9 +879,10 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
     if (claim.state === 'released' && claim.outcome !== 'completed') continue;
     const active = ['claiming', 'running'].includes(claim.state);
     const fresh = now - claim.heartbeat * 1000 <= staleMinutes * 60000;
+    const lagging = active && !fresh && reservationLags(claim, seenAt, now);
     const paused = claim.paused && claim.outcome !== 'completed';
-    const status = paused ? 'queued' : active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : 'blocked' : claim.outcome || 'blocked';
-    const phase = paused && claim.portable ? 'Wartet · Fortsetzung in der zentralen Queue' : paused ? active ? 'Pausiert · wartet außerhalb der Worker-Plätze' : 'Wartet · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : 'Worker meldet sich nicht mehr'
+    const status = paused ? 'queued' : active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : lagging ? 'queued' : 'blocked' : claim.outcome || 'blocked';
+    const phase = paused && claim.portable ? 'Wartet · Fortsetzung in der zentralen Queue' : paused ? active ? 'Pausiert · wartet außerhalb der Worker-Plätze' : 'Wartet · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : lagging ? RESERVATION_LAG_PHASE : 'Worker meldet sich nicht mehr'
       : status === 'completed' ? 'Korrektur abgeschlossen' : claim.awaitingPm ? 'PM-Rückfrage offen'
         : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
     const task = tasks.find(task => task.id === claim.taskId);
@@ -1256,7 +1337,10 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
   return rows;
 }
 
-export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, checkpointReader, reservationReader, maxTasksOf, claimReader = listClaims, statusCache, epochRefusals = new Map(), warn = () => {}, admission = workerAdmission(), now = Date.now() }) {
+// errorPayloads (optional Map): filled with ts -> metadata of every top-level copy
+// in #ai-fehler, only after a complete read of that channel; the error-copy
+// cleanup decides from it which copies stay before reading any thread.
+export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, checkpointReader, reservationReader, maxTasksOf, claimReader = listClaims, statusCache, epochRefusals = new Map(), warn = () => {}, admission = workerAdmission(), errorPayloads, now = Date.now() }) {
   validateWorkflows(workflows);
   const issues = new Map();
   const onMessage = message => {
@@ -1320,6 +1404,14 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   ]);
   // Clear resolved notices only after every configured warning channel was read completely.
   const workerIssues = claimResult.status === 'fulfilled' && issueResult.status === 'fulfilled' ? [...issues.values()] : undefined;
+  if (errorPayloads) {
+    errorPayloads.clear();
+    if (errorChannel && issueResult.status === 'fulfilled') for (const message of errorMessages) {
+      if ((message.thread_ts && message.thread_ts !== message.ts) || message.metadata?.event_type !== 'ai_newsletter_fehler') continue;
+      const value = message.metadata.event_payload;
+      if (typeof message.ts === 'string' && value && typeof value === 'object') errorPayloads.set(message.ts, value);
+    }
+  }
   if ([taskResult, claimResult, issueResult, salesResult, questionResult, checkpointResult].some(result => result.status === 'rejected')) {
     const error = [taskResult, claimResult, issueResult, salesResult, questionResult, checkpointResult].find(result => result.status === 'rejected').reason;
     return { ...(workerIssues === undefined ? {} : { workerIssues }), source: {
@@ -1338,7 +1430,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const observedWorkers = workerResult.status === 'fulfilled' ? workerResult.value : undefined;
   const fleetDetail = workerResult.status === 'rejected'
     ? 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.' : undefined;
-  const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl, admission });
+  const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl, admission, workers: observedWorkers });
   // Keep a confirmed date after its source thread leaves the history window.
   // Any currently visible attempt prevents borrowing an older success.
   retainCompletionDates(queue, previousTasks, claims);
@@ -1489,6 +1581,9 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const claimReader = createClaimReader();
   const statusCache = new Map();
   const epochRefusals = new Map();
+  const errorPayloads = new Map();
+  // The cleanup's last failure: logged once per episode, its end once (no line per minute).
+  let cleanupProblem = null;
   const saveSnapshot = async snapshot => {
     await fs.mkdir(path.dirname(options.cacheFile), { recursive: true, mode: 0o700 });
     const temporary = `${options.cacheFile}.${process.pid}.tmp`;
@@ -1516,7 +1611,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
           }); } catch { console.error(`${new Date().toISOString()} Status-Audit: Monitor nicht lesbar; regulärer Quellenabgleich läuft weiter.`); }
         }
         const readsBefore = { ...claimReader.stats };
-        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, statusCache, epochRefusals, admission, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
+        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, statusCache, epochRefusals, admission, errorPayloads, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
           warn: message => console.error(`${new Date().toISOString()} ${displayText(message, 300)}`),
           previews, previousTasks: cached?.tasks, ...(typeof maxTasksPerMac === 'function' ? { maxTasksOf: maxTasksPerMac } : {}),
           ...(options.localHub ? { fleetReader: readLocalHubFleet,
@@ -1543,8 +1638,10 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
         if (result.ok && slackWrite && freshClaimCycle(readsBefore, claimReader.stats)) {
           try {
             const cleaned = await cleanupErrorCopies({ readFleet, hubFetch, slackWrite, errorChannel,
+              payloadOf: ts => errorPayloads.get(ts) ?? null,
               archive: entry => fs.appendFile(path.join(path.dirname(options.cacheFile), 'error-copy-cleanup.jsonl'),
                 JSON.stringify(entry) + '\n', { mode: 0o600 }) });
+            if (cleanupProblem) { console.log(`${new Date().toISOString()} Fehlerbereinigung läuft wieder.`); cleanupProblem = null; }
             if (cleaned.deleted.length) {
               claimReader.invalidate(errorChannel);
               const ids = new Set(cleaned.deleted);
@@ -1556,10 +1653,14 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
               if (latest.queue.source.lastSuccessAt === result.snapshot.source.lastSuccessAt) {
                 await publishSnapshot(updated, options); await saveSnapshot(updated);
               }
-              console.log(`${new Date().toISOString()} ${ids.size} aufgehobene Fehlerkopien entfernt.`);
+              // A cause post shown as several rows is one copy.
+              const copies = new Set(cleaned.deleted.map(id => id.replace(/#.*$/, ''))).size;
+              console.log(`${new Date().toISOString()} ${copies} aufgehobene Fehlerkopien entfernt.`);
             }
           } catch (error) {
-            console.error(`${new Date().toISOString()} Fehlerbereinigung: ${String(error.message).replaceAll(options.token || '\0', '[REDACTED]').slice(0, 200)}`);
+            const message = String(error.message).replaceAll(options.token || '\0', '[REDACTED]').slice(0, 200);
+            if (message !== cleanupProblem) console.error(`${new Date().toISOString()} Fehlerbereinigung: ${message} (weitere gleiche Fehler werden nicht erneut gemeldet; Bereinigung wird jeden Abgleich wiederholt)`);
+            cleanupProblem = message;
           }
         }
         if (!result.ok && options.once) process.exitCode = 1;

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { buildBlockedErrors, collectSnapshot, createClaimReader, listClaims } from './newsletter-monitor-bridge.mjs';
+import { buildBlockedErrors, collectSnapshot, createClaimReader, listClaims, RESERVATION_LAG_PHASE } from './newsletter-monitor-bridge.mjs';
 const { createFleetStore } = createRequire(import.meta.url)('../team-server/fleet.js');
 const channel = 'C0C8HK2NDFE';
 const now = Date.parse('2026-10-12T17:00:00Z');
@@ -158,4 +158,94 @@ test('conflicting live owners keep accepted work visible without adding a non-Sl
   assert.equal(rows.length, 1);
   assert.equal(rows[0].status, 'running');
   assert.equal(rows[0].phase, 'Mehrere Worker melden denselben Auftrag');
+});
+
+// #ai-fehler nur bei menschlichem Handlungsbedarf (Till, 17.10.2026, Fehleraudit):
+// one post per customer and cause may name several orders (task_ids). Max Monitor
+// shows one row per order, all linking to the same post.
+test('a cause post naming three orders becomes three rows with the same Slack link', t => {
+  const jobs = ['abc@123', 'def@124-klaviyo', 'korrektur-cu-ghi@125-extern'];
+  const runs = jobs.map((job, i) => `20261017T08000${i}Z-${job}`);
+  const message = error('abc@123', '1791823000.000009');
+  message.metadata.event_payload = { ...message.metadata.event_payload, run_id: runs[0], grund: 'stammdaten',
+    ursache: 'f'.repeat(64), task_ids: [...jobs, jobs[0], 'not a job!'], run_ids: [...runs, runs[0], 'x'] };
+  const queue = [task(), { id: 'clickup:upload:def', title: 'Upload Def', workflow: 'upload', status: 'blocked', url: 'https://app.clickup.com/t/def' }];
+  const rows = buildBlockedErrors([message], channel, queue);
+  assert.deepEqual(rows.map(row => [row.id, row.workflow, row.attemptId]), [
+    [`slack-error:${channel}:1791823000.000009`, 'newsletter', runs[0]],
+    [`slack-error:${channel}:1791823000.000009#${jobs[1]}`, 'upload', runs[1]],
+    [`slack-error:${channel}:1791823000.000009#${jobs[2]}`, 'correction', runs[2]],
+  ]);
+  assert.equal(new Set(rows.map(row => row.errorUrl)).size, 1);
+  assert.ok(rows.every(row => row.status === 'blocked' && row.blockedReason === 'Übergabe fehlgeschlagen' && row.phase === 'Offen in #ai-fehler'));
+  assert.deepEqual(rows.map(row => row.url), ['https://app.clickup.com/t/abc', 'https://app.clickup.com/t/def', 'https://app.clickup.com/t/ghi']);
+  assert.equal(rows[1].title, 'Upload Def');
+  // A manual upload is left out, like a single copy of it.
+  assert.equal(buildBlockedErrors([message], channel, queue, { manualUploadIds: new Set(['def']) }).length, 2);
+  // The relay accepts these rows, enriches the matching task and keeps the permalink check.
+  const { store } = storeFor(t);
+  store.updateQueue('TEAM1234', { source, tasks: queue, blockedErrors: rows });
+  const snapshot = store.snapshot('TEAM1234');
+  assert.equal(snapshot.queue.errors.length, 3);
+  assert.equal(snapshot.queue.tasks.find(row => row.id === 'clickup:upload:def').errorUrl, rows[1].errorUrl);
+  assert.throws(() => store.updateQueue('TEAM1234', { source, tasks: queue,
+    blockedErrors: [{ ...rows[1], errorUrl: `https://ruegamer-steiner.slack.com/archives/${channel}/p1791823000000001` }] }), e => e.status === 400);
+  assert.throws(() => store.updateQueue('TEAM1234', { source, tasks: queue, blockedErrors: [{ ...rows[1], id: `${rows[0].id}#bad job` }] }), e => e.status === 400);
+});
+
+test('a complete error-channel scan hands the copies\' metadata to the cleanup; a partial one hands none', async () => {
+  let fail = false;
+  const config = { clickup: { workspace_id: 'test' }, slack: { channel_id: 'status' }, monitor_channels: { errors: channel }, hub: {} };
+  const reply = { ...error('abc@123', '1791823000.000002'), thread_ts: '1791823000.000001' };
+  const collect = errorPayloads => collectSnapshot({ config, now, errorPayloads, fleetReader: async () => [], hubFetch: async target => {
+    const url = new URL(target);
+    return { ok: true, json: async () => url.hostname !== 'slack.com' ? { spaces: [], tasks: [] }
+      : url.searchParams.get('channel') === channel ? { ok: true, messages: [error(), reply], has_more: fail }
+      : { ok: true, messages: [], has_more: false } };
+  } });
+  const payloads = new Map([['stale', {}]]);
+  await collect(payloads);
+  assert.deepEqual([...payloads.keys()], ['1791823000.000001']);
+  assert.equal(payloads.get('1791823000.000001').run_id, 'attempt-abc@123');
+  fail = true;
+  await collect(payloads);
+  assert.equal(payloads.size, 0);
+});
+
+// KOR-10: a copy the worker rewrote for a withdrawn order („🛑 Abgebrochen:
+// ClickUp-Status zurückgezogen“, state abgebrochen_tag_entfernt) is no open
+// error. It never shows as blocked; under the 17.10. policy the worker deletes it.
+test('a copy rewritten for a withdrawn order is no blocked row', () => {
+  const withdrawn = error('korrektur-cu-abc@123-extern', '1791823000.000010');
+  withdrawn.text = '*Korrektur · Kunde*\n🛑 Abgebrochen: ClickUp-Status zurückgezogen · keine automatische Fortsetzung: <https://app.clickup.com/t/abc|Mail>';
+  withdrawn.metadata.event_payload = { ...withdrawn.metadata.event_payload, state: 'abgebrochen_tag_entfernt' };
+  const open = error('abc@123', '1791823000.000011');
+  open.metadata.event_payload = { ...open.metadata.event_payload, state: 'blockiert' };
+  assert.deepEqual(buildBlockedErrors([withdrawn, open], channel, [task()]).map(row => row.id), [`slack-error:${channel}:1791823000.000011`]);
+});
+
+// Review D12-07: the relay rejects a whole snapshot when one row breaks its
+// bounds (task.id <= 160, task.attemptId <= 200 characters). A cause row whose
+// ID or run would exceed them is left out instead of stopping the queue.
+test('cause rows stay within the relay bounds, so one long job never rejects the snapshot', t => {
+  const long = 'x'.repeat(118) + '@1';
+  const message = error('abc@123', '1791823000.000012');
+  message.metadata.event_payload = { ...message.metadata.event_payload, grund: 'stammdaten',
+    task_ids: ['abc@123', long, 'def@124'], run_ids: ['attempt-abc@123', `20261017T080000Z-${long}`, `20261017T080001Z-${'d'.repeat(200)}`] };
+  const rows = buildBlockedErrors([message], channel, [task()]);
+  assert.deepEqual(rows.map(row => row.id), [`slack-error:${channel}:1791823000.000012`, `slack-error:${channel}:1791823000.000012#def@124`]);
+  assert.ok(rows.every(row => row.id.length <= 160 && (row.attemptId === undefined || row.attemptId.length <= 200)));
+  const { store } = storeFor(t);
+  store.updateQueue('TEAM1234', { source, tasks: [task()], blockedErrors: rows });
+  assert.equal(store.snapshot('TEAM1234').queue.errors.length, 2);
+});
+
+// The relay recognises the bridge's lag phase: the Mac's own report without the
+// run turns it into a pending worker check (review D11-M2).
+test('the relay knows the bridge\'s lagging-reservation phase', t => {
+  const { store } = storeFor(t);
+  store.updateQueue('TEAM1234', { source, blockedErrors: [], tasks: [{ ...task('queued'), workerId: 'mac-1', attemptId: 'run-a', phase: RESERVATION_LAG_PHASE }] });
+  store.workerReport('TEAM1234', { schema: 1, workerId: 'mac-1', sampledAt: new Date(now).toISOString(),
+    service: { running: true, lastPollAt: new Date(now).toISOString() }, activity: { state: 'idle', acceptingTasks: true, runs: [] } });
+  assert.equal(store.snapshot('TEAM1234').queue.tasks[0].phase, 'Worker-Abgleich ausstehend');
 });

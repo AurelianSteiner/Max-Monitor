@@ -74,6 +74,24 @@ test('an explicit fresh idle report removes a stale running assignment without c
   assert.equal(row.phase, 'Worker-Abgleich ausstehend');
 });
 
+// Review D11-M2: a lagging reservation of a live Mac waits; but when that Mac's
+// own fresh report does not list the run, Mac and reservation disagree.
+test('a lagging reservation that its own Mac does not report is a pending worker check, other waits keep their phase', t => {
+  const { store, update, report } = setup(t);
+  update([mail('lag', { status: 'queued', workerId: 'mac-1', attemptId: 'run-lag',
+    phase: 'Wartet · Mac aktiv, Reservierungsmeldung an den RS Hub verzögert' }),
+    mail('wait', { status: 'queued', workerId: 'mac-1', phase: 'Wartet · automatische Fortsetzung' })]);
+  assert.equal(store.snapshot('TEAM1234').queue.tasks.find(row => row.id === mail('lag').id).phase,
+    'Wartet · Mac aktiv, Reservierungsmeldung an den RS Hub verzögert');
+  report([]);
+  const rows = store.snapshot('TEAM1234').queue.tasks;
+  const lag = rows.find(row => row.id === mail('lag').id), wait = rows.find(row => row.id === mail('wait').id);
+  assert.deepEqual([lag.status, lag.workerId, lag.phase], ['queued', null, 'Worker-Abgleich ausstehend']);
+  assert.deepEqual([wait.status, wait.workerId, wait.phase], ['queued', null, 'Wartet · automatische Fortsetzung']);
+  report([{ id: mail('lag').id, title: 'lag', runId: 'run-lag', workflow: 'newsletter', status: 'running' }]);
+  assert.equal(store.snapshot('TEAM1234').queue.tasks.find(row => row.id === mail('lag').id).status, 'running');
+});
+
 test('diagnoses do not cross correction jobs, workflow boundaries or newer blocking attempts', t => {
   const { store, update } = setup(t);
   const correction = job => ({ id: `correction:${job}`, title: 'Mail correction', workflow: 'correction', status: 'blocked',

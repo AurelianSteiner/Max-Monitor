@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged, readWorker, workerArtifactBundle } from './setup-mac-monitor.mjs';
+import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged, readWorker, workerArtifactBundle, main, buildCause } from './setup-mac-monitor.mjs';
 import { createHash } from 'node:crypto';
 
 const DEVICE_ID = '610be10e-8a00-4e00-b000-000000000051';
@@ -287,6 +287,9 @@ test('the 14.10. helper release (3e87220 to 1d0d4ab) reuses the published native
   }),true);
 });
 
+// A14-02 (Fehleraudit 17.10.2026): the back-off is a deliberate deferral, not a
+// failure. It ended every minute with exit 1, so RS-Skills logged an ERROR every
+// minute for six hours (sync.log 14./15.10.: 1477 errors on four Macs).
 test('a failed source build is not repeated for the same native code and toolchain within 6 hours', async t => {
   const f = await fixture(t,{previous:true,configured:true});
   await f.writeReceipt('a'.repeat(40));
@@ -298,33 +301,45 @@ test('a failed source build is not repeated for the same native code and toolcha
     if (command === 'git' && args.includes('diff')) return 'Usage4Claude/Helpers/FleetReporter.swift\nscripts/new-runtime.mjs\n';
     if (command === 'git' && args.includes('ls-tree')) return native.tree;
     if (command === 'swiftc') { assert.deepEqual(args,['--version']); return native.swiftc; }
-    if (command === '/bin/bash') { builds++; throw new Error('Max Monitor bauen fehlgeschlagen (Exit 1).'); }
+    if (command === '/bin/bash') {
+      builds++;
+      throw Object.assign(new Error('Max Monitor bauen fehlgeschlagen (Exit 1).'), {exitCode:1,
+        outputTail:'\u001b[0;34mℹ️  Kompiliere Swift-Quellen…\u001b[0m\n/Users/w/src/Usage4Claude/Helpers/FleetReporter.swift:12:5: error: cannot find \'reportLoad\' in scope\n        reportLoad()\n        ^~~~~~~~~~\n'});
+    }
     return runner(command,args,...rest);
   };
   f.dependencies.artifactReader = async () => artifact;
   f.dependencies.now = () => clock;
   const update = () => setup({...f.options,appBundle:null,updateOnly:true,open:false},f.dependencies);
-  await assert.rejects(update(),/Max Monitor bauen fehlgeschlagen/);
+  // The first failure names its cause: the step and the compiler's error line.
+  await assert.rejects(update(),error => {
+    assert.match(error.message,/^Max Monitor bauen fehlgeschlagen \(Exit 1\): .*FleetReporter\.swift:12:5: error: cannot find 'reportLoad' in scope$/);
+    assert.ok(error.message.length <= 300);
+    assert.ok(!error.message.includes('\u001b'));
+    return true;
+  });
   assert.equal(builds,1);
   let receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
   assert.match(receipt.buildFailure.nativeKey,/^[a-f0-9]{64}$/);
   assert.equal(receipt.buildFailure.swiftcVersion,'Apple Swift version 6.1 (swiftlang-6.1)');
   assert.equal(receipt.buildFailure.at,new Date(clock).toISOString());
+  assert.match(receipt.buildFailure.cause,/error: cannot find 'reportLoad' in scope$/);
   // The failed revision is never recorded as installed.
   assert.equal(receipt.sourceRevision,'a'.repeat(40));
   clock += 60000;
-  await assert.rejects(update(),error => {
-    assert.match(error.message,/^Max Monitor bauen zurückgestellt/);
-    for (const marker of ['EPERM','EACCES','Operation not permitted','Permission denied','App-Version','Laufende Monitor-App'])
-      assert.ok(!error.message.includes(marker),marker);
-    return true;
-  });
+  const deferred = await update();
+  assert.deepEqual({...deferred,cause:undefined},{schema:1,mode:'deferred',deferred:true,reason:'build_failed',
+    failedAt:'2026-10-15T08:00:00.000Z',retryAt:'2026-10-15T14:00:00.000Z',cause:undefined});
+  assert.match(deferred.cause,/error: cannot find 'reportLoad' in scope$/);
+  assert.match(f.logs.at(-1),/^Max Monitor bauen zurückgestellt/);
+  for (const marker of ['EPERM','EACCES','Operation not permitted','Permission denied','App-Version','Laufende Monitor-App'])
+    assert.ok(!f.logs.at(-1).includes(marker),marker);
   assert.equal(builds,1,'the second update-only run does not build again');
   assert.equal(await f.marker(),'previous app');
   // A new toolchain, new native code or the end of the 6-hour window builds again.
   native.swiftc = 'Apple Swift version 6.2\n';
   await assert.rejects(update(),/Max Monitor bauen fehlgeschlagen/); assert.equal(builds,2);
-  await assert.rejects(update(),/zurückgestellt/); assert.equal(builds,2);
+  assert.equal((await update()).mode,'deferred'); assert.equal(builds,2);
   native.tree = '040000 tree '+'2'.repeat(40)+'\tUsage4Claude\n';
   await assert.rejects(update(),/Max Monitor bauen fehlgeschlagen/); assert.equal(builds,3);
   clock += 6*3600000;
@@ -335,6 +350,119 @@ test('a failed source build is not repeated for the same native code and toolcha
   assert.equal(result.mode,'installed'); assert.equal(builds,4);
   receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
   assert.equal(receipt.buildFailure,undefined);
+});
+
+// A14-02: sporadic update failures (Mac 5, 17.10. 01:59–03:19 CEST) left no cause:
+// the next success rewrote the receipt and RS-Skills' status file every minute.
+test('the last update failure stays in the receipt with its cause after a later success', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  await f.writeReceipt();
+  let clock = Date.parse('2026-10-17T00:00:00Z');
+  f.dependencies.now = () => clock;
+  const runner = f.dependencies.runner;
+  let failOpen = true;
+  f.dependencies.runner = async (command,args,options = {}) => {
+    if (command === '/usr/bin/open' && failOpen) throw new Error('Max Monitor öffnen fehlgeschlagen (Exit 1).');
+    return runner(command,args,options);
+  };
+  const update = () => setup({...f.options,appBundle:null,updateOnly:true},f.dependencies);
+  const message = 'Max Monitor öffnen fehlgeschlagen (Exit 1).';
+  await assert.rejects(update(),/Max Monitor öffnen fehlgeschlagen/);
+  let receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+  assert.deepEqual(receipt.lastFailure,{at:'2026-10-17T00:00:00.000Z',message,since:'2026-10-17T00:00:00.000Z',count:1});
+  assert.equal(receipt.sourceRevision,REVISION,'a failure changes nothing else in the receipt');
+  // The same failure in a row is one episode.
+  clock += 60000;
+  await assert.rejects(update(),/Max Monitor öffnen fehlgeschlagen/);
+  receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+  assert.deepEqual(receipt.lastFailure,{at:'2026-10-17T00:01:00.000Z',message,since:'2026-10-17T00:00:00.000Z',count:2});
+  failOpen = false; clock += 60000;
+  assert.equal((await update()).mode,'existing');
+  receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+  assert.deepEqual(receipt.lastFailure,{at:'2026-10-17T00:01:00.000Z',message,since:'2026-10-17T00:00:00.000Z',count:2,
+    recoveredAt:'2026-10-17T00:02:00.000Z'});
+  clock += 60000;
+  await update();
+  receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+  assert.equal(receipt.lastFailure.recoveredAt,'2026-10-17T00:02:00.000Z','the first recovery time stays');
+  // A failure after the recovery starts a new episode (the app quit meanwhile).
+  failOpen = true; clock += 60000; f.state.runningApps = [];
+  await assert.rejects(update(),/Max Monitor öffnen fehlgeschlagen/);
+  receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+  assert.deepEqual(receipt.lastFailure,{at:'2026-10-17T00:04:00.000Z',message,since:'2026-10-17T00:04:00.000Z',count:1});
+});
+
+// Review A14-02: the sporadic Mac 5 failures had no build failure, so they can
+// come from any step of the background update, also before the app check.
+test('a background update that fails before the app check also keeps its cause', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  await f.writeReceipt();
+  f.dependencies.now = () => Date.parse('2026-10-17T01:59:00Z');
+  f.dependencies.manifestReader = async () => { throw new Error('Worker-Release nicht lesbar: ENOENT releases/worker-native.json'); };
+  await assert.rejects(setup({...f.options,appBundle:null,updateOnly:true},f.dependencies),/ENOENT/);
+  let receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+  assert.deepEqual(receipt.lastFailure,{at:'2026-10-17T01:59:00.000Z',message:'Worker-Release nicht lesbar: ENOENT releases/worker-native.json',
+    since:'2026-10-17T01:59:00.000Z',count:1});
+  assert.equal(receipt.sourceRevision,REVISION,'nothing else in the receipt changes');
+  f.dependencies.workerReader = async () => { throw new Error('Worker-Konfiguration fehlt.'); };
+  await assert.rejects(setup({...f.options,appBundle:null,updateOnly:true},f.dependencies),/Worker-Konfiguration fehlt/);
+  receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+  assert.equal(receipt.lastFailure.message,'Worker-Konfiguration fehlt.');
+  // An interactive enrollment never writes a failure into the receipt.
+  await assert.rejects(setup({...f.options},f.dependencies),/Worker-Konfiguration fehlt/);
+  assert.equal(JSON.parse(await fs.readFile(f.receiptPath,'utf8')).lastFailure.count,1);
+});
+
+// Review A14-02: swiftc prints the source line after its diagnostic. A source
+// line such as `let error: ErrorDetail` or a German "fehlgeschlagen" string must
+// not replace the diagnostic, nor may the driver's closing summary line.
+test('the build cause is the compiler diagnostic, not the quoted source line or the driver summary', () => {
+  assert.equal(buildCause("/x/Usage4Claude/Models/A.swift:279:9: error: cannot find type 'ErrorDetail' in scope\n    let error: ErrorDetail\n               ^~~~~~~~~~~\n"),
+    "Usage4Claude/Models/A.swift:279:9: error: cannot find type 'ErrorDetail' in scope");
+  assert.equal(buildCause('Usage4Claude/B.swift:3:1: error: missing return\n    log("Laden fehlgeschlagen")\n    ^\n'),
+    'Usage4Claude/B.swift:3:1: error: missing return');
+  assert.equal(buildCause('Usage4Claude/C.swift:1:1: error: boom\nerror: emit-module command failed with exit code 1 (use -v to see invocation)\n'),
+    'Usage4Claude/C.swift:1:1: error: boom');
+  assert.equal(buildCause(`curl: (6) Could not resolve host\n${os.homedir()}/Library/Caches/sparkle: error: download failed\n`),
+    '~/Library/Caches/sparkle: error: download failed');
+});
+
+test('a deferred build ends the background run without an error exit and prints its state as JSON', async () => {
+  const previous = process.exitCode;
+  const out = [], err = [];
+  try {
+    process.exitCode = undefined;
+    const deferred = {schema:1,mode:'deferred',deferred:true,reason:'build_failed',failedAt:'2026-10-15T08:00:00.000Z',retryAt:'2026-10-15T14:00:00.000Z',cause:'x'};
+    let observed = 0;
+    await main(['--update-only','--worker-root','/tmp/worker'],{setupImpl:async options => { assert.equal(options.updateOnly,true); return deferred; },
+      observerImpl:async () => { observed++; return {installed:false}; }, out:value => out.push(value), err:value => err.push(value)});
+    assert.equal(process.exitCode,undefined);
+    assert.deepEqual(err,[]);
+    assert.deepEqual(JSON.parse(out.at(-1)),deferred);
+    assert.equal(observed,1,'the worker observer is still ensured');
+    await main(['--update-only','--worker-root','/tmp/worker'],{setupImpl:async () => { throw new Error('Max Monitor bauen fehlgeschlagen (Exit 1): error: x'); },
+      observerImpl:async () => ({installed:false}), out:value => out.push(value), err:value => err.push(value)});
+    assert.equal(process.exitCode,1);
+    assert.deepEqual(err,['Max Monitor: Max Monitor bauen fehlgeschlagen (Exit 1): error: x']);
+  } finally { process.exitCode = previous; }
+});
+
+test('a build keeps its output visible and returns the tail of it on failure', async () => {
+  const forwarded = {stdout:'',stderr:''};
+  const sink = name => ({write:chunk => { forwarded[name] += chunk; return true; }});
+  await assert.rejects(run(process.execPath,['-e',
+    'console.log("\\u001b[0;34mKompiliere\\u001b[0m"); console.error("A.swift:1:1: error: boom"); process.exit(1)'],
+    {tee:{stdout:sink('stdout'),stderr:sink('stderr')},label:'Max Monitor bauen',timeout:5000}),error => {
+    assert.equal(error.message,'Max Monitor bauen fehlgeschlagen (Exit 1).');
+    assert.match(error.outputTail,/Kompiliere/); assert.match(error.outputTail,/A\.swift:1:1: error: boom/);
+    return true;
+  });
+  assert.match(forwarded.stdout,/Kompiliere/); assert.match(forwarded.stderr,/error: boom/);
+  assert.equal(buildCause('noise\n/opt/src/Usage4Claude/A.swift:3:1: error: first\nmore\n❌ Build abgebrochen\n'),'❌ Build abgebrochen');
+  assert.equal(buildCause('only\nlast line\n'),'last line');
+  assert.equal(buildCause('token xoxb-123-secret error: x'),'token [ENTFERNT] error: x');
+  assert.equal(buildCause(''),null);
+  assert.ok(buildCause('error: '+'x'.repeat(500)).length <= 200);
 });
 
 test('observer-only updates preserve a current native app with local build metadata', async t => {
