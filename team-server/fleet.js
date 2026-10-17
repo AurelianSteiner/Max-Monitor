@@ -4,6 +4,7 @@ const taskState = require("../scripts/task-state.cjs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { validateReport, publicReport } = require("./worker-reports");
+const { newerCapabilities } = require("./integration-contract");
 const { newerSkillRelease } = require("./skill-versions");
 
 const HEARTBEAT_INTERVAL_SECONDS = 60;
@@ -822,7 +823,12 @@ function createFleetStore(dataDir, now = Date.now) {
       };
       if (incoming.observedWorkers !== undefined) {
         const previousWorkers = new Map((state.observedWorkers || []).map((worker) => [worker.workerId, worker]));
-        state.observedWorkers = incoming.observedWorkers.map((worker) => ({ ...worker, derivedStatus: previousWorkers.get(worker.workerId)?.derivedStatus }));
+        state.observedWorkers = incoming.observedWorkers.map((worker) => {
+          const previous = previousWorkers.get(worker.workerId);
+          // A slow bridge read must not roll back a newer persisted heartbeat.
+          return previous && Date.parse(previous.lastSeenAt) > Date.parse(worker.lastSeenAt)
+            ? previous : { ...worker, derivedStatus: previous?.derivedStatus };
+        });
         refreshStatuses(state, time);
       }
     }
@@ -908,6 +914,8 @@ function createFleetStore(dataDir, now = Date.now) {
         workerHeartbeatAgeSeconds: machineLiveness(worker, null, time).heartbeatAgeSeconds,
         workerVersion: worker.workerVersion,
         workerRevision: worker.workerRevision,
+        workerVersionObservedAt: worker.lastSeenAt,
+        workerVersionSource: 'hub-heartbeat',
         pendingClickup: worker.pendingClickup,
         acceptingTasks: worker.acceptingTasks,
         occupiedTasks: worker.occupiedTasks,
@@ -917,7 +925,7 @@ function createFleetStore(dataDir, now = Date.now) {
     });
     for (const worker of workers.values()) {
       const { derivedStatus, ...visible } = worker;
-      machines.push({ ...visible, name: workerDisplayName(worker.workerId), deviceId: `hub:${worker.workerId}`, telemetrySource: "worker", memberId: null, limits: [], status: machineStatus(worker, time), heartbeatAgeSeconds: Math.max(0, Math.floor((time - Date.parse(worker.lastSeenAt)) / 1000)), usageStale: true, usageStatus: "unavailable" });
+      machines.push({ ...visible, workerVersionObservedAt: worker.lastSeenAt, workerVersionSource: 'hub-heartbeat', name: workerDisplayName(worker.workerId), deviceId: `hub:${worker.workerId}`, telemetrySource: "worker", memberId: null, limits: [], status: machineStatus(worker, time), heartbeatAgeSeconds: Math.max(0, Math.floor((time - Date.parse(worker.lastSeenAt)) / 1000)), usageStale: true, usageStatus: "unavailable" });
     }
     for (const issue of state.workerIssues || []) {
       let machine = machines.find(machine => machine.workerId === issue.workerId);
@@ -929,7 +937,13 @@ function createFleetStore(dataDir, now = Date.now) {
     }
     for (const machine of machines) {
       const report = (state.workerReports || []).find(report => report.workerId === machine.workerId);
-      Object.assign(machine, publicReport(report, time));
+      const observation = publicReport(report, time);
+      // Version evidence has its own source time; arrival order is irrelevant.
+      if (Date.parse(machine.workerVersionObservedAt) > Date.parse(observation.workerVersionObservedAt)) {
+        delete observation.workerVersion; delete observation.workerRevision;
+        delete observation.workerVersionObservedAt; delete observation.workerVersionSource;
+      }
+      Object.assign(machine, observation);
       if (machine.activity?.fresh) {
         machine.lastSeenAt = report.receivedAt;
         machine.heartbeatAgeSeconds = Math.max(0, (time - Date.parse(report.receivedAt)) / 1000);
@@ -964,6 +978,8 @@ function createFleetStore(dataDir, now = Date.now) {
     const previous = reports.find(item => item.workerId === report.workerId);
     // A delayed response from an earlier agent invocation cannot roll back state.
     if (previous && Date.parse(previous.sampledAt) > Date.parse(report.sampledAt)) return { accepted: false };
+    report.rsHubMcp = newerCapabilities(previous?.rsHubMcp, report.rsHubMcp);
+    if (report.integrationContract?.rsHubMcp) report.integrationContract.rsHubMcp = report.rsHubMcp;
     state.workerReports = [...reports.filter(item => item.workerId !== report.workerId), report].slice(-MAX_MACHINES);
     state.latestSkillRelease = newerSkillRelease(state.latestSkillRelease, report.skillRelease);
     write(teamId, state);

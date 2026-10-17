@@ -730,3 +730,57 @@ Eine Warnung erzeugt niemals einen künstlichen Geräte-Heartbeat.
 Bei einem Mac mit exakt zugeordneter Worker-ID zählt das neueste plausible Lebenszeichen der Mac-App oder des Newsletter-Workers für `status`, `lastSeenAt` und `heartbeatAgeSeconds`. Auch die Mac-Erreichbarkeitsereignisse folgen diesem gemeinsamen Zustand. `nativeLastSeenAt`, `nativeStatus`, `nativeHeartbeatAgeSeconds` sowie `workerLastSeenAt`, `workerStatus`, `workerHeartbeatAgeSeconds` erhalten die getrennten Quellen. Worker-Zeitstempel mehr als fünf Minuten in der Zukunft werden nicht als Lebenszeichen verwendet. Queue-Synchronisation und Worker-Fehler erneuern keine Lebenszeichen.
 
 Die native Telemetrie und ihre Messzeitpunkte bleiben unverändert. Alte Akkuwerte und Always-On-Daten gelten nicht als aktuell; Kontingente behalten ihre separate Frischebewertung. Inhaber-, Admin- und Gastzugänge senden absichtlich keine eigenen Mac-Meldungen. Ihre laufenden, zugeordneten Newsletter-Worker bestätigen weiterhin die Erreichbarkeit.
+
+## Gemeinsamer Integrationsnachweis (Systemaudit 18.10.2026)
+
+Der direkte Worker-Bericht liefert `workerVersion` und `workerRevision` zusammen
+mit `workerVersionObservedAt` und `workerVersionSource=worker-observer`. Ein
+Hub-Herzschlag aus der Queue-Brücke trägt `workerVersionSource=hub-heartbeat` und
+seinen eigenen Beobachtungszeitpunkt. In der Fleet-Antwort gewinnt der jüngere
+Beleg, auch nach Relay-Neustart. Ein verspäteter Brücken-Snapshot darf einen
+bereits gespeicherten neueren Herzschlag nicht zurücksetzen. Ein Quell-Checkout
+oder dessen HEAD ist kein Nachweis für einen laufenden Worker oder eine
+installierte native Max-Monitor-App.
+
+Optional liefert der Worker `rsHubMcp` mit Schema `rs-hub-capabilities/v1`:
+`checkedAt`, `connected`, `fullAccess`, `writesEnabled`, `scope`, `version`,
+`toolCount`, `releaseRevision`, `reasonCode` und optional die numerischen
+Protokollkennungen `contracts.incidents`, `contracts.blockers`, `contracts.release`.
+`scope` ist `all-customers`, `restricted` oder `unknown`. Bei einer gescheiterten
+Verbindung können die nicht beobachtbaren Rechte `null` sein. Der Relay berechnet
+`fresh` ausschließlich aus dem echten Prüfzeitpunkt (höchstens zehn Minuten plus
+30 Sekunden Toleranz) und `ready` ausschließlich aus frischem Vollzugriff mit
+Schreibfreigabe auf alle Kunden. Ein neuer Herzschlag erneuert keinen alten
+Rechtenachweis. Eine verzögert gelieferte alte Erfolgsmeldung ersetzt keinen
+neueren fehlgeschlagenen Test. Eine MCP-Störung ändert weder den Dienstbeleg noch
+den letzten Aufgabenpoll oder die Mac-Erreichbarkeit.
+
+`integrationContract` mit Schema `1` verbindet die laufende Worker-Version
+(`worker.version`, `worker.revision`), das geprüfte Skillpaket (`skills.revision`,
+`skills.contractDigest`) und denselben MCP-Nachweis (`rsHubMcp`). Der Relay
+übernimmt nur diese begrenzten öffentlichen Felder. Ungültige optionale
+Integrationsdaten verwerfen keinen gültigen Worker-Bericht. Tokens, Schlüssel,
+Kundeninhalte und freie Fehlermeldungen gehören nicht in diesen Vertrag.
+
+Die verbindliche Identität und Wartungsfreigabe stammt aus der vorhandenen
+Max-Monitor-Geräte-/Worker-Registrierung. Die acht regulären Ziele sind derzeit
+`macbook-1`, `macbook-2`, `newsletter-mac-141b2976`, `macworker-5-schwarz`,
+`mac-f121ae17`, `mac-worker-6-64d66918`, `macbook-air-von-gustav-ccdf84ef` und
+`macbook-air-von-nachteule-cdb5c505`; für aktuelle Ziele immer den vorhandenen
+Wartungsbefehl `list` lesen. Die persönlichen Till-Macs sind freigegebene
+Quell-Macs und ausdrücklich keine Wartungsziele. Daraus entsteht keine neue
+Berechtigung. Aufgabenmaxima und Betriebsprofile kommen aus dem gemeinsamen
+Worker-/Hub-Vertrag; der Monitor leitet sie weder aus RAM noch aus dem Namen ab.
+
+Regressionen laufen ausschließlich mit lokalen simulierten Berichten und
+isolierten temporären Relay-Dateien:
+
+```bash
+node --test team-server/test/integration-contract.test.js team-server/test/worker-reports.test.js
+```
+
+Für diese reine Relay-Änderung wird keine native App gebaut und keine UI geändert.
+Beim Rollout nur geprüfte Relay-Dateien aktualisieren und vorhandene zusätzliche
+Live-Wartungshelfer erhalten; die laufende Relay-Revision, die echte Fleet-Antwort
+und frische Worker-Polls nachweisen. Simulationen erzeugen keine ClickUp-Aufgaben,
+FileStage-Uploads, Kundenschreibvorgänge oder Nachrichten.
