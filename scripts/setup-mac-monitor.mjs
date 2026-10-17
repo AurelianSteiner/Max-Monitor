@@ -51,22 +51,31 @@ const ENROLLMENT_STAGES = Object.freeze({
   complete: 'Gespeicherte Verbindung lesen',
 });
 
+// tee (build only, never for credentials): the child's output still reaches this
+// process's stdout/stderr (or the given streams), and its last OUTPUT_TAIL bytes
+// travel with a failure as error.outputTail, so the cause can be named.
+const OUTPUT_TAIL = 16 * 1024;
+
 export function run(command, args, { input, env = process.env, cwd, timeout = 45000,
-  label = path.basename(command), outputLimit = 128 * 1024, inherit = false,
+  label = path.basename(command), outputLimit = 128 * 1024, inherit = false, tee = null,
   onProgress, progressTimeouts = {} } = {}) {
   return new Promise((resolve, reject) => {
+    const forward = tee === true ? { stdout: process.stdout, stderr: process.stderr } : tee;
     const child = spawn(command, args, { cwd, env, shell: false,
-      stdio: [input === undefined ? 'ignore' : 'pipe', inherit ? 'inherit' : 'pipe', inherit ? 'inherit' : 'pipe'] });
-    let stdout = '', tooLarge = false, timedOut = false, stderrBuffer = '', stage = null;
+      stdio: [input === undefined ? 'ignore' : 'pipe', inherit && !forward ? 'inherit' : 'pipe', inherit && !forward ? 'inherit' : 'pipe'] });
+    let stdout = '', tooLarge = false, timedOut = false, stderrBuffer = '', stage = null, tail = '';
     const stages = Object.keys(ENROLLMENT_STAGES);
     const expire = () => { timedOut = true; child.kill('SIGKILL'); };
     let timer = setTimeout(expire, timeout);
+    const keep = chunk => { tail = (tail + chunk).slice(-OUTPUT_TAIL); };
     child.stdout?.on('data', chunk => {
+      if (forward) { forward.stdout?.write(chunk); keep(chunk); return; }
       if (Buffer.byteLength(stdout) + chunk.length > outputLimit) { tooLarge = true; child.kill('SIGKILL'); }
       else stdout += chunk;
     });
     // Raw stderr stays private. Accept only fixed, forward-moving native phase markers.
     child.stderr?.on('data', chunk => {
+      if (forward) { forward.stderr?.write(chunk); keep(chunk); return; }
       if (!onProgress) return;
       stderrBuffer = (stderrBuffer + chunk).slice(-4096);
       let end;
@@ -87,7 +96,8 @@ export function run(command, args, { input, env = process.env, cwd, timeout = 45
       if (timedOut || tooLarge || code !== 0) {
         const reason = timedOut ? `Zeitüberschreitung${stage ? `: ${ENROLLMENT_STAGES[stage]}` : ''}`
           : tooLarge ? 'Antwort zu groß' : `Exit ${code}`;
-        reject(Object.assign(new Error(`${label} fehlgeschlagen (${reason}).`), { timedOut, stage, exitCode:code }));
+        reject(Object.assign(new Error(`${label} fehlgeschlagen (${reason}).`), { timedOut, stage, exitCode:code,
+          ...(forward ? { outputTail:tail } : {}) }));
       } else resolve(stdout);
     });
     if (input !== undefined) { child.stdin.on('error', () => {}); child.stdin.end(input); }
@@ -318,6 +328,56 @@ async function swiftToolchain(runner) {
 }
 
 export const BUILD_RETRY_MS = 6 * 3600000;
+const CAUSE_MAX = 200;
+
+// The line of a failed build's output that names its cause: the last compiler or
+// build-script error, else the last line. Without colours, paths below the repo,
+// credentials-like tokens; at most CAUSE_MAX characters. null without output.
+export function buildCause(output) {
+  const lines = String(output || '').replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').split(/\r?\n/)
+    .map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (!lines.length) return null;
+  const line = [...lines].reverse().find(value => /\berror:|^❌|\bfatal\b|fehlgeschlagen|nicht gefunden|failed/i.test(value)) || lines.at(-1);
+  const safe = line.split(ROOT + path.sep).join('').replace(/\/(?:[^\s/]+\/)*?(Usage4Claude(?:\.xcodeproj)?\/)/g, '$1')
+    .replace(/\b(?:xox[abposr]-|sk-|gh[opsu]_)[A-Za-z0-9_-]+/g, '[ENTFERNT]').replace(/Bearer\s+\S+/gi, 'Bearer [ENTFERNT]');
+  return safe.length > CAUSE_MAX ? safe.slice(0, CAUSE_MAX - 1) + '…' : safe;
+}
+
+// Source build of the app; a failure names its cause (A14-02, Fehleraudit 17.10.2026).
+async function buildApp(runner, options) {
+  try {
+    await runner('/bin/bash',[path.join(ROOT,'scripts','build_without_xcode.sh')],{
+      cwd:ROOT,env:{...process.env,U4C_PRODUCT_NAME:'Max Monitor',U4C_BUNDLE_ID:options.bundleId,U4C_APPCAST_URL:''},
+      timeout:15*60000,tee:true,label:'Max Monitor bauen'});
+  } catch (error) {
+    const cause = buildCause(error.outputTail);
+    if (cause && !error.message.includes(cause)) error.message = error.message.replace(/\.$/, '') + ': ' + cause;
+    if (cause) error.buildCause = cause;
+    throw error;
+  }
+  return path.join(ROOT,'build','no-xcode','Max Monitor.app');
+}
+
+// The last failed background update, kept after a later success (recoveredAt), so
+// a sporadic failure can still be explained (A14-02, Fehleraudit 17.10.2026). The
+// same failure in a row is one episode: since stays, count grows.
+function failureRecord(previous, error, at) {
+  const text = String(error?.message || 'Unbekannter Fehler').replace(/\s+/g, ' ').trim();
+  const message = text.length > CAUSE_MAX ? text.slice(0, CAUSE_MAX - 1) + '…' : text;
+  const same = previous && typeof previous === 'object' && !previous.recoveredAt && previous.message === message;
+  return { at, message, since: same && typeof previous.since === 'string' ? previous.since : at,
+    count: same ? (Number.isSafeInteger(previous.count) ? previous.count : 1) + 1 : 1 };
+}
+
+async function recordUpdateFailure(receiptPath, error, at) {
+  let receipt = {};
+  try { receipt = JSON.parse(await fs.readFile(receiptPath, 'utf8')); } catch {}
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) receipt = {};
+  await fs.mkdir(path.dirname(receiptPath),{recursive:true,mode:0o700});
+  const temporary = receiptPath + '.tmp';
+  await fs.writeFile(temporary,JSON.stringify({...receipt,lastFailure:failureRecord(receipt.lastFailure, error, at)},null,2)+'\n',{mode:0o600});
+  await fs.rename(temporary,receiptPath);
+}
 
 export async function storedMonitorPreferences(bundleId, runner = run) {
   const safe = {schema:1,bundleId};
@@ -410,7 +470,9 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
       appPath:options.appPath,workerId:before.workerId || worker.workerId,deviceId:before.deviceId,
       serverURL:before.serverURL,teamId:before.teamId,checkedAt:new Date(now()).toISOString(),
       installedAt:installed ? new Date(now()).toISOString() : receipt?.installedAt,
-      ...(failure ? {buildFailure:failure} : {})};
+      ...(failure ? {buildFailure:failure} : {}),
+      ...(receipt?.lastFailure && typeof receipt.lastFailure === 'object' ? {lastFailure:failure ? receipt.lastFailure
+        : {...receipt.lastFailure,recoveredAt:receipt.lastFailure.recoveredAt || new Date(now()).toISOString()}} : {})};
     const temporary = receiptPath + '.tmp';
     await fs.writeFile(temporary,JSON.stringify(safe,null,2)+'\n',{mode:0o600});
     await fs.rename(temporary,receiptPath);
@@ -437,18 +499,22 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
     const swiftcVersion = await swiftToolchain(runner);
     const failed = receipt?.buildFailure, failedAt = Date.parse(failed?.at);
     if (nativeKey && failed?.nativeKey === nativeKey && failed.swiftcVersion === swiftcVersion &&
-        Number.isFinite(failedAt) && now() - failedAt >= 0 && now() - failedAt < BUILD_RETRY_MS)
-      throw new Error(`Max Monitor bauen zurückgestellt: derselbe native Stand ist mit diesem Swift-Compiler um ${new Date(failedAt).toISOString()} fehlgeschlagen; neuer Versuch nach 6 Stunden, mit neuem Code oder neuem Compiler. Die installierte App bleibt unverändert.`);
+        Number.isFinite(failedAt) && now() - failedAt >= 0 && now() - failedAt < BUILD_RETRY_MS) {
+      // A deliberate deferral, not a failure (A14-02, Fehleraudit 17.10.2026): no
+      // error exit, so the minute check does not report an error for six hours.
+      // RS-Skills reads the JSON result; the reason stays build_failed.
+      const retryAt = new Date(failedAt + BUILD_RETRY_MS).toISOString();
+      log(`Max Monitor bauen zurückgestellt: derselbe native Stand ist mit diesem Swift-Compiler um ${new Date(failedAt).toISOString()} fehlgeschlagen${failed.cause ? ` (${failed.cause})` : ''}; neuer Versuch ab ${retryAt}, mit neuem Code oder neuem Compiler früher. Die installierte App bleibt unverändert.`);
+      return {schema:1,mode:'deferred',deferred:true,reason:'build_failed',failedAt:new Date(failedAt).toISOString(),retryAt,
+        ...(typeof failed.cause === 'string' ? {cause:failed.cause} : {})};
+    }
     log('Max Monitor: aktuelle App aus dem Repo bauen.');
-    try {
-      await runner('/bin/bash',[path.join(ROOT,'scripts','build_without_xcode.sh')],{
-        cwd:ROOT,env:{...process.env,U4C_PRODUCT_NAME:'Max Monitor',U4C_BUNDLE_ID:options.bundleId,U4C_APPCAST_URL:''},
-        timeout:15*60000,inherit:true,label:'Max Monitor bauen'});
-    } catch (error) {
-      if (nativeKey) await writeReceipt(recorded,false,{nativeKey,swiftcVersion,at:new Date(now()).toISOString()}).catch(()=>{});
+    try { bundle = await buildApp(runner, options); }
+    catch (error) {
+      if (nativeKey) await writeReceipt(recorded,false,{nativeKey,swiftcVersion,at:new Date(now()).toISOString(),
+        ...(typeof error.buildCause === 'string' ? {cause:error.buildCause} : {})}).catch(()=>{});
       throw error;
     }
-    bundle = path.join(ROOT,'build','no-xcode','Max Monitor.app');
   }
   const built = await appReader(bundle,runner,options.bundleId);
   if (!built) throw new Error('App-Version: Die aktuelle Monitor-App ist ungültig.');
@@ -505,8 +571,15 @@ export async function setup(options, { runner = run, workerReader = readWorker,
       if (found) { options = {...options, appPath:candidate}; app = found; break; }
     }
   }
-  if (options.updateOnly) return updateExistingMonitor(options,{worker,app,revision,release,releaseCurrent,
-    receipt,receiptPath,runner,appReader,artifactReader,log,pause,now});
+  if (options.updateOnly) {
+    try {
+      return await updateExistingMonitor(options,{worker,app,revision,release,releaseCurrent,
+        receipt,receiptPath,runner,appReader,artifactReader,log,pause,now});
+    } catch (error) {
+      await recordUpdateFailure(receiptPath, error, new Date(now()).toISOString()).catch(()=>{});
+      throw error;
+    }
+  }
   let initialStatus = null;
   if (app && !app.legacy) {
     try { initialStatus = await appStatus(app, true, runner); } catch {
@@ -562,11 +635,7 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   bundle ||= artifact;
   if (!bundle) {
     log('Max Monitor: aktuelle App aus dem Repo bauen.');
-    await runner('/bin/bash', [path.join(ROOT, 'scripts','build_without_xcode.sh')], {
-      cwd:ROOT, env:{...process.env,U4C_PRODUCT_NAME:'Max Monitor',U4C_BUNDLE_ID:options.bundleId,U4C_APPCAST_URL:''},
-      timeout:15*60000, inherit:true, label:'Max Monitor bauen',
-    });
-    bundle = path.join(ROOT,'build','no-xcode','Max Monitor.app');
+    bundle = await buildApp(runner, options);
   }
   const built = await appReader(bundle, runner, options.bundleId);
   if (!built) throw new Error('Die App unterstützt die automatische Worker-Einrichtung noch nicht.');
@@ -646,24 +715,31 @@ export async function setup(options, { runner = run, workerReader = readWorker,
   }
 }
 
-export async function main(args = process.argv.slice(2)) {
+async function defaultObserver(options) {
+  const { ensureWorkerObserver } = await import('./install-worker-observer.mjs');
+  return ensureWorkerObserver(options, { runner: run });
+}
+
+// A deferred build (mode 'deferred') is no failure: exit 0 and one JSON line on
+// stdout ({deferred:true, reason:'build_failed', failedAt, retryAt, cause}).
+export async function main(args = process.argv.slice(2), { setupImpl = setup, observerImpl = defaultObserver,
+  out = value => console.log(value), err = value => console.error(value) } = {}) {
   try {
     const options = optionsFrom(args);
     if (options.help) {
-      console.log('Max Monitor automatisch für diesen Newsletter-Worker einrichten.\n' +
+      out('Max Monitor automatisch für diesen Newsletter-Worker einrichten.\n' +
         'setup-mac-monitor.sh --worker-root PATH [--check | --dry-run | --update-only]\n' +
         'Optional: --app-bundle PATH --app-path PATH --no-open --no-launch-at-login\n' +
         'Server und eigener Mitglieds-Token kommen über den bestehenden Hub-Zugang.');
       return;
     }
-    const result = await setup(options);
+    const result = await setupImpl(options);
     if (!options.check && !options.dryRun) {
-      const { ensureWorkerObserver } = await import('./install-worker-observer.mjs');
-      const observer = await ensureWorkerObserver(options, { runner: run });
-      if (observer.installed) console.log('Worker-Beobachter aktiv; direkte Meldungen alle 15 Sekunden, Wartung jede Minute.');
+      const observer = await observerImpl(options);
+      if (observer.installed) out('Worker-Beobachter aktiv; direkte Meldungen alle 15 Sekunden, Wartung jede Minute.');
     }
-    if (options.check && result.loginActionRequired) console.error(result.loginHint);
-    if (options.check || options.dryRun) console.log(JSON.stringify(result));
-  } catch (error) { console.error(`Max Monitor: ${error.message}`); process.exitCode = 1; }
+    if (options.check && result.loginActionRequired) err(result.loginHint);
+    if (options.check || options.dryRun || result?.deferred === true) out(JSON.stringify(result));
+  } catch (error) { err(`Max Monitor: ${error.message}`); process.exitCode = 1; }
 }
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) await main();
