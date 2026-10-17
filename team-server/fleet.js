@@ -16,6 +16,8 @@ const MAX_QUEUE_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_STATE_BYTES = 16 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TASK_STATUSES = new Set(["queued", "running", "blocked", "clarification", "completed", "failed"]);
+// Phase of a live Mac's lagging reservation (scripts/newsletter-monitor-bridge.mjs RESERVATION_LAG_PHASE).
+const RESERVATION_LAG_PHASE = "Wartet · Mac aktiv, Reservierungsmeldung an den RS Hub verzögert";
 // Newsletter renders are stored next to fleet.json under their own SHA-256.
 // The snapshot carries only small references, never image data.
 const PREVIEW_ID = /^[a-f0-9]{64}$/;
@@ -502,7 +504,11 @@ function currentQueue(state, liveReports) {
     for (const [id, task] of tasks) {
       if (task.workerId === report.workerId && ["running", "queued"].includes(task.status) && !active.has(id)
         && (!task.updatedAt || sampled >= Date.parse(task.updatedAt))) {
-        const waiting = task.status === "queued" && /^Wartet(?:\s*[·:]|$)/.test(task.phase || "");
+        // A live Mac's lagging reservation (bridge buildQueue) waits only while
+        // that Mac does not contradict it; its own fresh report without the run
+        // means Mac and reservation disagree (review D11-M2, Fehleraudit 17.10.2026).
+        const waiting = task.status === "queued" && /^Wartet(?:\s*[·:]|$)/.test(task.phase || "")
+          && task.phase !== RESERVATION_LAG_PHASE;
         tasks.set(id, { ...task, status: "queued", workerId: null,
           phase: waiting ? task.phase : "Worker-Abgleich ausstehend" });
       }

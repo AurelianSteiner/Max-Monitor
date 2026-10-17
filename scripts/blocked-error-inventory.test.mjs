@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { buildBlockedErrors, collectSnapshot, createClaimReader, listClaims } from './newsletter-monitor-bridge.mjs';
+import { buildBlockedErrors, collectSnapshot, createClaimReader, listClaims, RESERVATION_LAG_PHASE } from './newsletter-monitor-bridge.mjs';
 const { createFleetStore } = createRequire(import.meta.url)('../team-server/fleet.js');
 const channel = 'C0C8HK2NDFE';
 const now = Date.parse('2026-10-12T17:00:00Z');
@@ -238,4 +238,14 @@ test('cause rows stay within the relay bounds, so one long job never rejects the
   const { store } = storeFor(t);
   store.updateQueue('TEAM1234', { source, tasks: [task()], blockedErrors: rows });
   assert.equal(store.snapshot('TEAM1234').queue.errors.length, 2);
+});
+
+// The relay recognises the bridge's lag phase: the Mac's own report without the
+// run turns it into a pending worker check (review D11-M2).
+test('the relay knows the bridge\'s lagging-reservation phase', t => {
+  const { store } = storeFor(t);
+  store.updateQueue('TEAM1234', { source, blockedErrors: [], tasks: [{ ...task('queued'), workerId: 'mac-1', attemptId: 'run-a', phase: RESERVATION_LAG_PHASE }] });
+  store.workerReport('TEAM1234', { schema: 1, workerId: 'mac-1', sampledAt: new Date(now).toISOString(),
+    service: { running: true, lastPollAt: new Date(now).toISOString() }, activity: { state: 'idle', acceptingTasks: true, runs: [] } });
+  assert.equal(store.snapshot('TEAM1234').queue.tasks[0].phase, 'Worker-Abgleich ausstehend');
 });

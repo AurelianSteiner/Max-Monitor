@@ -508,7 +508,9 @@ Aktive Reservierungen werden nach der im Worker konfigurierten Stale-Frist
 Meldet derselbe Mac seinen eigenen Herzschlag noch frisch an den RS Hub (höchstens
 180 Sekunden alt), hängt nur die Reservierungsmeldung nach: Die Aufgabe wartet dann
 als „Wartet · Mac aktiv, Reservierungsmeldung an den RS Hub verzögert“ und ist nicht
-blockiert. Nach zwei Stunden ohne Reservierungs-Herzschlag gilt sie auch bei
+blockiert. Meldet derselbe Mac den Lauf in seinem eigenen frischen Live-Bericht
+nicht, widersprechen sich Mac und Reservierung; die Aufgabe zeigt dann
+„Worker-Abgleich ausstehend“. Nach zwei Stunden ohne Reservierungs-Herzschlag gilt sie auch bei
 erreichbarem Mac wieder als blockiert (Fehleraudit 17.10.2026). Ein konkreter Prozentfortschritt
 wird nur bei einem belegten Abschluss als 100 % angezeigt.
 
