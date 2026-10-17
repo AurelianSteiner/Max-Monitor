@@ -44,6 +44,20 @@ test("MacWorker is independent of access roles and survives reconnects", async (
   assert.equal(guest.macWorker, false);
   assert.equal((await call("/me")).body.macWorker, false);
 
+  await t.test("a cosmetic rename preserves credentials, role and the independent worker switch", async () => {
+    const file = path.join(directory, 'WORK1234/members.json');
+    const before = JSON.parse(fs.readFileSync(file));
+    assert.equal((await call(`/members/${member.id}`, 'PATCH', {name: 'Rot'}, admin.token)).status, 403);
+    for (const name of ['', 'x'.repeat(121), 'wrong\nname'])
+      assert.equal((await call(`/members/${member.id}`, 'PATCH', {name})).status, 400);
+    const renamed = await call(`/members/${member.id}`, 'PATCH', {name: 'Rot'});
+    assert.equal(renamed.status, 200);
+    assert.equal(renamed.body.member.name, 'Rot');
+    const after = JSON.parse(fs.readFileSync(file));
+    assert.deepEqual(after.map(entry => ({...entry,name:undefined})), before.map(entry => ({...entry,name:undefined})));
+    assert.equal((await call('/me', 'GET', undefined, member.token)).body.name, 'Rot');
+  });
+
   await t.test("enabled admins and guests send complete telemetry without extra privileges", async () => {
     for (const [index, identity] of [admin, guest].entries()) {
       assert.equal((await call("/heartbeat", "POST", heartbeat(index + 1), identity.token)).status, 403);

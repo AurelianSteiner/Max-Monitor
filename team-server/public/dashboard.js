@@ -4,19 +4,18 @@
 // its bootstrap before this script runs; browsers use the connection dialog.
 (() => {
   const $ = (id) => document.getElementById(id);
-  // Display names do not change task ownership or the SSH/enrollment identity.
-  const workerDisplayNames = new Map([
-    ["mac-worker-6-64d66918", "MacWorker 6"],
-    ["macbook-air-von-gustav-ccdf84ef", "MacWorker 7"],
-    ["macbook-1", "Mac 1"],
-    ["macbook-2", "Mac 2"],
-    ["newsletter-mac-141b2976", "Mac 4"],
-    ["macworker-5-schwarz", "Mac 5 schwarz"],
-    ["macbook-till-main", "Till Main"],
-    ["macbook-von-till-main-2", "Till Main 2"],
-    ["mac-f121ae17", "Macworker vale"],
-  ]);
-  const workerName = (workerId, fallback = "Mac") => workerDisplayNames.get(workerId) || workerId || fallback;
+  // One shared palette, delivered by the relay. Never use names for identity bindings.
+  const workerName = (workerId, fallback = "Mac") => snapshot?.workerIdentities?.[workerId]?.name
+    || ({ "macbook-till-main": "Till Main", "macbook-von-till-main-2": "Till Main 2" })[workerId]
+    || workerId || fallback;
+  function workerSwatch(workerId) {
+    const color = snapshot?.workerIdentities?.[workerId]?.color;
+    if (!/^#[0-9A-Fa-f]{6}$/.test(color || "")) return null;
+    const swatch = node("span", "worker-color");
+    swatch.style.backgroundColor = color;
+    swatch.setAttribute("aria-hidden", "true");
+    return swatch;
+  }
   // The relay can be hosted at / or behind a shared Hub path such as /max-monitor.
   const relayPrefix = location.pathname.replace(/\/(?:fleet|monitor)\/?$/, "");
   const bootstrap = window.__MAX_MONITOR__;
@@ -1039,6 +1038,8 @@
       signal.title = statusNames[displayStatus] || "Unbekannt";
       const identity = node("span");
       const open = node("button", "", label);
+      const swatch = workerSwatch(machine.workerId);
+      if (swatch) open.prepend(swatch);
       open.type = "button";
       open.title = label;
       open.setAttribute("aria-label", `${label} · ${statusNames[displayStatus] || "Unbekannt"} · Details`);
@@ -1118,6 +1119,8 @@
       const identity = node("div", "machine-name");
       const label = workerName(machine.workerId, machine.name);
       const machineName = node("h3", "", label);
+      const swatch = workerSwatch(machine.workerId);
+      if (swatch) machineName.prepend(swatch);
       machineName.title = label;
       const deviceName = machine.deviceName || (machine.name !== machine.workerId ? machine.name : null);
       const subtitle = node("small", "", !machine.workerId ? "Worker-ID nicht zugeordnet"

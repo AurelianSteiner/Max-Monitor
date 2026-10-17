@@ -50,7 +50,7 @@ test('a worker-reported device link names the Mac and its work without changing 
   assert.deepEqual(control, { schema: 1, workerId: 'macbook-2', enabled: true, reason: 'enabled' });
   const linked = await byDevice(device);
   assert.deepEqual([linked.workerId, linked.name, linked.deviceName, linked.workerIdSource, linked.telemetrySource],
-    ['macbook-2', 'macbook-2', 'Macbook 2', 'worker', 'app']);
+    ['macbook-2', 'Blau', 'Macbook 2', 'worker', 'app']);
   assert.equal(linked.workerStatus, 'online', 'Hub worker heartbeat merges into the app row');
   assert.equal(linked.workerVersion, 'V1.74');
   assert.equal((await fleet()).machines.filter(machine => machine.workerId === 'macbook-2').length, 1);

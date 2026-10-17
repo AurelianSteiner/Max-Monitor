@@ -68,13 +68,13 @@ test('MacWorker 6 is named consistently without changing its enrollment or task 
   const workerId = 'mac-worker-6-64d66918';
   try {
     const result = store.heartbeat('DEMO1234', { role: 'member', member: { id: 'worker-6', name: 'MacWorker 6' } }, heartbeat(deviceA, { workerId }));
-    assert.equal(result.name, 'MacWorker 6');
+    assert.equal(result.name, 'Orange');
     assert.equal(result.workerId, workerId);
     assert.equal(result.deviceName, 'Mac Studio');
     store.updateQueue('DEMO1234', { source: { name: 'Test', lastSuccessAt: new Date().toISOString() }, tasks: [task(undefined, { packageId: 'abc', language: 'en' })] });
     const snapshot = store.snapshot('DEMO1234');
-    assert.equal(snapshot.machines[0].name, 'MacWorker 6');
-    assert.equal(snapshot.events.find(event => event.type === 'machine_registered').title, 'MacWorker 6');
+    assert.equal(snapshot.machines[0].name, 'Orange');
+    assert.equal(snapshot.events.find(event => event.type === 'machine_registered').title, 'Orange');
     assert.equal(snapshot.queue.tasks[0].packageId, 'abc');
     assert.equal(snapshot.queue.tasks[0].language, 'en');
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
@@ -412,7 +412,7 @@ test("Slack worker IDs name native Macs, Hub workers and historical events consi
     assert.equal(snapshot.machines.find(mac => mac.deviceId === deviceA).name, "macbook-till-main");
     assert.equal(snapshot.machines.find(mac => mac.deviceId === deviceA).deviceName, "Später umbenannter Mac");
     assert.equal(snapshot.machines.find(mac => mac.deviceId === deviceB).name, "Mac ohne Worker");
-    assert.equal(snapshot.machines.find(mac => mac.workerId === "macbook-2").name, "macbook-2");
+    assert.equal(snapshot.machines.find(mac => mac.workerId === "macbook-2").name, "Blau");
     assert.equal(snapshot.queue.tasks[0].workerId, undefined);
     assert.deepEqual(snapshot.events.filter(event => event.taskId === "history").map(event => event.workerId), [null, "macbook-2", "macbook-till-main"]);
     assert.ok(snapshot.events.filter(event => event.taskId === "history").every(event => event.title === "Gleicher Aufgabentitel wie in Slack"));
@@ -436,7 +436,7 @@ test("Slack worker IDs name native Macs, Hub workers and historical events consi
     time += 31 * 60 * 1000;
     snapshot = store.snapshot("DEMO1234");
     assert.equal(snapshot.events.find(event => event.type === "machine_offline" && event.deviceId === deviceA).title, "macbook-till-main");
-    assert.equal(snapshot.events.find(event => event.type === "worker_offline").title, "macbook-2");
+    assert.equal(snapshot.events.find(event => event.type === "worker_offline").title, "Blau");
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
