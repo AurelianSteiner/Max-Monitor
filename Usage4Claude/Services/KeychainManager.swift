@@ -49,6 +49,11 @@ private struct KeychainCredentialStorage: CredentialStorage {
     let service: String
 
     func save(key: String, value: String) -> Bool {
+        // Der Tresorschlüssel wird nie ersetzt, auch nicht nach einem
+        // verweigerten oder ungültigen Leseergebnis.
+        if key == VaultCredentialStorage.vaultKeyAccount {
+            return addIfAbsent(key: key, value: value)
+        }
         guard let data = value.data(using: .utf8) else { return false }
 
         let query: [String: Any] = [
@@ -77,7 +82,28 @@ private struct KeychainCredentialStorage: CredentialStorage {
         }
     }
 
+    func addIfAbsent(key: String, value: String) -> Bool {
+        guard let data = value.data(using: .utf8) else { return false }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            kSecValueData as String: data
+        ]
+        let status = SecItemAdd(query as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            Logger.keychain.error("Keychain Erstanlage fehlgeschlagen: \(key), Status: \(status)")
+            return false
+        }
+        return true
+    }
+
     func load(key: String) -> String? {
+        if case .value(let value) = read(key: key) { return value }
+        return nil
+    }
+
+    func read(key: String) -> VaultKeyReadResult {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -88,15 +114,16 @@ private struct KeychainCredentialStorage: CredentialStorage {
 
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        if status == errSecSuccess,
-           let data = result as? Data,
-           let value = String(data: data, encoding: .utf8) {
-            return value
-        } else if status != errSecItemNotFound {
+        if status == errSecItemNotFound { return .notFound }
+        guard status == errSecSuccess else {
             Logger.keychain.error("Keychain 读取失败: \(key), 状态码: \(status)")
+            return .unavailable(status)
         }
-        return nil
+        guard let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
+            Logger.keychain.error("Keychain Datenformat ungültig: \(key)")
+            return .unavailable(errSecDecode)
+        }
+        return .value(value)
     }
 
     func delete(key: String) -> Bool {
@@ -183,22 +210,16 @@ private final class VaultCredentialStorage: CredentialStorage {
             return nil
         }
 
-        let keyData: Data
-        if let stored = keychain.load(key: vaultKeyAccount),
-           let data = Data(base64Encoded: stored), data.count == CredentialVault.keyLength {
-            keyData = data
-        } else {
-            // Kein Schlüssel lesbar: entweder gibt es noch keinen (erster Start
-            // mit dem Tresor) — dann anlegen — oder das Lesen wurde verweigert.
-            // Im zweiten Fall scheitert das Anlegen am vorhandenen Eintrag
-            // (Duplikat), und es bleibt beim Schlüsselbund; nichts wird überschrieben.
-            let fresh = CredentialVault.generateKey()
-            guard keychain.save(key: vaultKeyAccount, value: fresh.base64EncodedString()) else {
-                Logger.keychain.error("Tresor-Schlüssel weder lesbar noch anlegbar – Zugangsdaten bleiben im Schlüsselbund")
-                return nil
+        guard let keyData = VaultKeyAccess.resolve(keychain.read(key: vaultKeyAccount), existingVault: {
+            do {
+                _ = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+                return true
+            } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+                return false
             }
-            Logger.keychain.notice("Tresor-Schlüssel angelegt")
-            keyData = fresh
+        }, createKey: { keychain.addIfAbsent(key: vaultKeyAccount, value: $0) }) else {
+            Logger.keychain.error("Tresor-Schlüssel nicht sicher verfügbar – bestehender Schlüssel und Tresor bleiben erhalten")
+            return nil
         }
 
         do {
