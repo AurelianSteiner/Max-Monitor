@@ -22,6 +22,8 @@
     "scripts/worker-remote-hub.mjs",
     "scripts/worker-remote.mjs",
     "team-server/effort-config.js",
+    "team-server/distribution.js",
+    "team-server/quota-scores.js",
     "team-server/enrollment.js",
     "team-server/fleet.js",
     "team-server/integration-contract.js",

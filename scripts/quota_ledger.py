@@ -20,6 +20,7 @@ import sys
 import time
 import zlib
 from urllib.parse import urlsplit
+from quota_routing import routing_inputs
 
 SCHEMA = 1
 WEEK = 7 * 86400
@@ -588,7 +589,7 @@ class Ledger:
                      for g in groups if g['key'].startswith(account + '|')}
             workers[worker] = {'schema': 1, 'generated_at': iso(now), 'account': identifier(account)[:24],
                                'windows': windows, 'costs': costs}
-        return {'schema': 1, 'generated_at': iso(now), 'workers': workers}
+        return {'schema': 1, 'generated_at': iso(now), 'workers': workers, 'routing': routing_inputs()}
 
 
 def write_json(path, value):

@@ -39,6 +39,7 @@ WantedBy=multi-user.target
 def plan(source):
     source = Path(source)
     return [(source / "quota_ledger.py", Path("/opt/max-monitor-quota/quota_ledger.py")),
+            (source / "quota_routing.py", Path("/opt/max-monitor-quota/quota_routing.py")),
             (source / "quota_worker.py", Path("/opt/max-monitor-quota/quota_worker.py")),
             (source / "install_quota_tracker.py", Path("/opt/max-monitor-quota/install_quota_tracker.py"))]
 

@@ -78,6 +78,32 @@ a { color: inherit; }
 .consumption-details p { padding-top: 8px; color: var(--ink-2); line-height: 1.6; max-width: 1000px; }
 .consumption-details ul { list-style: none; padding: 8px 0; margin: 0; line-height: 1.8; overflow-wrap: anywhere; }
 .effort-panel:not(.all-phases) .effort-secondary { display: none; }
+.distribution-filter { display: flex; align-items: center; gap: 12px; color: var(--ink-2); font-size: 13px; }
+.distribution-filter select { min-height: 36px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); }
+.distribution-lead { padding: 16px 20px; background: var(--hover); }
+.distribution-lead strong { font-size: 18px; font-weight: 600; }
+.distribution-lead p { color: var(--ink-2); line-height: 1.5; margin-top: 4px; }
+.distribution-table { table-layout: fixed; }
+.distribution-table th:first-child { width: 16%; }
+.distribution-table th:last-child { width: 28%; }
+.distribution-table td,.distribution-table th { vertical-align: top; padding: 12px 16px; }
+.distribution-table .distribution-preferred { background: var(--hover); box-shadow: inset 3px 0 var(--primary); }
+.distribution-detail { display: block; font-size: 12px; color: var(--ink-2); line-height: 1.5; margin-top: 4px; overflow-wrap: anywhere; }
+.distribution-number { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.distribution-warning { display: block; font-size: 12px; color: var(--warn); line-height: 1.5; margin-top: 4px; }
+.distribution-meter { display: block; width: 100%; max-width: 100px; height: 8px; margin-top: 8px; accent-color: var(--primary); }
+.distribution-filter select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@media (max-width: 640px) {
+  .distribution-filter { width: 100%; justify-content: space-between; }
+  .distribution-filter select { min-height: 44px; }
+  .distribution-table { table-layout: auto; }
+  .distribution-table th:first-child { width: 100%; }
+  .distribution-table td > div { text-align: right; }
+  .distribution-table .distribution-reason { display: block; text-align: left; padding-top: 8px; }
+  .distribution-reason::before { display: none; }
+  .distribution-lead { padding-inline: 16px; }
+  .distribution-meter { margin-left: auto; }
+}
 @media(max-width:600px) {
   .consumption-section .panel-head { flex-wrap: wrap; gap: 8px; }
   .consumption-toolbar { flex-direction: column; align-items: stretch; }

@@ -103,3 +103,24 @@ No fixed Max-plan token price, cross-account capacity equivalence or guaranteed
 weekly task count is inferred. Fit predictions require at least three completed
 measurements on the same account/type and include observed variance and rounding
 margin. Existing production caps, permissions and transaction locks remain final.
+
+## Nachvollziehbare Mac-Präferenz
+
+Der Reiter zeigt die Vorschau für den nächsten Pre-Gen-, Korrektur-, Übersetzungs-
+oder Upload-Auftrag. `quota_routing.py` liest ausschließlich die bestehenden
+Hub-Betriebsmeldungen und das aktivierte Reservierungsregister (`mode=ro`).
+Exportiert werden nur Worker-ID, Zeit, Annahme, Plätze und aktive Aufgabenarten,
+keine Aufgabentexte oder Zugangsdaten. Der begrenzte Snapshot wird mit der
+Verbrauchsübersicht etwa minütlich erneuert. Fehlt das Register, gibt es keine
+scheinbar leere Last und keine Empfehlung.
+
+`team-server/distribution.js` verwendet den unveränderten Worker-Scorer aus
+`quota-scores.js` (Provenienz: `team-server/vendor/README.md`). Frische Meldung,
+Annahme, Art-Plätze, physisches Maximum, geteilte Account-Reservierungen und
+Kontingentpuffer werden berücksichtigt. Innerhalb der Worker-Toleranz von 0,03
+sind Macs gleichrangig. Ohne aktuelle Kontingente gilt die bisherige absolute
+Lastverteilung. Alte Restwerte bleiben mit Kennzeichnung sichtbar.
+
+Die Vorschau reserviert keine Arbeit, simuliert keinen aufgabenspezifischen
+Zugang und keine schon laufende Präferenz-Wartefrist. Sales behält seinen
+gesonderten Annahmeweg. Die Ansicht ersetzt keine Startfreigabe.

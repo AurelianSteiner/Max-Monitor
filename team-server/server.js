@@ -43,6 +43,7 @@ const { EnrollmentError, enrollWorkerMember, validateEnrollment } = require("./e
 const { controlForWorker, WORKER_ID, DEVICE_ID } = require("./worker-control");
 const remoteAccess = require("./remote-access");
 const effortConfig = require('./effort-config');
+const { distribution } = require('./distribution');
 
 const PORT = process.env.PORT === undefined ? 8080 : Number(process.env.PORT);
 const HOST = process.env.HOST || undefined;
@@ -581,7 +582,11 @@ const server = http.createServer((req, res) => {
     return streamFleet(req, res, teamId);
   }
   if (req.method === 'GET' && rest === '/consumption') {
-    try { return send(res,200,effortConfig.consumption(teamDir(teamId),teamId,who.role)); }
+    try {
+      const result = effortConfig.consumption(teamDir(teamId),teamId,who.role);
+      result.distribution = distribution(result.summary, visibleFleet(teamId,who).machines);
+      return send(res,200,result);
+    }
     catch { return send(res,503,{error:'Aufwandseinstellungen können gerade nicht gelesen werden.'}); }
   }
   if (req.method === 'PATCH' && rest === '/effort') {
