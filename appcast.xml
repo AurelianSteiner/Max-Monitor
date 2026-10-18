@@ -3,6 +3,15 @@
     <channel>
         <title>Max Monitor</title>
         <item>
+            <title>2.15</title>
+            <pubDate>Sun, 18 Oct 2026 20:38:44 +0000</pubDate>
+            <sparkle:version>2.15</sparkle:version>
+            <sparkle:shortVersionString>2.15</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[Neuer Reiter Verbrauch &amp; Aufwand: zentrale Aufwandseinstellungen je Phase, laufende Verbrauchsstatistik seit neuem Tracking-Start und komprimierte Aufgabenwerte im RS Hub.]]></description>
+            <enclosure url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.15/Max-Monitor-2.15.dmg" sparkle:edSignature="V7n9HqmR2qKRYp5uy875zQMx/gyp1v8fF/AOSGV3A5hxqmblE/09tCbtt8leQXqfbvsHsfyEHtMqsY05m00ECA==" length="5768268" type="application/octet-stream"/>
+        </item>
+        <item>
             <title>2.14</title>
             <pubDate>Thu, 08 Oct 2026 12:12:11 +0000</pubDate>
             <sparkle:version>2.14</sparkle:version>
