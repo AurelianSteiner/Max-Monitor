@@ -133,3 +133,12 @@ test('clarification HTTP endpoint is authenticated and restricted to admins', as
   assert.equal((await request('/fleet/tasks/clarification', 'POST', body)).body.task.status, 'queued');
   assert.equal((await request('/fleet')).body.queue.tasks[0].status, 'queued');
 });
+
+
+test('a typed saved blocker never becomes an invented PM question; explicit decisions still work',t=>{
+ const {store,directory}=setup(t);const original=task({attemptId:'saved',blockerSource:'checkpoint',reasonCode:'customer_setup_incomplete',
+  blockedReason:'Design-Library ist nicht freigegeben. PM und Design schließen das Onboarding ab.'});
+ store.updateQueue(team,queue([original]));const current=store.snapshot(team).queue.tasks[0];assert.equal(current.status,'blocked');
+ store.clarifyTask(team,{}, {taskId:current.id,taskVersion:current.taskVersion,reason:'PM klärt die Freigabe'});
+ assert.equal(createFleetStore(directory,()=>now).snapshot(team).queue.tasks[0].status,'queued');
+});

@@ -479,10 +479,13 @@ function withClarification(task, decisions = []) {
     && entry.sourceUpdatedAt === (task.updatedAt || null)
     && (!task.blockedReason || entry.diagnosticVersion === taskVersion(task)));
   const reason = task.blockedReason || "";
+  // A typed, verified stored outcome is authoritative. Legacy free-text
+  // matching must not invent a PM question merely because its cause is now visible.
+  const typed = task.blockerSource === "checkpoint" && task.reasonCode;
   const human = task.phase === "PM-Rückfrage offen"
-    || /(?:Gestaltung|Design|Black[- ]Week).{0,70}(?:nicht freigegeben|Freigabe fehlt|Entscheidung.{0,30}fehlt)/i.test(reason)
+    || (!typed && (/(?:Gestaltung|Design|Black[- ]Week).{0,70}(?:nicht freigegeben|Freigabe fehlt|Entscheidung.{0,30}fehlt)/i.test(reason)
     || /Entscheidung.{0,70}(?:Gestaltung|Design).{0,20}fehlt/i.test(reason)
-    || /(?:PM|Valentin).{0,50}als Editor einlad/i.test(reason);
+    || /(?:PM|Valentin).{0,50}als Editor einlad/i.test(reason)));
   return decision || human ? { ...task, status: "queued", workerId: null, phase: "Wartet · PM-Rückfrage",
     blockedReason: decision?.reason || task.blockedReason || "PM-Rückfrage offen" } : task;
 }
