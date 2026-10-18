@@ -26,6 +26,14 @@ test('language packages and ordinary completed work do not borrow PM ownership',
   await applyPmOwners([done],[],{questions:{sets:[set()]},now});assert.equal(done.pmOwner,'preserve');
 });
 
+test('archived questions cannot supply a PM owner or make its current replacement ambiguous',async()=>{
+  const archived=set({id:'archived',archivedAt:now-1000,team:'John',channelId:'C0C89DYUDDK'});
+  const only=row();await applyPmOwners([only],[],{questions:{sets:[archived]},now});
+  assert.equal(only.pmOwner,undefined);
+  const current=row();await applyPmOwners([current],[],{questions:{sets:[archived,set()]},now});
+  assert.equal(current.pmOwner,'Ben & Abdou');
+});
+
 test('routing reuses only the existing customer resolver and caches display metadata for five minutes',async()=>{
   let calls=0,time=now;const routes=createPmRoutingReader('/opt/rs-hub',{clock:()=>time,load:file=>file.endsWith('/pm-questions.js')
     ?{CHANNELS:Object.fromEntries(Object.entries(SLACK_PM_CHANNELS).map(([id,team])=>[team,{id}]))}

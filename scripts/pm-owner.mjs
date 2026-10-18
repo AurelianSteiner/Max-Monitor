@@ -51,7 +51,7 @@ export async function applyPmOwners(rows, tasks, { questions = {}, routing, now 
     delete row.pmOwnerId;
     const taskId = /^https:\/\/app\.clickup\.com\/t\/([a-z0-9]+)(?:[?#].*)?$/i.exec(row.url || '')?.[1];
     const stage = row.workflow === 'upload' ? 'klaviyo' : row.workflow === 'correction' ? 'korrektur' : row.workflow;
-    const matches = sets.filter(set => set.mode === 'production' && set.taskId === taskId
+    const matches = sets.filter(set => set.mode === 'production' && !set.archivedAt && set.taskId === taskId
       && set.stage === stage && row.attemptId && (set.headRunId || set.runId) === row.attemptId
       && set.channelId && channels[set.channelId] === set.team
       && /^\d{10}\.\d{6}$/.test(set.threadTs || '')
