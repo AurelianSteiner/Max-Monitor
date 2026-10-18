@@ -313,8 +313,9 @@ export async function installBundle(source, destination, runner = run) {
 // resources, the project version, Info.plist/entitlements and the build script.
 // Every other file (helpers, relay, docs, tests) leaves the app binary unchanged.
 // A new build input must be added here, or it would not trigger a rebuild.
-export const NATIVE_PATHS = ['Usage4Claude', 'Usage4Claude.xcodeproj', 'Config', 'Package.swift', 'Package.resolved', 'scripts/build_without_xcode.sh'];
-const NATIVE_FILE = /^(?:Usage4Claude\/|Usage4Claude\.xcodeproj\/|Config\/|Package\.(?:swift|resolved)$|scripts\/build_without_xcode\.sh$)/;
+export const NATIVE_PATHS = ['Usage4Claude', 'Usage4Claude.xcodeproj', 'Config/Info.plist',
+  'Config/Usage4Claude.entitlements', 'Package.swift', 'Package.resolved', 'scripts/build_without_xcode.sh'];
+const NATIVE_FILE = /^(?:Usage4Claude\/|Usage4Claude\.xcodeproj\/|Config\/(?:Info\.plist|Usage4Claude\.entitlements)$|Package\.(?:swift|resolved)$|scripts\/build_without_xcode\.sh$)/;
 
 export async function nativeCodeUnchanged(from, to, runner = run) {
   if (!/^[a-f0-9]{40}$/.test(from || '') || !/^[a-f0-9]{40}$/.test(to || '')) return false;
@@ -578,6 +579,9 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
       : 'Max Monitor ist aktuell; bestehende Verbindung in der laufenden App noch prüfen.');
     return {schema:1,mode:'existing',...(before || {bindingVerification:'required'})};
   }
+  // A locked keychain also prevents a usable signed replacement. Do not spend
+  // CPU on a native build/download that cannot be installed; recheck at swap.
+  await requireUnlockedLoginKeychain(runner);
   let bundle = options.appBundle;
   const artifact = !bundle ? await artifactReader(revision,runner) : null;
   bundle ||= artifact;

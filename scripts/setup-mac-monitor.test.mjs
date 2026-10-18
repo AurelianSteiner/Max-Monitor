@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged, readWorker, workerArtifactBundle, main, buildCause, storedMonitorPreferences } from './setup-mac-monitor.mjs';
+import { execFileSync } from 'node:child_process';
+import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged, nativeSourceKey, readWorker, workerArtifactBundle, main, buildCause, storedMonitorPreferences } from './setup-mac-monitor.mjs';
 import { createHash } from 'node:crypto';
 
 const DEVICE_ID = '610be10e-8a00-4e00-b000-000000000051';
@@ -291,6 +292,32 @@ test('the 14.10. helper release (3e87220 to 1d0d4ab) reuses the published native
     assert.deepEqual([command,...args.slice(2)],['git','diff','--name-only',from,to,'--']);
     return changed.join('\n')+'\n';
   }),true);
+});
+
+test('server runtime manifests never change native compatibility or the native retry key in a real Git repository', async t => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(),'monitor-native-inputs-'));
+  t.after(()=>fs.rm(repo,{recursive:true,force:true}));
+  const git = (...args) => execFileSync('git',['-C',repo,...args],{encoding:'utf8'}).trim();
+  const commit = () => {git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--quiet','-m','fixture');return git('rev-parse','HEAD');};
+  git('init','--quiet');
+  await fs.mkdir(path.join(repo,'Config'));
+  await fs.writeFile(path.join(repo,'Config','Info.plist'),'<plist><dict/></plist>');
+  await fs.writeFile(path.join(repo,'Config','Usage4Claude.entitlements'),'<plist><dict/></plist>');
+  await fs.writeFile(path.join(repo,'Config','runtime-release-files.json'),'[]');
+  const first = commit();
+  const runner = async (command,args) => {assert.equal(command,'git');return git(...args.slice(2));};
+  const initialKey = await nativeSourceKey(first,runner);
+  await fs.writeFile(path.join(repo,'Config','runtime-release-files.json'),'["team-server/server.js"]');
+  const runtime = commit();
+  assert.equal(await nativeCodeUnchanged(first,runtime,runner),true);
+  assert.equal(await nativeSourceKey(runtime,runner),initialKey);
+  for (const file of ['Info.plist','Usage4Claude.entitlements']) {
+    const previous = git('rev-parse','HEAD'), previousKey = await nativeSourceKey(previous,runner);
+    await fs.appendFile(path.join(repo,'Config',file),'\n<!-- native input change -->');
+    const changed = commit();
+    assert.equal(await nativeCodeUnchanged(previous,changed,runner),false,file);
+    assert.notEqual(await nativeSourceKey(changed,runner),previousKey,file);
+  }
 });
 
 // A14-02 (Fehleraudit 17.10.2026): the back-off is a deliberate deferral, not a
@@ -748,6 +775,31 @@ test('failed keychain metadata reads preserve the old app without trying any unl
   assert.equal(await f.marker(),'previous app');
   assert.deepEqual(f.state.runningApps,[old]);
   assert.ok(!f.calls.some(c => ['/usr/bin/ditto','/usr/bin/osascript','/usr/bin/security'].includes(c.command)));
+});
+
+test('a locked login keychain stops before artifact download or a costly native build', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  const old = f.runningApp();f.state.keychainStatus = {available:true,unlocked:false};
+  f.dependencies.artifactReader = async () => assert.fail('locked keychain must stop before artifact work');
+  await assert.rejects(setup({...f.options,appBundle:undefined,updateOnly:true},f.dependencies),{code:'MONITOR_KEYCHAIN_LOCKED'});
+  assert.equal(await f.marker(),'previous app');
+  assert.deepEqual(f.state.runningApps,[old]);
+  assert.ok(!f.calls.some(c => ['/bin/bash','swiftc','/usr/bin/ditto'].includes(c.command)));
+});
+
+test('a keychain locked during candidate preparation is rechecked before stopping the existing app', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  const old = f.runningApp(),runner=f.dependencies.runner;let checks=0;
+  f.dependencies.runner = async (command,args,...rest) => {
+    if (command === '/usr/bin/python3' && args[1]?.startsWith('# monitor-keychain-state:'))
+      return JSON.stringify({available:true,unlocked:++checks === 1});
+    return runner(command,args,...rest);
+  };
+  await assert.rejects(setup({...f.options,updateOnly:true},f.dependencies),{code:'MONITOR_KEYCHAIN_LOCKED'});
+  assert.equal(checks,2);
+  assert.equal(await f.marker(),'previous app');
+  assert.deepEqual(f.state.runningApps,[old]);
+  assert.ok(!f.calls.some(c => ['/usr/bin/ditto','/usr/bin/osascript'].includes(c.command)));
 });
 
 test('the existing-code migration restart also waits for an unlocked login keychain', async t => {
