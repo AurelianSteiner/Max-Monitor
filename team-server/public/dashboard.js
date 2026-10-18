@@ -38,6 +38,8 @@
   let streamConnected = false;
   let liveRefreshTimer = null;
   let refreshQueued = false;
+  const snapshotFreshnessMs = 90000;
+  let lastResumeAt = -Infinity;
   // Render previews need the bearer token: downloaded once, shown as blob URLs.
   const previewImages = new Map();
   let openTask = null;
@@ -463,7 +465,33 @@
   }
   function syncStatus() {
     if (!snapshot || busy || !$('connection-error').hidden) return;
+    if (Date.now() - snapshotReceivedAt > snapshotFreshnessMs) {
+      setSync(`Stand veraltet · ${clockFormat.format(new Date(snapshotReceivedAt))}`, 'error');
+      return;
+    }
     setSync(`${streamConnected ? 'Live' : 'Abgleich'} · ${clockFormat.format(new Date(snapshotReceivedAt))}`, streamConnected ? 'live' : 'polling');
+  }
+  function resumeLive() {
+    if (!credentials || document.hidden) return;
+    syncStatus();
+    const now = Date.now();
+    // WebKit can emit focus, pageshow and the native activation together.
+    if (now - lastResumeAt < 1000) return;
+    lastResumeAt = now;
+    stopLive();
+    if (busy) {
+      refreshQueued = true;
+      if (snapshotReceivedAt && now - snapshotReceivedAt > snapshotFreshnessMs) fetchController?.abort();
+    } else refresh();
+    startLive();
+  }
+  function watchLiveEvents() {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) stopLive();
+      else resumeLive();
+    });
+    window.addEventListener('pagehide', stopLive);
+    for (const event of ['pageshow', 'focus', 'max-monitor-resume']) window.addEventListener(event, resumeLive);
   }
   function stopLive() {
     clearTimeout(streamRetry);
@@ -2305,15 +2333,9 @@
   setInterval(() => {
     if (!document.hidden) {
       if (snapshot && renderedDay !== productionDay(Date.now())) render({ preserveScroll: true });
+      syncStatus();
       refresh();
     }
   }, 30000);
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) stopLive();
-    else { refresh(); startLive(); }
-  });
-  window.addEventListener("pagehide", stopLive);
-  window.addEventListener("pageshow", () => {
-    if (!document.hidden) { refresh(); startLive(); }
-  });
+  watchLiveEvents();
 })();

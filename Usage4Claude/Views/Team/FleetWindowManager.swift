@@ -2,6 +2,10 @@ import AppKit
 import SwiftUI
 import WebKit
 
+private extension Notification.Name {
+    static let fleetWindowDidBecomeVisible = Notification.Name("MaxMonitorFleetWindowDidBecomeVisible")
+}
+
 /// The fleet lives on the shared relay; the menu-bar window is only a viewer.
 @MainActor
 final class FleetWindowManager: NSObject, NSWindowDelegate {
@@ -41,6 +45,10 @@ final class FleetWindowManager: NSObject, NSWindowDelegate {
 
     func close() { window?.close() }
 
+    func windowDidBecomeKey(_ notification: Notification) {
+        NotificationCenter.default.post(name: .fleetWindowDidBecomeVisible, object: nil)
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let closing = window else { return }
         window = nil
@@ -56,6 +64,7 @@ private struct FleetDashboardView: View {
     @ObservedObject private var sleepGuard = SleepGuard.shared
     @ObservedObject private var localization = LocalizationManager.shared
     @State private var generation = UUID()
+    @State private var resumeGeneration = UUID()
     @State private var isLoading = true
     @State private var loadError: String?
     @State private var selectedTab: MonitorTab = .queue
@@ -119,6 +128,9 @@ private struct FleetDashboardView: View {
             .frame(width: 580, height: sheet == .monitoring ? 400 : 520)
         }
         .onReceive(NotificationCenter.default.publisher(for: .teamServerChanged)) { _ in reload() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in resumeGeneration = UUID() }
+        .onReceive(NotificationCenter.default.publisher(for: .fleetWindowDidBecomeVisible)) { _ in resumeGeneration = UUID() }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in resumeGeneration = UUID() }
         .onAppear { sleepGuard.adoptSystemStateIfNeeded() }
     }
 
@@ -179,7 +191,7 @@ private struct FleetDashboardView: View {
     @ViewBuilder private var fleetContent: some View {
         if let client = connection.client, connection.role != nil {
             ZStack {
-                FleetWebView(client: client, requestedView: selectedTab == .usage ? "usage" : "queue", isLoading: $isLoading, loadError: $loadError)
+                FleetWebView(client: client, requestedView: selectedTab == .usage ? "usage" : "queue", resumeGeneration: resumeGeneration, isLoading: $isLoading, loadError: $loadError)
                     .id(generation)
                 if let loadError {
                     VStack(alignment: .leading, spacing: 12) {
@@ -237,6 +249,7 @@ private struct FleetDashboardView: View {
 private struct FleetWebView: NSViewRepresentable {
     let client: TeamServerClient
     let requestedView: String
+    let resumeGeneration: UUID
     @Binding var isLoading: Bool
     @Binding var loadError: String?
 
@@ -262,6 +275,10 @@ private struct FleetWebView: NSViewRepresentable {
         if context.coordinator.lastRequestedView != requestedView {
             context.coordinator.applyRequestedView(nsView)
         }
+        if context.coordinator.lastResumeGeneration != resumeGeneration {
+            context.coordinator.lastResumeGeneration = resumeGeneration
+            nsView.evaluateJavaScript("window.dispatchEvent(new Event('max-monitor-resume'));", completionHandler: nil)
+        }
     }
 
     static func dismantleNSView(_ nsView: WKWebView, coordinator: Coordinator) {
@@ -273,6 +290,7 @@ private struct FleetWebView: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         var parent: FleetWebView
         var lastRequestedView: String?
+        var lastResumeGeneration: UUID?
         init(_ parent: FleetWebView) { self.parent = parent }
 
         func applyRequestedView(_ webView: WKWebView) {
@@ -307,6 +325,14 @@ private struct FleetWebView: NSViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             parent.isLoading = false
             applyRequestedView(webView)
+        }
+
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            parent.isLoading = true
+            parent.loadError = nil
+            // Reload this internal page in place: its query preserves filters,
+            // and the existing navigation policy still rejects other origins.
+            webView.reload()
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
