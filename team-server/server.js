@@ -42,6 +42,7 @@ const { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, MAX_PREVIEW_BYTES } 
 const { EnrollmentError, enrollWorkerMember, validateEnrollment } = require("./enrollment");
 const { controlForWorker, WORKER_ID, DEVICE_ID } = require("./worker-control");
 const remoteAccess = require("./remote-access");
+const effortConfig = require('./effort-config');
 
 const PORT = process.env.PORT === undefined ? 8080 : Number(process.env.PORT);
 const HOST = process.env.HOST || undefined;
@@ -271,6 +272,7 @@ function serveFleetAsset(req, res, pathname) {
     ["/monitor", ["dashboard.html", "text/html; charset=utf-8"]],
     ["/fleet-assets/dashboard.css", ["dashboard.css", "text/css; charset=utf-8"]],
     ["/fleet-assets/dashboard.js", ["dashboard.js", "text/javascript; charset=utf-8"]],
+    ["/fleet-assets/consumption.js", ["consumption.js", "text/javascript; charset=utf-8"]],
   ]);
   const asset = routes.get(pathname);
   if (req.method !== "GET" || !asset) return false;
@@ -577,6 +579,18 @@ const server = http.createServer((req, res) => {
   // queue bridge/admin can replace a complete task snapshot.
   if (req.method === "GET" && rest === "/fleet/events") {
     return streamFleet(req, res, teamId);
+  }
+  if (req.method === 'GET' && rest === '/consumption') {
+    try { return send(res,200,effortConfig.consumption(teamDir(teamId),teamId,who.role)); }
+    catch { return send(res,503,{error:'Aufwandseinstellungen können gerade nicht gelesen werden.'}); }
+  }
+  if (req.method === 'PATCH' && rest === '/effort') {
+    if (!['admin','super'].includes(who.role)) return send(res,403,{error:'Nur Admins dürfen den zentralen Aufwand ändern.'});
+    return readBody(req,(error,raw)=>{
+      if(error) return send(res,413,{error:'Einstellungen zu groß'});
+      try { const policy=effortConfig.savePolicy(teamDir(teamId),JSON.parse(raw),who); return send(res,200,{policy}); }
+      catch(e) { return send(res,e instanceof SyntaxError ? 400 : e.status||503,{error:e.status?e.message:'Einstellungen konnten nicht gespeichert werden.'}); }
+    },8192);
   }
   if (req.method === "GET" && rest === "/fleet") {
     return fleetResult(res, () => visibleFleet(teamId, who));

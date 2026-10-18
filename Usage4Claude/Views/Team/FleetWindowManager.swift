@@ -59,7 +59,7 @@ private struct FleetDashboardView: View {
     @State private var isLoading = true
     @State private var loadError: String?
     @State private var selectedTab: MonitorTab = .queue
-    private enum MonitorTab { case queue, accounts, members }
+    private enum MonitorTab { case queue, usage, accounts, members }
     private var showsAccountLimits: Bool { selectedTab == .accounts }
     @State private var activeSheet: MonitorSheet?
 
@@ -74,9 +74,9 @@ private struct FleetDashboardView: View {
             Divider()
             ZStack {
                 fleetContent
-                    .opacity(selectedTab == .queue ? 1 : 0)
-                    .allowsHitTesting(selectedTab == .queue)
-                    .accessibilityHidden(selectedTab != .queue)
+                    .opacity(selectedTab == .queue || selectedTab == .usage ? 1 : 0)
+                    .allowsHitTesting(selectedTab == .queue || selectedTab == .usage)
+                    .accessibilityHidden(selectedTab != .queue && selectedTab != .usage)
                 if selectedTab == .members {
                     ScrollView {
                         TeamMemberManagement()
@@ -126,6 +126,7 @@ private struct FleetDashboardView: View {
         HStack(spacing: 12) {
             Picker(L.Fleet.navigation, selection: $selectedTab) {
                 Text(L.Fleet.queueAndMacs).tag(MonitorTab.queue)
+                Text(L.Fleet.consumptionAndEffort).tag(MonitorTab.usage)
                 Text(L.Fleet.accountLimits).tag(MonitorTab.accounts)
                 if connection.role?.canViewMembers == true {
                     Text(L.Team.membersTitle).tag(MonitorTab.members)
@@ -133,7 +134,7 @@ private struct FleetDashboardView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: connection.role?.canViewMembers == true ? 400 : 300)
+            .frame(width: connection.role?.canViewMembers == true ? 550 : 450)
             Spacer(minLength: 8)
             if showsAccountLimits {
                 Button(L.Fleet.manageAccounts) { activeSheet = .accounts }
@@ -178,7 +179,7 @@ private struct FleetDashboardView: View {
     @ViewBuilder private var fleetContent: some View {
         if let client = connection.client, connection.role != nil {
             ZStack {
-                FleetWebView(client: client, isLoading: $isLoading, loadError: $loadError)
+                FleetWebView(client: client, requestedView: selectedTab == .usage ? "usage" : "queue", isLoading: $isLoading, loadError: $loadError)
                     .id(generation)
                 if let loadError {
                     VStack(alignment: .leading, spacing: 12) {
@@ -235,6 +236,7 @@ private struct FleetDashboardView: View {
 
 private struct FleetWebView: NSViewRepresentable {
     let client: TeamServerClient
+    let requestedView: String
     @Binding var isLoading: Bool
     @Binding var loadError: String?
 
@@ -257,6 +259,9 @@ private struct FleetWebView: NSViewRepresentable {
 
     func updateNSView(_ nsView: WKWebView, context: Context) {
         context.coordinator.parent = self
+        if context.coordinator.lastRequestedView != requestedView {
+            context.coordinator.applyRequestedView(nsView)
+        }
     }
 
     static func dismantleNSView(_ nsView: WKWebView, coordinator: Coordinator) {
@@ -267,7 +272,14 @@ private struct FleetWebView: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var parent: FleetWebView
+        var lastRequestedView: String?
         init(_ parent: FleetWebView) { self.parent = parent }
+
+        func applyRequestedView(_ webView: WKWebView) {
+            let target = parent.requestedView == "usage" ? "usage" : "queue"
+            lastRequestedView = target
+            webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('max-monitor-view', {detail: '\(target)'}));", completionHandler: nil)
+        }
 
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -294,6 +306,7 @@ private struct FleetWebView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             parent.isLoading = false
+            applyRequestedView(webView)
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {

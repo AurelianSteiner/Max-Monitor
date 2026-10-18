@@ -62,9 +62,29 @@ def configuration():
     program = """const {loadConfig}=require(process.argv[1]+'/src/config.js');
 const c=loadConfig(process.argv[2],{root:process.argv[1]});
 console.log(JSON.stringify({worker:c.worker_id,paths:c.paths,hub:{ssh_host:c.hub.ssh_host,
-identity_file:c.hub.identity_file,known_hosts_file:c.hub.known_hosts_file}}));"""
+identity_file:c.hub.identity_file,known_hosts_file:c.hub.known_hosts_file},settings:{
+newsletter:c.claude.effort,newsletter_review:c.claude.effort,
+filing:require(process.argv[1]+'/src/kundenablage-step.js').kundenablageConfig(c).effort,
+correction:require(process.argv[1]+'/src/korrektur-config.js').korrekturConfig(c).effort,
+translation:c.translation.effort,upload:c.klaviyo.effort,slicing:c.slicen.effort,
+sales:c.sales_newsletter?.effort||c.claude.effort,model:c.claude.model,
+policy_supported:require('fs').existsSync(process.argv[1]+'/src/effort-policy.js')
+}}));"""
     result = subprocess.run([node, "-e", program, str(root), cf], capture_output=True, text=True, timeout=15, check=True)
-    return json.loads(result.stdout)
+    config = json.loads(result.stdout)
+    # Sales uses its verified profile rather than the worker's general defaults.
+    try:
+        profile = json.loads((root / 'config/sales-profile.json').read_text())
+        config['settings']['sales'] = profile['effort']
+        skill = Path.home() / '.local/share/rs-sales-profile' / profile['id'] / 'releases' / profile['revision'] / 'skills/rs-sales-newsletter/assets/presentation/.claude/agents'
+        for phase, agent in [('sales_build', 'nl-bau'), ('sales_review', 'nl-art-director'), ('sales_final', 'nl-abnahme')]:
+            front = (skill / (agent + '.md')).read_text().split('---', 2)[1]
+            value = re.search(r'^effort:\s*(low|medium|high|xhigh|max)\s*$', front, re.M)
+            if value:
+                config['settings'][phase] = value[1]
+    except (OSError, ValueError, KeyError, IndexError):
+        pass
+    return config
 
 
 def run_inventory(config, hours, now):
@@ -73,16 +93,18 @@ def run_inventory(config, hours, now):
     db.row_factory = sqlite3.Row
     columns = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
     customer = "customer_name" if "customer_name" in columns else "NULL AS customer_name"
-    cutoff = datetime.fromtimestamp(now - hours * 3600, timezone.utc).isoformat().replace("+00:00", "Z")
+    earliest = max(now - hours * 3600, config.get('tracking_since', 0))
+    cutoff = datetime.fromtimestamp(earliest, timezone.utc).isoformat().replace("+00:00", "Z")
     result = []
-    for row in db.execute("SELECT run_id,task_id,task_name,run_dir,state,started_at,finished_at," + customer +
+    session = "session_id" if "session_id" in columns else "NULL AS session_id"
+    for row in db.execute("SELECT run_id,task_id,task_name,run_dir,state,started_at,finished_at," + session + "," + customer +
                           " FROM runs WHERE finished_at IS NULL OR finished_at>=? ORDER BY queued_at DESC", (cutoff,)):
         row = dict(row)
         result.append({"run_id": text(row["run_id"], 240), "task_id": text(row["task_id"]),
                        "title": text(row["task_name"]), "customer": text(row["customer_name"]),
                        "kind": workflow(row["task_id"], row["run_dir"]), "started": row["started_at"],
                        "finished": row["finished_at"], "state": row["state"],
-                       "stream": str(Path(row["run_dir"]) / "stream.jsonl")})
+                       "stream": str(Path(row["run_dir"]) / "stream.jsonl"), "session": row['session_id']})
     db.close()
     known = {r["stream"] for r in result}
     sales_active = {}
@@ -97,7 +119,7 @@ def run_inventory(config, hours, now):
             continue
     runs_dir = Path(config["paths"]["runs_dir"])
     for stream in runs_dir.glob("*/stream.jsonl"):
-        if str(stream) in known or stream.stat().st_mtime < now - hours * 3600:
+        if str(stream) in known or stream.stat().st_mtime < earliest:
             continue
         # Sales and other non-DB Claude jobs are still recorded. Their unknown
         # customer/state is explicit rather than guessed from a similar name.
@@ -119,7 +141,30 @@ def run_inventory(config, hours, now):
                        "title": "Sales · " + customer if sales and customer else directory.name,
                        "customer": customer, "kind": "sales" if sales else "other",
                        "started": started, "finished": None, "state": "running" if active else "unverified",
-                       "stream": str(stream)})
+                       "stream": str(stream), "session": active.get('sessionId')})
+    # Slicing, filing, translations and reviews are part of the same customer
+    # job. Include their streams without counting them as extra logical tasks.
+    children = []
+    for run in result:
+        root = Path(run['stream']).parent
+        streams = []
+        for directory, dirs, files in os.walk(root, followlinks=False):
+            dirs[:] = [d for d in dirs if d not in {'skill-release','node_modules','.git','dist','screens','assets'} and not Path(directory,d).is_symlink()]
+            if len(Path(directory).relative_to(root).parts) >= 6:
+                dirs[:] = []
+            if 'stream.jsonl' in files and Path(directory) != root:
+                streams.append(Path(directory,'stream.jsonl'))
+        session_id = run.get('session')
+        if isinstance(session_id,str) and re.fullmatch(r'[a-f0-9-]{36}',session_id):
+            streams.extend((Path.home()/'.claude/projects').glob('*/'+session_id+'/subagents/agent-*.jsonl'))
+        for stream in streams:
+            if stream.is_symlink():
+                continue
+            child = dict(run)
+            child['stream'] = str(stream)
+            child['run_id'] = run['run_id'][:170] + ':part:' + hashlib.sha256(str(stream).encode()).hexdigest()[:20]
+            children.append(child)
+    result.extend(children)
     return result
 
 
@@ -196,7 +241,7 @@ def send(config, payload):
     if not re.fullmatch(r"[A-Za-z0-9_.@:-]+", host):
         raise ValueError("Invalid existing Hub host")
     args = ["/usr/bin/ssh", "-i", os.path.expanduser(hub["identity_file"]), "-o", "BatchMode=yes",
-            "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
+            "-o", "IdentitiesOnly=yes", "-o", "Compression=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
             "-o", 'UserKnownHostsFile="' + os.path.expanduser(hub["known_hosts_file"]).replace('"', '\\"') + '"',
             host, "python3 /opt/max-monitor-quota/quota_ledger.py ingest"]
     result = subprocess.run(args, input=json.dumps(payload), text=True, capture_output=True, timeout=45, check=True)
@@ -213,14 +258,44 @@ def collect(config, cache, hours=72, sender=send, now=None):
     cache.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     cursors = sqlite3.connect(str(cache), timeout=5)
     cursors.execute("CREATE TABLE IF NOT EXISTS cursors(file TEXT PRIMARY KEY,offset INTEGER,at REAL,modified REAL)")
+    cursors.execute("CREATE TABLE IF NOT EXISTS tracker_meta(key TEXT PRIMARY KEY,value TEXT)")
+    settings = dict(config.get("settings") or {})
+    policy_path = cache.parent / "effort-policy.json"
+    try:
+        current_policy = json.loads(policy_path.read_text())
+        settings["policy_revision"] = int(current_policy.get("revision", 0))
+        for phase, value in current_policy.get("phases", {}).items():
+            settings[phase] = value
+    except (OSError, ValueError, TypeError):
+        settings["policy_revision"] = 0
+    answer = sender(config, {"schema": 1, "worker": config["worker"], "runs": [], "events": [],
+                             "settings": settings, "backfill_hours": hours}) or {}
+    since = answer.get("tracking_since") or 0
+    config['tracking_since'] = since
+    prior = cursors.execute("SELECT value FROM tracker_meta WHERE key='tracking_since'").fetchone()
+    if since and (not prior or float(prior[0]) != since):
+        cursors.execute('DELETE FROM cursors')
+        cursors.execute("INSERT OR REPLACE INTO tracker_meta VALUES('tracking_since',?)", (str(since),))
+        cursors.commit()
+    policy = answer.get("effort_policy")
+    if isinstance(policy, dict) and policy.get("schema") == 1 and isinstance(policy.get("phases"), dict):
+        phases = {k: v for k, v in policy["phases"].items()
+                  if k in {"newsletter", "newsletter_review", "correction", "translation", "upload", "slicing", "sales", "sales_build", "sales_review", "sales_final", "filing"}
+                  and v in {"low", "medium", "high", "xhigh", "max"}}
+        safe = {"schema": 1, "revision": int(policy.get("revision", 0)), "phases": phases}
+        temporary = policy_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(safe, separators=(",", ":")))
+        os.chmod(temporary, 0o600)
+        temporary.replace(policy_path)
     STAGE = "inventory"
-    inventory = run_inventory(config, hours, now)
+    inventory = [r for r in run_inventory(config, hours, now)
+                 if not r.get("finished") or (timestamp(r["finished"]) or 0) >= since]
     errors = 0
     sent = 0
     # First announce every job, including jobs without Claude usage. This never
     # means zero quota consumption: evidence completeness is a separate field.
     for start in range(0, len(inventory), 200):
-        runs = [{k: v for k, v in r.items() if k != "stream"} for r in inventory[start:start + 200]]
+        runs = [{k: v for k, v in r.items() if k not in ("stream", "session")} for r in inventory[start:start + 200]]
         for run, original in zip(runs, inventory[start:start + 200]):
             saved = cursors.execute("SELECT offset,modified FROM cursors WHERE file=?", (original["stream"],)).fetchone()
             try:
@@ -245,10 +320,11 @@ def collect(config, cache, hours=72, sender=send, now=None):
         for _ in range(20):
             STAGE = "stream"
             events, after, last_at, skipped = read_chunk(filename, offset, last_at)
+            events = [e for e in events if not since or (e.get("at") or 0) >= since]
             errors += skipped
             for event in events:
                 event["run_id"] = run["run_id"]
-            announced = {k: v for k, v in run.items() if k != "stream"}
+            announced = {k: v for k, v in run.items() if k not in ("stream", "session")}
             announced.update(evidence_errors=skipped, pending_scan=int(after < stat.st_size))
             STAGE = "export"
             sender(config, {"schema": 1, "worker": config["worker"], "runs": [announced],

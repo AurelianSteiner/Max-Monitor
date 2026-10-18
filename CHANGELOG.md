@@ -1,5 +1,11 @@
 # Änderungen
 
+## 2.15
+
+- **Verbrauch & Aufwand.** Neuer Reiter zwischen Queue & Macs und Account Limits mit zentralen Aufwandseinstellungen je Produktionsphase und dem zuletzt bestätigten Stand jedes Macs. Neue Phasen übernehmen die Einstellungen, laufende Phasen und ihre Fortsetzungen behalten ihren Stand.
+- **Verbrauch ab neuem Tracking-Start.** Jede Aufgabe wird erfasst; auswertbare Abschlüsse aktualisieren die geschätzten Durchschnittswerte für das Fünfstunden- und Wochenkontingent. Messlücken und vor dem Start begonnene Aufgaben werden ausdrücklich getrennt behandelt.
+- **Kompakte Ablage im RS Hub.** Abgeschlossene Aufgaben bleiben als komprimierte Messwerte erhalten, Rohdaten nur als befristeter Reparaturpuffer. Keine Prompts oder Gesprächsinhalte werden übertragen; unkalibrierte Kapazitätsprognosen bleiben deaktiviert.
+
 ## 2.14
 
 - **MacWorker unabhängig von der Rolle.** In der Mitgliederverwaltung schaltet das Häkchen „MacWorker“ Geräteberichte für Mitglieder, Admins, Gäste und den Inhaber ein oder aus. Aktivierte Macs erscheinen mit Akku, Stromversorgung und Monitoring-Kontingenten in der gemeinsamen Übersicht; die Zugriffsrechte bleiben erhalten.

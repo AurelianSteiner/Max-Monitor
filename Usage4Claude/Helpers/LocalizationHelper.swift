@@ -638,6 +638,7 @@ enum L {
         static var heartbeatHelp: String { localized("fleet.heartbeat_help") }
         static var retry: String { localized("fleet.retry") }
         static var settings: String { localized("fleet.settings") }
+        static var consumptionAndEffort: String { localized("fleet.consumption_and_effort") }
         static var loadError: String { localized("fleet.load_error") }
     }
 

@@ -21,7 +21,7 @@ def digest(path):
 
 
 def safe_path(value):
-    return isinstance(value, str) and re.fullmatch(r'(?:team-server|scripts)/[A-Za-z0-9_.-]+', value) and '..' not in value
+    return isinstance(value, str) and re.fullmatch(r'(?:(?:team-server|scripts)/[A-Za-z0-9_.-]+|team-server/public/[A-Za-z0-9_-]+\.(?:html|css|js))', value) and '..' not in value
 
 
 def install(payload, root=Path('/opt/max-monitor'), backup_root=Path('/var/backups/max-monitor'),

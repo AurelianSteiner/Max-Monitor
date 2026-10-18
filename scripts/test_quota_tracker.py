@@ -49,7 +49,7 @@ class LedgerTests(unittest.TestCase):
         report = self.ledger.report(24, NOW + 700)
         costs = [j["estimated_weekly_pp"] for j in report["jobs"]]
         self.assertAlmostEqual(sum(costs), 4)
-        self.assertGreater(max(costs), min(costs))
+        self.assertEqual(costs, [2, 2])  # No invented subscription token pricing.
         self.assertEqual(report["account_deltas"][0]["observed_pp"], 4)
         self.assertTrue(report["quality"]["job_allocations_are_estimates"])
 
@@ -131,6 +131,42 @@ class LedgerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.ledger.ingest(p, NOW + 600)
 
+    def test_reset_rejects_historical_replay_and_keeps_a_fixed_start(self):
+        self.ledger.ingest(payload(), NOW + 600)
+        self.ledger.reset(NOW + 700)
+        self.ledger.ingest(payload(), NOW + 800)
+        self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM events').fetchone()[0], 0)
+        self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM runs').fetchone()[0], 0)
+        self.assertEqual(self.ledger.dashboard(NOW + 900)['tracked'], 0)
+
+    def test_every_task_is_counted_but_unknown_cost_does_not_become_zero(self):
+        self.ledger.reset(NOW - 1)
+        p=payload(False);p['events']=[]
+        self.ledger.ingest(p,NOW+600)
+        summary=self.ledger.dashboard(NOW+700)
+        row=next(r for r in summary['by_kind'] if r['key']=='newsletter')
+        self.assertEqual(row['tracked'],1)
+        self.assertEqual(row['closed'],1)
+        self.assertEqual(row['pending'],1)
+        self.assertEqual(row['weekly_pp']['n'],0)
+        self.assertIsNone(row['weekly_pp']['mean'])
+
+    def test_compaction_preserves_cumulative_means_and_does_not_reimport_old_runs(self):
+        self.ledger.reset(NOW-1)
+        self.ledger.fleet(fleet(NOW,10),NOW)
+        p=payload();p['runs'][0]['pending_scan']=0
+        self.ledger.ingest(p,NOW+600)
+        self.ledger.fleet(fleet(NOW+600,14),NOW+600)
+        first=self.ledger.dashboard(NOW+700)
+        row=next(r for r in first['by_kind'] if r['key']=='newsletter')
+        self.assertEqual(row['weekly_pp']['mean'],4)
+        self.ledger.dashboard(NOW+3*86400)
+        self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM events').fetchone()[0],0)
+        self.ledger.ingest(p,NOW+3*86400+100)
+        row=next(r for r in self.ledger.dashboard(NOW+3*86400)['by_kind'] if r['key']=='newsletter')
+        self.assertEqual(row['weekly_pp']['mean'],4)
+        self.assertEqual(row['weekly_pp']['n'],1)
+
     def test_sales_metadata_uses_exact_queue_identity_without_assuming_completion(self):
         data = fleet(NOW, 10)
         data["queue"] = {"tasks": [{"id": "sales:123.456", "workflow": "sales", "url": "https://shop.example/a",
@@ -144,6 +180,36 @@ class LedgerTests(unittest.TestCase):
 
 
 class WorkerTests(unittest.TestCase):
+    def test_inventory_includes_phase_and_subagent_streams_in_the_same_logical_task(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as directory:
+            home=Path(directory);root=home/'runs'/'run-a';root.mkdir(parents=True)
+            for stream in [root/'stream.jsonl',root/'kundenablage'/'ablage'/'stream.jsonl']:
+                stream.parent.mkdir(parents=True,exist_ok=True);stream.write_text('')
+            session='12345678-1234-1234-1234-123456789abc'
+            sub=home/'.claude/projects/project'/session/'subagents/agent-a.jsonl';sub.parent.mkdir(parents=True);sub.write_text('')
+            state=home/'worker.sqlite'
+            with sqlite3.connect(state) as db:
+                db.execute('CREATE TABLE runs(run_id,task_id,task_name,run_dir,state,started_at,finished_at,queued_at,session_id,customer_name)')
+                db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?,?)',('run-a','task-a','Title',str(root),'running',ledger_module.iso(NOW),None,ledger_module.iso(NOW),session,'Customer'))
+            with patch.object(worker_module.Path,'home',return_value=home):
+                rows=worker_module.run_inventory({'paths':{'state_db':str(state),'runs_dir':str(home/'runs')}},72,NOW+500)
+            self.assertEqual(len(rows),3)
+            self.assertEqual({r['task_id'] for r in rows},{'task-a'})
+
+    def test_tracking_epoch_rewinds_cursors_once_without_exporting_earlier_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stream=Path(directory)/'stream.jsonl'
+            stream.write_text(''.join(json.dumps({'type':'assistant','timestamp':ledger_module.iso(at),'message':{'id':str(at),'usage':{'output_tokens':10}}})+'\n' for at in [NOW-100,NOW+100]))
+            inventory=[{'run_id':'r','task_id':'t','stream':str(stream)}]
+            sent=[]
+            def sender(config,body):
+                sent.extend(body['events']);return {'ok':True,'tracking_since':NOW}
+            with patch.object(worker_module,'run_inventory',return_value=inventory):
+                worker_module.collect({'worker':'mac-1'},Path(directory)/'cursors.sqlite',sender=sender,now=NOW+200)
+                worker_module.collect({'worker':'mac-1'},Path(directory)/'cursors.sqlite',sender=sender,now=NOW+300)
+            self.assertEqual([e['at'] for e in sent],[NOW+100])
+
     def test_stream_omits_content_deduplicates_usage_and_marks_quota_time(self):
         with tempfile.TemporaryDirectory() as directory:
             f = Path(directory) / "stream.jsonl"

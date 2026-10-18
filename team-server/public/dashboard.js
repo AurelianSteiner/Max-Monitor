@@ -396,7 +396,7 @@
     );
   }
   function selectView(next, status, log) {
-    view = ["overview", "queue", "machines", "log"].includes(next)
+    view = ["overview", "queue", "machines", "log", "usage"].includes(next)
       ? next
       : "overview";
     if (status) statusFilter = status;
@@ -409,7 +409,18 @@
     queuePage = 0;
     saveFilters();
     render();
+    if(view==='usage') refreshConsumption();
   }
+  async function consumptionRequest(route, method='GET', body) {
+    if(!credentials) throw Error('Verbinde zuerst den Team-Server.');
+    const response=await fetch(`${relayPrefix}/v1/teams/${encodeURIComponent(credentials.teamId)}${route}`,{
+      method,headers:{Authorization:`Bearer ${credentials.token}`,'Content-Type':'application/json'},
+      ...(body===undefined?{}:{body:JSON.stringify(body)}),cache:'no-store',signal:AbortSignal.timeout(15000)});
+    const data=await response.json();
+    if(!response.ok) throw Error(data.error||`HTTP ${response.status}`);
+    return data;
+  }
+  function refreshConsumption(){window.MaxMonitorConsumption?.refresh(consumptionRequest);}
   function showNotice(message) {
     $("notice").textContent = message || "";
     $("notice").hidden = !message;
@@ -567,6 +578,7 @@
               : "",
       );
       render({ preserveScroll: true });
+      if(view==='usage') refreshConsumption();
       startLive();
       return true;
     } catch (error) {
@@ -712,7 +724,7 @@
     const queueTitle = statusNames[statusFilter] || ({ open: "Offene Aufgaben", all: "Alle Aufgaben" })[statusFilter] || "Aufgaben";
     $("queue-title").textContent = queueTitle;
     $("page-title").textContent =
-      { overview: "Übersicht", queue: queueTitle, machines: "Macs", log: "Log" }[view] || "Übersicht";
+      { overview: "Übersicht", queue: queueTitle, machines: "Macs", log: "Log", usage: "Verbrauch & Aufwand" }[view] || "Übersicht";
     document.querySelectorAll(".nav-item").forEach((button) => {
       const selected = button.dataset.view === view
         && (!button.dataset.status || button.dataset.status === statusFilter);
@@ -726,6 +738,7 @@
     $("machines-section").hidden = view !== "machines";
     $("queue-section").hidden = view !== "queue";
     $("log-section").hidden = view !== "log";
+    if($("usage-section")) $("usage-section").hidden = view !== "usage";
     document.querySelectorAll("#status-tabs .tab").forEach((button) => {
       button.classList.toggle(
         "selected",
@@ -2087,6 +2100,11 @@
     $("log-previous").disabled = logPage === 0;
     $("log-next").disabled = (logPage + 1) * pageSize >= visible.length;
   }
+  let previousNativeView='overview';
+  window.addEventListener('max-monitor-view',event=>{
+    if(event.detail==='usage') {if(view!=='usage')previousNativeView=view;selectView('usage');}
+    else if(event.detail==='queue' && view==='usage')selectView(previousNativeView);
+  });
   document
     .querySelectorAll("[data-view]")
     .forEach((button) =>
@@ -2200,6 +2218,7 @@
   $("skill-version-compare").addEventListener("click", skillDetails);
   $("connection-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    window.MaxMonitorConsumption?.reset();
     stopLive();
     fetchController?.abort();
     generation++;
@@ -2219,6 +2238,7 @@
     }
   });
   $("disconnect").addEventListener("click", () => {
+    window.MaxMonitorConsumption?.reset();
     stopLive();
     generation++;
     fetchController?.abort();

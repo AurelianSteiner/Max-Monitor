@@ -455,4 +455,5 @@
 "fleet.heartbeat_help" = "Dieser Mac meldet jede Minute Akku, Stromversorgung und die Limits seines Monitoring-Accounts. Nach 15 Minuten ohne Meldung erscheint er als still, nach 30 Minuten als offline. Claude-Zugangsdaten bleiben auf diesem Mac.";
 "fleet.retry" = "Erneut laden";
 "fleet.settings" = "Verbindung & Worker";
+"fleet.consumption_and_effort" = "Verbrauch & Aufwand";
 "fleet.load_error" = "Die gemeinsame Übersicht konnte nicht geladen werden";

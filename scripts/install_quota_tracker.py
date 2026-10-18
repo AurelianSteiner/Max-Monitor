@@ -22,7 +22,7 @@ ExecStart=/usr/bin/python3 /opt/max-monitor-quota/quota_ledger.py serve --interv
 Restart=on-failure
 RestartSec=10
 StateDirectory=max-monitor-quota
-StateDirectoryMode=0700
+StateDirectoryMode=0755
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
@@ -80,6 +80,12 @@ def main():
             temporary.write_bytes(source.read_bytes())
             os.chmod(temporary, 0o644)
             temporary.replace(target)
+        state = Path('/var/lib/max-monitor-quota')
+        state.mkdir(parents=True, exist_ok=True)
+        os.chmod(state, 0o755)
+        public = state / 'public'
+        public.mkdir(exist_ok=True)
+        os.chmod(public, 0o755)
         unit.write_text(UNIT)
         os.chmod(unit, 0o644)
         subprocess.run(["/usr/bin/systemd-analyze", "verify", str(unit)], check=True)

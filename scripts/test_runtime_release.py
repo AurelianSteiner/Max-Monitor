@@ -13,6 +13,12 @@ spec.loader.exec_module(runtime)
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_runtime_asset_paths_are_explicit_and_cannot_escape_public(self):
+        self.assertTrue(runtime.safe_path('team-server/public/consumption.js'))
+        self.assertTrue(runtime.safe_path('team-server/public/dashboard.css'))
+        for value in ['team-server/public/../../secrets.json','team-server/public/other/private.js','team-server/public/secret.json','/etc/passwd']:
+            self.assertFalse(runtime.safe_path(value))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

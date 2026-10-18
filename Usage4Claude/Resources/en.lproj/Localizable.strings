@@ -456,4 +456,5 @@
 "fleet.heartbeat_help" = "This Mac reports its battery, power source and monitoring-account limits every minute. After 15 minutes without a heartbeat it is silent, and after 30 minutes it is offline. Claude credentials stay on this Mac.";
 "fleet.retry" = "Reload";
 "fleet.settings" = "Connection & worker";
+"fleet.consumption_and_effort" = "Usage & Effort";
 "fleet.load_error" = "The shared overview could not be loaded";

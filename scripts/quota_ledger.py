@@ -18,6 +18,7 @@ import sqlite3
 import statistics
 import sys
 import time
+import zlib
 from urllib.parse import urlsplit
 
 SCHEMA = 1
@@ -83,6 +84,8 @@ class Ledger:
         CREATE INDEX IF NOT EXISTS events_run ON events(worker,run_id,event_type,at);
         CREATE TABLE IF NOT EXISTS collectors(worker TEXT PRIMARY KEY,last_seen REAL,
           scanned INTEGER,backfill_hours INTEGER,errors INTEGER);
+        CREATE TABLE IF NOT EXISTS worker_settings(worker TEXT PRIMARY KEY,at REAL,settings TEXT);
+        CREATE TABLE IF NOT EXISTS compact_jobs(job TEXT PRIMARY KEY,finished REAL,payload BLOB);
         """)
         self.meta("schema", SCHEMA)
         self.db.commit()
@@ -90,8 +93,28 @@ class Ledger:
     def meta(self, key, value):
         self.db.execute("INSERT OR REPLACE INTO metadata VALUES(?,?)", (key, json.dumps(value)))
 
+    def setting(self, key, default=None):
+        row = self.db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else default
+
+    def reset(self, since):
+        """Reset this ledger only. Never touch worker runs, source logs or Fleet."""
+        since = stamp(since)
+        if since is None or since > time.time() + 60:
+            raise ValueError("Invalid tracking start")
+        with self.db:
+            for table in ("samples", "events", "runs", "compact_jobs", "collectors", "worker_settings", "bindings", "accounts", "metadata"):
+                self.db.execute("DELETE FROM " + table)
+            self.meta("schema", SCHEMA)
+            self.meta("tracking_since", since)
+        self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self.db.execute("VACUUM")
+        return {"ok": True, "tracking_since": iso(since)}
+
     def sample(self, key, account, worker, window, reset, at, percent, quality, source):
         if not number(percent) or not 0 <= percent <= 100 or at is None:
+            return
+        if at < self.setting("tracking_since", 0):
             return
         if reset is not None and (reset <= at or reset - at > 8 * 86400):
             return  # Old or impossible cycle, never a fresh post-reset baseline.
@@ -162,7 +185,13 @@ class Ledger:
             raise ValueError("Quota batch exceeds limit")
         saved_context = self.db.execute("SELECT value FROM metadata WHERE key='task_context'").fetchone()
         context = json.loads(saved_context[0]) if saved_context else {}
+        since = self.setting("tracking_since", 0)
         with self.db:
+            settings = payload.get("settings")
+            if isinstance(settings, dict):
+                safe = {k: clean(v, 100) for k, v in settings.items()
+                        if re.fullmatch(r"[a-z_]{1,40}", k) and isinstance(v, (str, int, float, bool))}
+                self.db.execute("INSERT OR REPLACE INTO worker_settings VALUES(?,?,?)", (worker, now, json.dumps(safe)))
             for run in runs:
                 run_id = clean(run.get("run_id"), 240)
                 task_id = clean(run.get("task_id"), 300)
@@ -170,7 +199,13 @@ class Ledger:
                 known = context.get("run:" + run_id) or (context.get("task:" + task_id) if kind == "sales" else None) or {}
                 if not run_id or not task_id:
                     continue
+                finished = stamp(known.get("finished") or run.get("finished"))
+                if finished is not None and finished < since:
+                    continue
                 job = kind + ":" + task_id
+                compact = self.db.execute("SELECT finished FROM compact_jobs WHERE job=?", (job,)).fetchone()
+                if compact and finished is not None and finished <= compact[0] and now - compact[0] > 1800:
+                    continue
                 self.db.execute("""INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(worker,run_id)
                   DO UPDATE SET title=excluded.title,customer=COALESCE(NULLIF(excluded.customer,''),runs.customer),
                   started=COALESCE(runs.started,excluded.started),
@@ -191,6 +226,8 @@ class Ledger:
                 if not event_id or kind not in ("message", "quota") or not run:
                     continue
                 at = stamp(event.get("at"))
+                if since and (at is None or at < since):
+                    continue
                 if at is not None and (at > now + 60 or at < now - 366 * 86400):
                     continue
                 windows = {}
@@ -213,7 +250,13 @@ class Ledger:
                                  json.dumps(windows), clean(event.get("model"), 100), *values))
             self.db.execute("INSERT OR REPLACE INTO collectors VALUES(?,?,?,?,?)",
                             (worker, now, len(events), int(payload.get("backfill_hours", 72)), int(payload.get("errors", 0))))
-        return {"ok": True, "runs": len(runs), "events": len(events), "received_at": iso(now)}
+        policy_file = Path(os.environ.get("MAX_MONITOR_EFFORT_POLICY", "/var/lib/max-monitor/RSMACS01/effort-policy.json"))
+        try:
+            policy = json.loads(policy_file.read_text())
+        except (OSError, ValueError):
+            policy = {"schema": 1, "revision": 0, "phases": {}}
+        return {"ok": True, "runs": len(runs), "events": len(events), "received_at": iso(now),
+                "tracking_since": since, "effort_policy": policy}
 
     def resolve(self, weekly_reset):
         """Historical account identity is an explicitly inferred reset fingerprint.
@@ -249,7 +292,7 @@ class Ledger:
 
     def report(self, hours=72, now=None):
         now = time.time() if now is None else now
-        cutoff = now - hours * 3600
+        cutoff = max(now - hours * 3600, self.setting("tracking_since", 0))
         self.materialize()
         jobs = {}
         for row in self.db.execute("SELECT * FROM runs WHERE COALESCE(finished,last_seen)>=?", (cutoff,)):
@@ -275,7 +318,7 @@ class Ledger:
             if reset not in resolved:
                 resolved[reset] = self.resolve(reset)
             account = resolved[reset]
-            quota_events[(event["worker"], event["run_id"])].append((event["at"], account))
+            quota_events[(event["worker"], event["job"])].append((event["at"], account))
         messages = defaultdict(list)
         unknown_messages = 0
         for e in self.db.execute("SELECT * FROM events WHERE event_type='message' AND at BETWEEN ? AND ?", (cutoff, now)):
@@ -284,14 +327,14 @@ class Ledger:
                 continue
             job["sampled_messages"] += 1
             job["tokens"] += e["input_tokens"] + e["output_tokens"] + e["cache_create"] + e["cache_read"]
-            nearby = [q for q in quota_events[(e["worker"], e["run_id"])] if q[0] is not None and abs(q[0] - e["at"]) <= 1800]
+            nearby = [q for q in quota_events[(e["worker"], e["job"])] if q[0] is not None and abs(q[0] - e["at"]) <= 1800]
             nearest = min(nearby, key=lambda q: abs(q[0] - e["at"])) if nearby else None
             if not nearest or not nearest[1]:
                 unknown_messages += 1
                 continue
-            # Work proxy, not a conversion from tokens to billed quota.
-            weight = e["input_tokens"] + e["cache_create"] + .1 * e["cache_read"] + 5 * e["output_tokens"]
-            messages[nearest[1]].append((e["at"], e["job"], max(1, weight), e["id"]))
+            # Equal share per observed assistant turn, explicitly estimated.
+            # No undocumented token pricing is presented as subscription cost.
+            messages[nearest[1]].append((e["at"], e["job"], 1, e["id"]))
         totals = defaultdict(lambda: {"observed_pp": 0.0, "estimated_assigned_pp": 0.0,
             "unattributed_pp": 0.0, "intervals": 0, "gaps": 0, "counter_decreases": 0})
         pairs = defaultdict(list)
@@ -338,16 +381,19 @@ class Ledger:
                         alloc = jobs[job_id]["allocations"].setdefault(account, {"five_hour_pp": None, "seven_day_pp": None})
                         alloc[window + "_pp"] = (alloc[window + "_pp"] or 0) + delta * weight / denominator
                     totals[key]["estimated_assigned_pp"] += delta
-                    if window == "seven_day":
-                        covered.update(matched)
+                    covered.update((job, event_id, window) for job, event_id in matched)
                 else:
                     totals[key]["unattributed_pp"] += delta
                 before = row
-        for job, at in covered:
-            jobs[job]["attributed_messages"] += 1
+        per_window = defaultdict(lambda: defaultdict(int))
+        for job, at, window in covered:
+            per_window[job][window] += 1
+            if window == 'seven_day':
+                jobs[job]["attributed_messages"] += 1
         groups = {name: defaultdict(list) for name in ("kind", "customer", "account_kind", "customer_kind", "task")}
         for j in jobs.values():
             j["coverage"] = round(min(1, j["attributed_messages"] / max(1, j["sampled_messages"])), 4)
+            j["coverage_by_window"] = {w: min(1, per_window[j['job']][w] / max(1, j['sampled_messages'])) for w in ('five_hour','seven_day')}
             j["completed"] = "fertig" in j["states"] or "completed" in j["states"]
             j["in_progress"] = "running" in j["states"] or "queued" in j["states"]
             for field, result in (("five_hour_pp", "estimated_five_hour_pp"), ("seven_day_pp", "estimated_weekly_pp")):
@@ -397,37 +443,96 @@ class Ledger:
             "jobs": sorted(jobs.values(), key=lambda j: j["started"] or "", reverse=True)}
 
     def forecast(self, selected, mix, hours=168):
-        report = self.report(max(72, hours))
-        output = []
-        for account in selected:
-            if report["quality"]["pending_scan_jobs"]:
-                output.append({"account": account, "tasks_per_week": None, "reason": "historical_backfill_in_progress"})
-                continue
-            values = []
-            for kind, share in mix.items():
-                row = report["averages"]["account_kind"].get(account + "|" + kind)
-                if not row or not row["forecast_ready"] or not row["weekly_pp"] or row["weekly_pp"]["mean"] <= 0:
-                    values = []
-                    break
-                values.append((share, row))
-            if not values:
-                output.append({"account": account, "tasks_per_week": None, "reason": "insufficient_completed_job_samples"})
-                continue
-            weekly = sum(share * row["weekly_pp"]["mean"] for share, row in values)
-            session = sum(share * row["five_hour_pp"]["mean"] for share, row in values if row["five_hour_pp"])
-            limit = min(100 / weekly, (168 / 5) * 100 / session) if session > 0 else 100 / weekly
-            output.append({"account": account, "tasks_per_week": math.floor(limit), "estimated_weekly_pp_per_task": weekly,
-                           "measurement": "estimated_upper_bound_before_slot_and_availability_limits"})
-        return {"schema": SCHEMA, "accounts": output, "account_count": len(selected), "mix": mix,
-                "tasks_per_week": sum(r["tasks_per_week"] for r in output) if output and all(r["tasks_per_week"] is not None for r in output) else None,
-                "basis": "account_specific_completed_jobs; no equal-plan assumption; no paid overage"}
+        return {"schema": SCHEMA, "accounts": [{"account": a, "tasks_per_week": None} for a in selected],
+                "tasks_per_week": None, "reason": "quota_allocation_not_calibrated", "mix": mix}
+
+    def dashboard(self, now=None):
+        """Cumulative compressed task records and a bounded raw repair buffer."""
+        now = time.time() if now is None else now
+        since = self.setting("tracking_since", now)
+        report = self.report(min(48, max(1, (now - since) / 3600 + 1)), now)
+        archived = {r["job"]: json.loads(zlib.decompress(r["payload"])) for r in self.db.execute("SELECT * FROM compact_jobs")}
+        jobs = dict(archived)
+        terminal = {"fertig", "completed", "failed", "abgebrochen", "zeitlimit", "blockiert", "technisch_blockiert", "abgebrochen_neustart"}
+        for j in report["jobs"]:
+            if j["job"] in archived and stamp(j["started"]) is not None and stamp(j["started"]) < now - 48 * 3600:
+                continue  # Never replace a full archived result with a partial window.
+            closed = bool(j["finished"]) and not j["in_progress"] and bool(terminal.intersection(j["states"]))
+            carryover = not j["started"] or stamp(j["started"]) < since
+            checked = closed and not carryover and not j['partial_window'] and not j["pending_scan"] and not j["evidence_errors"]
+            session_ready = checked and j['coverage_by_window']['five_hour'] >= .8
+            weekly_ready = checked and j['coverage_by_window']['seven_day'] >= .8
+            ready = session_ready and weekly_ready
+            entry = {k: j[k] for k in ("job", "kind", "customer", "title", "started", "finished", "workers", "states", "attempts")}
+            entry.update(closed=closed, carryover=carryover, coverage=j["coverage"],
+                         five_hour_pp=j["estimated_five_hour_pp"] if session_ready else None,
+                         weekly_pp=j["estimated_weekly_pp"] if weekly_ready else None,
+                         accounts=sorted(j["allocations"]), estimated=True,
+                         check="carryover" if carryover else "complete" if ready else "pending_evidence" if closed else "running")
+            # A new continuation after retention is counted, but cannot masquerade
+            # as a complete new measurement when old evidence is already compacted.
+            old = archived.get(j["job"])
+            if old and old.get("finished") and j["started"] and stamp(j["started"]) > stamp(old["finished"]):
+                entry.update(five_hour_pp=None, weekly_pp=None, check="reopened_after_retention")
+            jobs[j["job"]] = entry
+            if closed:
+                encoded = zlib.compress(json.dumps(entry, separators=(",", ":"), ensure_ascii=False).encode(), 9)
+                self.db.execute("INSERT OR REPLACE INTO compact_jobs VALUES(?,?,?)", (j["job"], stamp(j["finished"]), encoded))
+        self.db.commit()
+
+        def group(rows):
+            result = []
+            for key, selected in sorted(rows.items()):
+                closed = [j for j in selected if j["closed"] and not j["carryover"]]
+                values = {}
+                for field in ("five_hour_pp", "weekly_pp"):
+                    measured = [j[field] for j in closed if j[field] is not None]
+                    values[field] = {"n": len(measured), "mean": statistics.mean(measured) if measured else None,
+                                     "total": sum(measured)}
+                result.append({"key": key, "tracked": len(selected), "closed": len(closed),
+                               "carryover": sum(j["carryover"] for j in selected),
+                               "pending": sum(j["check"] != "complete" and j["closed"] and not j["carryover"] for j in selected), **values})
+            return result
+
+        by_kind = {k: [] for k in sorted(KINDS)}
+        by_account, by_customer = defaultdict(list), defaultdict(list)
+        for j in jobs.values():
+            by_kind[j["kind"]].append(j)
+            by_customer[j["customer"] + "|" + j["kind"]].append(j)
+            if len(j["accounts"]) == 1:
+                by_account[j["accounts"][0] + "|" + j["kind"]].append(j)
+        settings = [{"worker": r["worker"], "at": iso(r["at"]), "values": json.loads(r["settings"])}
+                    for r in self.db.execute("SELECT * FROM worker_settings ORDER BY worker")]
+        for setting in settings:
+            account = next((a for a in report['accounts'] if a['worker'] == setting['worker']), None)
+            if account:
+                setting['values']['mac_name'] = account['name']
+        # Final task records are compressed once; raw events are a bounded repair
+        # buffer, not a forever-growing copy of Claude conversations.
+        cutoff = now - 48 * 3600
+        with self.db:
+            old_jobs = [r[0] for r in self.db.execute("SELECT job FROM compact_jobs WHERE finished<?", (now - 1800,))
+                        if jobs[r[0]]["closed"] and (jobs[r[0]]["check"] == "complete" or stamp(jobs[r[0]]["finished"]) < cutoff)]
+            for job in old_jobs:
+                self.db.execute("DELETE FROM events WHERE job=?", (job,))
+                self.db.execute("DELETE FROM runs WHERE job=?", (job,))
+            self.db.execute("DELETE FROM samples WHERE at<?", (cutoff - 1800,))
+        return {"schema": 2, "generated_at": iso(now), "tracking_since": iso(since),
+                "method": "observed_account_deltas_equal_turn_share", "estimated": True,
+                "raw_resolution_pp": 1, "forecast_enabled": False,
+                "by_kind": group(by_kind), "by_account_kind": group(by_account), "by_customer_kind": group(by_customer),
+                "tracked": len(jobs), "closed": sum(j["closed"] and not j["carryover"] for j in jobs.values()),
+                "recent_jobs": sorted(jobs.values(), key=lambda j: j["started"] or "", reverse=True)[:30],
+                "account_deltas": report["account_deltas"], "settings": settings, "accounts": report['accounts'],
+                "collectors": report["collectors"], "raw_retention_days": 2,
+                "compact_bytes": self.db.execute("SELECT COALESCE(SUM(LENGTH(payload)),0) FROM compact_jobs").fetchone()[0]}
 
 
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n")
     os.chmod(temporary, 0o600)
     temporary.replace(path)
 
@@ -435,7 +540,7 @@ def write_json(path, value):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("ingest", "collect", "serve", "report", "forecast", "status"))
+    parser.add_argument("command", choices=("ingest", "collect", "serve", "report", "forecast", "status", "reset", "dashboard"))
     parser.add_argument("--db", default=DEFAULT_DB)
     parser.add_argument("--fleet", default=DEFAULT_FLEET)
     parser.add_argument("--hours", type=int, default=72)
@@ -443,6 +548,8 @@ def main():
     parser.add_argument("--output")
     parser.add_argument("--accounts", default="")
     parser.add_argument("--mix", default="newsletter=1")
+    parser.add_argument("--since")
+    parser.add_argument("--public", default="/var/lib/max-monitor-quota/public/RSMACS01.json")
     args = parser.parse_args()
     ledger = Ledger(args.db)
     if args.command == "ingest":
@@ -455,9 +562,10 @@ def main():
         while True:
             try:
                 ledger.fleet(json.loads(Path(args.fleet).read_text()))
-                if args.output and time.time() - last_report >= 300:
-                    for hours in (24, 72):
-                        write_json(Path(args.output) / ("summary-%sh.json" % hours), ledger.report(hours))
+                if args.output and time.time() - last_report >= 60:
+                    write_json(args.public, ledger.dashboard())
+                    os.chmod(Path(args.public).parent, 0o755)
+                    os.chmod(args.public, 0o644)
                     last_report = time.time()
                 result = {"ok": True, "sampled_at": iso()}
                 if args.command == "collect":
@@ -469,6 +577,10 @@ def main():
             time.sleep(max(5, args.interval))
     elif args.command == "report":
         result = ledger.report(args.hours)
+    elif args.command == "dashboard":
+        result = ledger.dashboard()
+    elif args.command == "reset":
+        result = ledger.reset(args.since)
     elif args.command == "forecast":
         pairs = [item.split("=", 1) for item in args.mix.split(",")]
         mix = {kind: float(share) for kind, share in pairs}

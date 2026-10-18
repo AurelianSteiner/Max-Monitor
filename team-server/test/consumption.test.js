@@ -1,0 +1,33 @@
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const os=require('node:os');
+const path=require('node:path');
+const {once}=require('node:events');
+test('consumption requires team auth; only admins change allowlisted effort with revision checks',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quota-api-'));
+  process.env.DATA_DIR=dir;process.env.TEAM_TOKEN='quota-test-owner';process.env.QUOTA_PUBLIC_DIR=path.join(dir,'public');
+  const {server}=require('../server');server.listen(0,'127.0.0.1');await once(server,'listening');
+  t.after(async()=>{server.closeAllConnections();await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  const base=`http://127.0.0.1:${server.address().port}/v1/teams/QUOTATEST`;
+  const call=async(route,method='GET',body,token='quota-test-owner')=>{
+    const response=await fetch(base+route,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+    return {status:response.status,body:await response.json()};
+  };
+  const guest=(await call('/members','POST',{name:'Guest',role:'guest'})).body.member;
+  assert.equal((await call('/consumption','GET',undefined,'wrong')).status,401);
+  let result=await call('/consumption','GET',undefined,guest.token);
+  assert.equal(result.status,200);assert.equal(result.body.canManage,false);assert.equal(result.body.summary,null);
+  const update={revision:0,phases:{newsletter:'high',newsletter_review:'medium'}};
+  assert.equal((await call('/effort','PATCH',update,guest.token)).status,403);
+  assert.equal((await call('/effort','PATCH',{revision:0,phases:{command:'high'}})).status,400);
+  assert.equal((await call('/effort','PATCH',{revision:0,phases:{newsletter:'invalid'}})).status,400);
+  result=await call('/effort','PATCH',update);assert.equal(result.status,200);assert.equal(result.body.policy.revision,1);
+  assert.equal((await call('/effort','PATCH',update)).status,409);
+  assert.deepEqual((await call('/consumption')).body.policy.phases,update.phases);
+  assert.equal(fs.statSync(path.join(dir,'QUOTATEST/effort-policy.json')).mode&0o777,0o600);
+  fs.mkdirSync(process.env.QUOTA_PUBLIC_DIR);
+  fs.writeFileSync(path.join(process.env.QUOTA_PUBLIC_DIR,'QUOTATEST.json'),JSON.stringify({schema:2,generated_at:new Date().toISOString(),by_kind:[]}));
+  result=await call('/consumption');assert.equal(result.body.stale,false);assert.deepEqual(result.body.summary.by_kind,[]);
+  assert.equal((await fetch(`http://127.0.0.1:${server.address().port}/fleet-assets/consumption.js`)).status,200);
+});
