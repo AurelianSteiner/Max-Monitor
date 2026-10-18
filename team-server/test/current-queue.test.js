@@ -149,3 +149,14 @@ test('durable blocker context and current PM survive relay restart without becom
   for(const [key,value] of Object.entries(fields))assert.equal(restarted[key],value,key);
   assert.ok(!restarted.workerId);
 });
+
+
+test('a confirmed newer worker attempt clears all old blocker context', t=>{
+  const {store,update,report}=setup(t);
+  update([mail('retry',{attemptId:'old',reasonCode:'product_feed_missing',responsibleRole:'Klaviyo-Technik',
+    blockerSourceRunId:'old',nextStep:'Old instruction',pmOwner:'Old PM',blockedReason:'Old blocker'})]);
+  report([{id:mail('retry').id,title:'retry',runId:'new',workflow:'newsletter',status:'running'}]);
+  const row=store.snapshot('TEAM1234').queue.tasks.find(row=>row.id===mail('retry').id);
+  assert.equal(row.status,'running');
+  for(const key of ['reasonCode','responsibleRole','blockerSourceRunId','nextStep','pmOwner','blockedReason'])assert.equal(row[key],undefined,key);
+});

@@ -7,6 +7,8 @@ const { validateReport, publicReport } = require("./worker-reports");
 const { newerCapabilities } = require("./integration-contract");
 const { newerSkillRelease } = require("./skill-versions");
 
+const CLEARED_BLOCKER_CONTEXT = Object.fromEntries(['blockerReason','reasonCode','responsibleRole','nextStep',
+  'pmOwner','pmOwnerId','pmCheckedAt','blockerSource','blockerSourceRunId','blockerSourceHash','blockerRecordedAt'].map(key => [key, undefined]));
 const HEARTBEAT_INTERVAL_SECONDS = 60;
 const SILENT_AFTER_MS = 15 * 60 * 1000;
 const OFFLINE_AFTER_MS = 30 * 60 * 1000;
@@ -532,7 +534,7 @@ function currentQueue(state, liveReports) {
       if (!taskState.reportMayReplace(previous, run, report.sampledAt)) continue;
       const conflict = activeOwners.has(run.id) && activeOwners.get(run.id) !== report.workerId;
       activeOwners.set(run.id, report.workerId);
-      tasks.set(run.id, { ...previous, ...run, blockedReason: undefined, errorUrl: undefined,
+      tasks.set(run.id, { ...previous, ...run, ...CLEARED_BLOCKER_CONTEXT, blockedReason: undefined, errorUrl: undefined,
         completion: undefined, completedAt: undefined, workerId: conflict ? null : report.workerId,
         status: paused ? "paused" : run.status,
         phase: conflict ? "Mehrere Worker melden denselben Auftrag" : paused ? "Pausiert · automatische Fortsetzung"
