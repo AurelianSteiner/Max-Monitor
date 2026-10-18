@@ -14,6 +14,15 @@ const set = (stage = 'klaviyo', overrides = {}) => ({ id: 's1', mode: 'productio
   createdAt: Date.parse('2026-10-13T11:00:00Z'), sourceVersion: 'v1',
   questions: [{ id: 'Q3', title: 'Gutscheincode?', status: 'open', revision: 2 }], ...overrides });
 
+test('a current PM question replaces the old technical diagnosis with its concrete decision', () => {
+  const current = row('upload', { reasonCode: 'technical_blocker', responsibleRole: 'Technik', nextStep: 'Reparieren', blockerReason: 'Old error' });
+  applyPmQuestions([current], { sets: [set()] });
+  assert.equal(current.responsibleRole, 'PM'); assert.equal(current.reasonCode, 'pm_decision_pending');
+  assert.match(current.nextStep, /Gutscheincode/); assert.equal(current.blockerReason, 'Q3: Gutscheincode?');
+  const archived = row(); applyPmQuestions([archived], { sets: [set('klaviyo', { archivedAt: 1 })] });
+  assert.equal(archived.status, 'blocked');
+});
+
 test('all production kinds show their actual unanswered questions, including upload and language binding', () => {
   for (const [workflow, stage, id, language] of [['newsletter','newsletter'], ['correction','korrektur'],
     ['upload','klaviyo'], ['translation','translation','clickup:translation-en:t1','EN']]) {
