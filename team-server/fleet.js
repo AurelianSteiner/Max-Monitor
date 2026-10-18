@@ -439,7 +439,11 @@ function withLinkedWorker(machine, links) {
 function taskVersion(task) {
   const state = [task.status, task.phase || null, task.workerId || null, task.sourceStatus || null];
   // Preserve existing completion signatures for tasks without new diagnostics.
-  if (task.attemptId || task.blockedReason) state.push(task.attemptId || null, task.blockedReason || null);
+  const typed = task.blockerSource === 'checkpoint' && /^[a-f0-9]{64}$/.test(task.blockerSourceHash || '');
+  // PM names and display wording can change without a new operation outcome.
+  // Bind human decisions to the verified original, never its current PM caption.
+  if (typed) state.push(task.attemptId || null, [task.blockerSourceRunId, task.blockerSourceHash, task.blockerReason || null]);
+  else if (task.attemptId || task.blockedReason) state.push(task.attemptId || null, task.blockedReason || null);
   return crypto.createHash("sha256").update(JSON.stringify(state)).digest("hex");
 }
 

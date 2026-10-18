@@ -142,3 +142,14 @@ test('a typed saved blocker never becomes an invented PM question; explicit deci
  store.clarifyTask(team,{}, {taskId:current.id,taskVersion:current.taskVersion,reason:'PM klärt die Freigabe'});
  assert.equal(createFleetStore(directory,()=>now).snapshot(team).queue.tasks[0].status,'queued');
 });
+
+
+test('current PM display changes preserve a reviewed saved blocker; a new original outcome expires it', t=>{
+ const {store,directory}=setup(t);const original=task({attemptId:'saved',blockerSource:'checkpoint',reasonCode:'product_feed_missing',
+  blockerSourceRunId:'saved',blockerSourceHash:'a'.repeat(64),blockerReason:'Produktfeed fehlt.',pmOwner:'Ben',blockedReason:'Produktfeed fehlt · PM: Ben'});
+ store.updateQueue(team,queue([original]));const current=store.snapshot(team).queue.tasks[0];
+ store.clarifyTask(team,{}, {taskId:current.id,taskVersion:current.taskVersion,reason:'PM klärt die fachlichen Vorgaben'});
+ store.updateQueue(team,queue([{...original,pmOwner:'Hannes',blockedReason:'Produktfeed fehlt · PM: Hannes'}]));
+ const reread=createFleetStore(directory,()=>now).snapshot(team).queue.tasks[0];assert.equal(reread.status,'queued');assert.equal(reread.pmOwner,'Hannes');
+ store.updateQueue(team,queue([{...original,blockerSourceHash:'b'.repeat(64)}]));assert.equal(store.snapshot(team).queue.tasks[0].status,'blocked');
+});

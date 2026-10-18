@@ -805,3 +805,8 @@ a technical blocker can still belong to Klaviyo technique or Design/QA. Source
 causes describe the saved attempt; they do not assert that an old technical or
 customer condition has been rechecked now. A changed commission cannot inherit
 an older checkpoint. The relay preserves context on disk across restarts.
+
+Human clarification/completion identities for typed saved blockers use the exact
+original outcome fingerprint. A PM-name/display update cannot undo a reviewed
+decision; a new source digest or attempt requires a new review. Legacy signatures
+for tasks without typed source proof remain unchanged.
