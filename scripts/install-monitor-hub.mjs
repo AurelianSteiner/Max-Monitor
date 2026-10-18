@@ -18,6 +18,7 @@ const SOURCE_FILES = ['team-server/server.js', 'team-server/fleet.js', 'team-ser
   'team-server/public/dashboard.html', 'team-server/public/dashboard.css', 'team-server/public/dashboard.js', 'scripts/enroll-monitor-worker.mjs',
   'team-server/worker-control.js', 'team-server/remote-access.js', 'scripts/member-remote.py', 'scripts/check-worker-control.mjs', 'team-server/worker-reports.js', 'team-server/skill-versions.js', 'scripts/report-monitor-worker.mjs',
   'scripts/install-monitor-hub.mjs', 'scripts/install-monitor-hub.sh', 'scripts/newsletter-monitor-bridge.mjs', 'scripts/task-state.cjs', 'scripts/status-reconciliation.mjs', 'scripts/pm-question-status.mjs', 'scripts/error-copy-cleanup.mjs', 'scripts/worker-admin-hub.mjs', 'scripts/worker-admin.mjs', 'scripts/worker-diagnose.py', 'scripts/install-worker-admin.sh', 'scripts/worker-remote.mjs', 'scripts/worker-remote-hub.mjs', 'scripts/setup-mac-monitor.mjs'];
+SOURCE_FILES.push('team-server/integration-contract.js', 'team-server/worker-identities.json', 'scripts/blocker-context.mjs');
 const defaults = { serverURL: 'https://api.ruegamer-steiner.de/max-monitor', teamId: 'RSMACS01', port: 8941, nodeBinary: '/usr/bin/node' };
 const HUB_ROOT = '/opt/rs-hub';
 const DEFAULT_SLACK_RATE_LIMITS = `${HUB_ROOT}/state/slack-rate-limits`;
@@ -237,6 +238,16 @@ export function prepareInstallation({ stageDirectory, nginxConfigPath, workerRoo
   const source = fs.readFileSync(nginxConfigPath, 'utf8');
   const nginx = injectNginxLocation(source, settings);
   const files = SOURCE_FILES.map((relative) => ({ target: `/opt/max-monitor/${relative}`, content: fs.readFileSync(path.join(sourceRoot, relative)), mode: relative.endsWith('.sh') ? 0o755 : 0o644 }));
+  const sourceHashes = Object.fromEntries(files.map(file => [file.target.slice('/opt/max-monitor/'.length),
+    crypto.createHash('sha256').update(file.content).digest('hex')]));
+  const git = (...args) => spawnSync('git', ['-C', sourceRoot, ...args], { encoding: 'utf8' });
+  const head = git('rev-parse', 'HEAD'), dirty = git('status', '--porcelain');
+  const sourceRevision = head.status === 0 && dirty.status === 0 && !dirty.stdout.trim()
+    && /^[a-f0-9]{40}$/.test(head.stdout.trim()) ? head.stdout.trim() : null;
+  const sourceReceipt = { schema: 2, component: 'monitor-runtime', sourceRevision,
+    verifiedSource: sourceRevision !== null, sourceFiles: sourceHashes };
+  files.push({ target: '/opt/max-monitor/relay-release.json',
+    content: JSON.stringify(sourceReceipt, null, 2) + '\n', mode: 0o644 });
   for (const { relative, content } of workerSourceFiles(workerRoot)) {
     files.push({ target: `/opt/max-monitor/newsletter-source/${relative}`, content, mode: 0o644 });
   }
@@ -262,7 +273,7 @@ export function prepareInstallation({ stageDirectory, nginxConfigPath, workerRoo
       service: SERVICE, queueService: QUEUE_SERVICE, dataDirectory: '/var/lib/max-monitor', queueCacheDirectory: '/var/lib/max-monitor-queue',
       slackRateLimitDirectory: settings.slackRateLimits, files: files.map(({ target, mode }) => ({ target, mode })) }, null, 2)}\n`, 0o600);
   }
-  return { settings, files };
+  return { settings, files, sourceReceipt };
 }
 
 function command(binary, arguments_, allowFailure = false) {
@@ -443,6 +454,15 @@ export function parseInstallArguments(argv) {
 
 export async function main(argv = process.argv.slice(2)) {
   const options = parseInstallArguments(argv);
+  if ((options.install || options.rollbackDirectory) && process.platform === 'linux'
+      && process.env.MAX_MONITOR_RELEASE_LOCK_HELD !== '1') {
+    const locked = spawnSync('/usr/bin/flock', ['-n', '/run/lock/max-monitor-code-release.lock',
+      process.execPath, fileURLToPath(import.meta.url), ...argv], {
+      stdio: 'inherit', env: { ...process.env, MAX_MONITOR_RELEASE_LOCK_HELD: '1' },
+    });
+    if (locked.error || locked.status !== 0) throw new Error('Hub-Release gesperrt oder fehlgeschlagen; keine parallele Ausrollung starten.');
+    return;
+  }
   if (options.help) {
     process.stdout.write('node scripts/install-monitor-hub.mjs --generate-only <private-dir>|--install --nginx-config <existing-tls-config> --worker-root <newsletter-source>\n' +
       'Optionen: --server-url <https-prefix-url> --team-id <id> --port <port> --node-binary <path> --existing-config <private-json>\n' +

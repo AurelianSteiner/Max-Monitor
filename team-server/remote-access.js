@@ -51,9 +51,10 @@ function loadAccess(dataDir, teamId) {
   } catch { throw new RemoteAccessError(503, 'Ungültige Team-Fernzugriff-Konfiguration'); }
 }
 
-// A configured policy binds both the team identity and the source Mac's SSH key.
+// Source Macs require their bound identity/key; named admins use a separate,
+// member-bound bastion principal and must still hold the current admin role.
 // Explicit policy paths fail closed when missing, unreadable or malformed.
-function authorizeClient(directory, teamId, memberId, key = null) {
+function authorizeClient(directory, teamId, memberId, key = null, role = null) {
   const configured = process.env.MAX_MONITOR_REMOTE_CLIENT_POLICY_FILE;
   const file = configured || path.join(directory, 'remote-client-policy.json');
   let value;
@@ -65,9 +66,12 @@ function authorizeClient(directory, teamId, memberId, key = null) {
     if (!configured && error.code === 'ENOENT') return null;
     throw new RemoteAccessError(503, 'Fernzugriffs-Freigabe ist nicht verfügbar');
   }
-  let clients;
+  let clients, adminMemberIds;
   try {
     if (value.schema !== 1 || value.teamId !== teamId || !Array.isArray(value.clients) || value.clients.length > 200) throw Error('invalid');
+    adminMemberIds = value.adminMemberIds ?? [];
+    if (!Array.isArray(adminMemberIds) || adminMemberIds.length > 200 || new Set(adminMemberIds).size !== adminMemberIds.length ||
+        adminMemberIds.some(id => typeof id !== 'string' || !/^[a-z0-9-]{1,64}$/.test(id))) throw Error('invalid admins');
     clients = value.clients.map(client => {
       if (typeof client.workerId !== 'string' || !WORKER_ID.test(client.workerId) || !Array.isArray(client.memberIds) || !client.memberIds.length ||
           client.memberIds.some(id => typeof id !== 'string' || !/^[a-z0-9-]{1,64}$/.test(id))) throw Error('invalid');
@@ -75,14 +79,15 @@ function authorizeClient(directory, teamId, memberId, key = null) {
     });
     if (new Set(clients.map(client => client.publicKey)).size !== clients.length) throw Error('duplicate');
   } catch { throw new RemoteAccessError(503, 'Ungültige Fernzugriffs-Freigabe'); }
+  if (role === 'admin' && adminMemberIds.includes(memberId)) return `admin:${memberId}`;
   const client = clients.find(client => client.memberIds.includes(memberId) && (key === null || client.publicKey === key));
   if (!client) throw new RemoteAccessError(403, 'Dieser Zugang oder Quell-Mac darf keine Fernverbindung öffnen');
   return client.workerId;
 }
 
-function configuration(dataDir, teamId, memberId) {
+function configuration(dataDir, teamId, memberId, role = null) {
   const { directory, ...result } = loadAccess(dataDir, teamId);
-  authorizeClient(directory, teamId, memberId);
+  authorizeClient(directory, teamId, memberId, null, role);
   return result;
 }
 
@@ -95,13 +100,14 @@ function takeSlot(identity, now) {
   value.count++; limits.set(identity, value);
 }
 
-async function issueCertificate(dataDir, teamId, memberId, body, { run = execute, now = Date.now() } = {}) {
+async function issueCertificate(dataDir, teamId, memberId, body, { run = execute, now = Date.now(), role = null } = {}) {
   if (!/^[a-z0-9-]{1,64}$/.test(memberId || '') || !body || typeof body.workerId !== 'string' || !WORKER_ID.test(body.workerId)) {
     throw new RemoteAccessError(400, 'Ungültige Fernzugriffs-Anfrage');
   }
   const key = publicKey(body.publicKey);
   const settings = loadAccess(dataDir, teamId);
-  const sourceWorkerId = authorizeClient(settings.directory, teamId, memberId, key);
+  const sourceWorkerId = authorizeClient(settings.directory, teamId, memberId, key, role);
+  const adminSource = sourceWorkerId === `admin:${memberId}`;
   const worker = settings.workers.find(v => v.workerId === body.workerId);
   if (!worker) throw new RemoteAccessError(404, 'Dieser Mac ist nicht für den Fernzugriff freigegeben');
   takeSlot(`${teamId}/${memberId}`, now);
@@ -117,9 +123,12 @@ async function issueCertificate(dataDir, teamId, memberId, body, { run = execute
   try {
     fs.writeFileSync(keyFile, key + '\n', { mode: 0o600, flag: 'wx' });
     await run('/usr/bin/ssh-keygen', ['-q', '-s', ca, '-I', identity, '-z', serial, '-n',
-      `max-monitor-${teamId}-bastion,max-monitor-${teamId}-${worker.workerId}`, '-V', '-30s:+90s',
+      [`max-monitor-${teamId}-bastion`, `max-monitor-${teamId}-${worker.workerId}`,
+        ...(adminSource ? [`max-monitor-${teamId}-admin-${memberId}`] : [])].join(','), '-V', '-30s:+90s',
       '-O', 'clear', '-O', 'permit-pty', '-O', 'permit-port-forwarding', keyFile], { timeout: 5000, maxBuffer: 16 * 1024 });
-    authorizeClient(settings.directory, teamId, memberId, key);
+    if (authorizeClient(settings.directory, teamId, memberId, key, role) !== sourceWorkerId) {
+      throw new RemoteAccessError(403, 'Fernzugriffs-Freigabe wurde geändert');
+    }
     const certificate = fs.readFileSync(path.join(temporary, 'member-cert.pub'), 'utf8').trim();
     if (certificate.length > 16 * 1024 || !/^ssh-ed25519-cert-v01@openssh\.com [A-Za-z0-9+/]+={0,2}(?: [^\r\n]*)?$/.test(certificate)) throw Error('invalid certificate');
     const audit = path.join(settings.directory, 'remote-access-audit.jsonl');
@@ -128,7 +137,7 @@ async function issueCertificate(dataDir, teamId, memberId, body, { run = execute
       fs.renameSync(audit, audit + '.previous');
     }
     fs.appendFileSync(audit, JSON.stringify({ at: new Date(now).toISOString(), memberId, workerId: worker.workerId, serial,
-      ...(sourceWorkerId ? { sourceWorkerId } : {}) }) + '\n', { mode: 0o600 });
+      ...(adminSource ? { sourceAdminId: memberId } : sourceWorkerId ? { sourceWorkerId } : {}) }) + '\n', { mode: 0o600 });
     return { schema: 1, teamId, memberId, worker, hubHost: settings.hubHost, hubUser: settings.hubUser,
       hubHostKey: settings.hubHostKey, certificate, expiresAt: new Date(now + 90_000).toISOString() };
   } finally {

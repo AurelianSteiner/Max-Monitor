@@ -7,6 +7,8 @@ const { validateReport, publicReport } = require("./worker-reports");
 const { newerCapabilities } = require("./integration-contract");
 const { newerSkillRelease } = require("./skill-versions");
 
+const CLEARED_BLOCKER_CONTEXT = Object.fromEntries(['blockerReason','reasonCode','responsibleRole','nextStep',
+  'pmOwner','pmOwnerId','pmCheckedAt','blockerSource','blockerSourceRunId','blockerSourceHash','blockerRecordedAt'].map(key => [key, undefined]));
 const HEARTBEAT_INTERVAL_SECONDS = 60;
 const SILENT_AFTER_MS = 15 * 60 * 1000;
 const OFFLINE_AFTER_MS = 30 * 60 * 1000;
@@ -274,6 +276,17 @@ function validateQueue(body) {
       workerId: string(raw.workerId, "task.workerId", 120, true),
       phase: string(raw.phase, "task.phase", 160, true),
       blockedReason: string(raw.blockedReason, "task.blockedReason", 500, true),
+      blockerReason: string(raw.blockerReason, "task.blockerReason", 500, true),
+      reasonCode: string(raw.reasonCode, "task.reasonCode", 80, true),
+      responsibleRole: string(raw.responsibleRole, "task.responsibleRole", 80, true),
+      nextStep: string(raw.nextStep, "task.nextStep", 300, true),
+      pmOwner: string(raw.pmOwner, "task.pmOwner", 100, true),
+      pmOwnerId: string(raw.pmOwnerId, "task.pmOwnerId", 64, true),
+      pmCheckedAt: timestamp(raw.pmCheckedAt, "task.pmCheckedAt", true),
+      blockerRecordedAt: timestamp(raw.blockerRecordedAt, "task.blockerRecordedAt", true),
+      blockerSource: string(raw.blockerSource, "task.blockerSource", 80, true),
+      blockerSourceRunId: string(raw.blockerSourceRunId, "task.blockerSourceRunId", 200, true),
+      blockerSourceHash: string(raw.blockerSourceHash, "task.blockerSourceHash", 64, true),
       errorUrl: string(raw.errorUrl, "task.errorUrl", 2000, true),
       attemptId: string(raw.attemptId, "task.attemptId", 200, true),
       // The worker's live step changes every few minutes; unlike phase it is
@@ -426,7 +439,11 @@ function withLinkedWorker(machine, links) {
 function taskVersion(task) {
   const state = [task.status, task.phase || null, task.workerId || null, task.sourceStatus || null];
   // Preserve existing completion signatures for tasks without new diagnostics.
-  if (task.attemptId || task.blockedReason) state.push(task.attemptId || null, task.blockedReason || null);
+  const typed = task.blockerSource === 'checkpoint' && /^[a-f0-9]{64}$/.test(task.blockerSourceHash || '');
+  // PM names and display wording can change without a new operation outcome.
+  // Bind human decisions to the verified original, never its current PM caption.
+  if (typed) state.push(task.attemptId || null, [task.blockerSourceRunId, task.blockerSourceHash, task.blockerReason || null]);
+  else if (task.attemptId || task.blockedReason) state.push(task.attemptId || null, task.blockedReason || null);
   return crypto.createHash("sha256").update(JSON.stringify(state)).digest("hex");
 }
 
@@ -466,10 +483,13 @@ function withClarification(task, decisions = []) {
     && entry.sourceUpdatedAt === (task.updatedAt || null)
     && (!task.blockedReason || entry.diagnosticVersion === taskVersion(task)));
   const reason = task.blockedReason || "";
+  // A typed, verified stored outcome is authoritative. Legacy free-text
+  // matching must not invent a PM question merely because its cause is now visible.
+  const typed = task.blockerSource === "checkpoint" && task.reasonCode;
   const human = task.phase === "PM-Rückfrage offen"
-    || /(?:Gestaltung|Design|Black[- ]Week).{0,70}(?:nicht freigegeben|Freigabe fehlt|Entscheidung.{0,30}fehlt)/i.test(reason)
+    || (!typed && (/(?:Gestaltung|Design|Black[- ]Week).{0,70}(?:nicht freigegeben|Freigabe fehlt|Entscheidung.{0,30}fehlt)/i.test(reason)
     || /Entscheidung.{0,70}(?:Gestaltung|Design).{0,20}fehlt/i.test(reason)
-    || /(?:PM|Valentin).{0,50}als Editor einlad/i.test(reason);
+    || /(?:PM|Valentin).{0,50}als Editor einlad/i.test(reason)));
   return decision || human ? { ...task, status: "queued", workerId: null, phase: "Wartet · PM-Rückfrage",
     blockedReason: decision?.reason || task.blockedReason || "PM-Rückfrage offen" } : task;
 }
@@ -521,7 +541,7 @@ function currentQueue(state, liveReports) {
       if (!taskState.reportMayReplace(previous, run, report.sampledAt)) continue;
       const conflict = activeOwners.has(run.id) && activeOwners.get(run.id) !== report.workerId;
       activeOwners.set(run.id, report.workerId);
-      tasks.set(run.id, { ...previous, ...run, blockedReason: undefined, errorUrl: undefined,
+      tasks.set(run.id, { ...previous, ...run, ...CLEARED_BLOCKER_CONTEXT, blockedReason: undefined, errorUrl: undefined,
         completion: undefined, completedAt: undefined, workerId: conflict ? null : report.workerId,
         status: paused ? "paused" : run.status,
         phase: conflict ? "Mehrere Worker melden denselben Auftrag" : paused ? "Pausiert · automatische Fortsetzung"

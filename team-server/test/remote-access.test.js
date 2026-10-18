@@ -101,6 +101,25 @@ test('source permission is rechecked after signing so revocation prevents ticket
   assert.ok(!fs.existsSync(path.join(f.directory, 'remote-access-audit.jsonl')));
 });
 
+test('named admin access needs both current admin role and explicit policy membership', async t => {
+  const f = fixture(t), file = path.join(f.directory, 'remote-client-policy.json');
+  const policy = { schema: 1, teamId: 'DEMO1234', clients: [], adminMemberIds: ['named-admin'] };
+  fs.writeFileSync(file, JSON.stringify(policy), { mode: 0o600 });
+  for (const [member, role] of [['named-admin', 'member'], ['named-admin', 'guest'], ['other-admin', 'admin']]) {
+    assert.throws(() => access.configuration(f.root, 'DEMO1234', member, role), { status: 403 });
+  }
+  assert.equal(access.configuration(f.root, 'DEMO1234', 'named-admin', 'admin').enabled, true);
+  const ticket = await access.issueCertificate(f.root, 'DEMO1234', 'named-admin',
+    { publicKey: f.publicKey, workerId: 'macbook-1' }, { role: 'admin' });
+  const cert = path.join(f.directory, 'named-cert.pub'); fs.writeFileSync(cert, ticket.certificate);
+  const description = execFileSync('/usr/bin/ssh-keygen', ['-L', '-f', cert], { encoding: 'utf8' });
+  assert.match(description, /max-monitor-DEMO1234-admin-named-admin/);
+  assert.match(description, /max-monitor-DEMO1234-macbook-1/);
+  const audit = JSON.parse(fs.readFileSync(path.join(f.directory, 'remote-access-audit.jsonl'), 'utf8').trim());
+  assert.equal(audit.sourceAdminId, 'named-admin');
+  assert.equal(audit.sourceWorkerId, undefined);
+});
+
 test('every current role may request access; removed, unknown and cross-team tokens cannot', async t => {
   const f = fixture(t);
   process.env.DATA_DIR=f.root; process.env.TEAM_TOKENS='DEMO1234:owner-token,OTHER123:other-owner'; delete process.env.TEAM_TOKEN;

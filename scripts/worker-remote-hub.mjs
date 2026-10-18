@@ -62,6 +62,11 @@ export function teamConfiguration(settings, { policyFile = '/etc/max-monitor/rem
     policy.sourcePublicKeys = policy.sourcePublicKeys.map(publicKey);
     if (new Set(policy.sourcePublicKeys).size !== policy.sourcePublicKeys.length) throw new Error('Doppelte Quell-Mac-Freigabe.');
   }
+  if (policy.adminMemberIds !== undefined && (!Array.isArray(policy.adminMemberIds) || policy.adminMemberIds.length > 200 ||
+      new Set(policy.adminMemberIds).size !== policy.adminMemberIds.length ||
+      policy.adminMemberIds.some(id => typeof id !== 'string' || !/^[a-z0-9-]{1,64}$/.test(id)))) {
+    throw new Error('Ungültige Admin-Fernzugriff-Freigabe.');
+  }
   const keyFile = path.join(dataDir, policy.teamId, 'remote-ca.pub');
   if (!fs.lstatSync(keyFile).isFile()) throw new Error('Team-Prüfschlüssel ist keine reguläre Datei.');
   return { ...policy, publicKey: publicKey(fs.readFileSync(keyFile, 'utf8').trim()), dataDir };
@@ -74,9 +79,13 @@ export function syncTeamAccess(settings, { file = '/etc/max-monitor/remote-acces
   if (!workers.length) throw new Error('Keine Macs für Team-Fernzugriff eingerichtet.');
   const destinations = workers.map(v => `permitopen="127.0.0.1:${v.port}"`);
   const restrictions = ['restrict', 'port-forwarding', 'command="/usr/bin/false"', ...destinations];
-  const keys = team.sourcePublicKeys
+  let keys = team.sourcePublicKeys
     ? team.sourcePublicKeys.map(key => `${restrictions.join(',')} ${key} max-monitor-source-access\n`).join('')
     : ['cert-authority', `principals="max-monitor-${team.teamId}-bastion"`, ...restrictions].join(',') + ` ${team.publicKey} max-monitor-team-access\n`;
+  for (const id of team.sourcePublicKeys ? team.adminMemberIds || [] : []) {
+    keys += ['cert-authority', `principals="max-monitor-${team.teamId}-admin-${id}"`, ...restrictions].join(',') +
+      ` ${team.publicKey} max-monitor-admin-access\n`;
+  }
   if (!fs.lstatSync(bastionKeys).isFile()) throw new Error('Bastion-Prüfschlüssel ist keine reguläre Datei.');
   const manifest = { schema: 1, enabled: true, teamId: team.teamId, hubHost: team.hubHost, hubUser: 'max-monitor-access',
     hubHostKey: publicKey(fs.readFileSync(hostKeyFile, 'utf8').trim()),

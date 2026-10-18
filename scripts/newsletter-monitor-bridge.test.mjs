@@ -143,7 +143,11 @@ test('language packages preserve exact source links and reject ambiguous or cros
     const input = { ...en, markdown_description: en.markdown_description + ' https://app.clickup.com/t/de2' };
     assert.equal(buildQueue([...sources, input], [], DEFAULT_WORKFLOWS, { now }).find(row => row.id.endsWith(':en1')).packageId, 'en1');
   }
-  const steps = buildQueue([taskIn('pre-gen', 'single', ['pre gen · läuft', 'en translation'])], [], DEFAULT_WORKFLOWS, { now });
+  const task = taskIn('pre-gen', 'single', ['pre gen · läuft', 'en translation']);
+  assert.ok(!buildQueue([task], [], DEFAULT_WORKFLOWS, { now }).some(row => row.workflow === 'translation'),
+    'a historical translation tag alone never commissions another order');
+  const claim = parseClaim(jobClaim('ai_translation_claim', 'single-uebersetzung-en', 'macbook-1'));
+  const steps = buildQueue([task], [claim], DEFAULT_WORKFLOWS, { now });
   assert.ok(steps.every(row => row.packageId === 'single'));
   assert.equal(steps.find(row => row.workflow === 'translation').language, 'en');
 });

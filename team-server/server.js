@@ -485,7 +485,7 @@ const server = http.createServer((req, res) => {
   // Source-Mac policy may restrict both the authenticated identity and its SSH key.
   // Tokens and source permissions are checked afresh; no commands are executed here.
   if (req.method === "GET" && rest === "/remote-access") {
-    try { return send(res, 200, remoteAccess.configuration(DATA_DIR, teamId, who.member.id)); }
+    try { return send(res, 200, remoteAccess.configuration(DATA_DIR, teamId, who.member.id, who.role)); }
     catch (error) { return send(res, error instanceof remoteAccess.RemoteAccessError ? error.status : 503, { error: "Team-Fernzugriff ist nicht eingerichtet" }); }
   }
   if (req.method === "POST" && rest === "/remote-access/certificate") {
@@ -495,8 +495,12 @@ const server = http.createServer((req, res) => {
       const current = identify(req, teamId);
       if (!current) return send(res, 401, { error: "Team-Zugang wurde entfernt" });
       try {
-        const ticket = await remoteAccess.issueCertificate(DATA_DIR, teamId, current.member.id, body);
-        if (!identify(req, teamId)) return send(res, 401, { error: "Team-Zugang wurde entfernt" });
+        const ticket = await remoteAccess.issueCertificate(DATA_DIR, teamId, current.member.id, body, { role: current.role });
+        const confirmed = identify(req, teamId);
+        if (!confirmed) return send(res, 401, { error: "Team-Zugang wurde entfernt" });
+        if (confirmed.member.id !== current.member.id || confirmed.role !== current.role) {
+          return send(res, 403, { error: "Team-Berechtigung wurde geändert" });
+        }
         return send(res, 200, ticket);
       } catch (error) {
         return send(res, error instanceof remoteAccess.RemoteAccessError ? error.status : 503,
@@ -732,11 +736,12 @@ const server = http.createServer((req, res) => {
       let body;
       try { body = JSON.parse(raw); } catch { return send(res, 400, { error: "kein gültiges JSON" }); }
       if (!body || typeof body !== "object" || Array.isArray(body) ||
-          (body.role === undefined && body.macWorker === undefined) ||
+          (body.role === undefined && body.macWorker === undefined && body.name === undefined) ||
+          (body.name !== undefined && (typeof body.name !== "string" || !body.name.trim() || body.name.trim().length > 120 || /[\r\n\u0000-\u001f]/.test(body.name))) ||
           (body.role !== undefined && !["member", "admin", "guest"].includes(body.role)) ||
           (body.macWorker !== undefined && typeof body.macWorker !== "boolean")) return send(res, 400, { error: "Rolle oder MacWorker-Einstellung ist ungültig" });
       if (memberMatch[1] === "team-owner") {
-        if (body.role !== undefined) return send(res, 409, { error: "Die Inhaberrolle bleibt erhalten" });
+        if (body.role !== undefined || body.name !== undefined) return send(res, 409, { error: "Die Inhaberidentität bleibt erhalten" });
         let owner;
         try {
           owner = ownerIdentity(teamId, true);
@@ -756,7 +761,8 @@ const server = http.createServer((req, res) => {
       try { members = readMembers(teamId, true); } catch { return send(res, 500, { error: "Mitglieder konnten nicht gelesen werden" }); }
       const member = members.find((entry) => entry.id === memberMatch[1]);
       if (!member) return send(res, 404, { error: "Mitglied nicht gefunden" });
-      member.macWorker = body.macWorker ?? isMacWorker(member);
+      if (body.macWorker !== undefined || body.role !== undefined) member.macWorker = body.macWorker ?? isMacWorker(member);
+      if (body.name !== undefined) member.name = body.name.trim();
       if (body.role !== undefined) member.role = body.role;
       try { writeMembers(teamId, members); } catch { return send(res, 500, { error: "Rolle konnte nicht gespeichert werden" }); }
       // Invalidate open dashboards immediately after a role change. Their next

@@ -13,14 +13,15 @@ export function readPmQuestions(file, openDatabase = file => new (require('node:
   } finally { db.close(); }
 }
 
-export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}) {
+export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}, bindings = new Map()) {
   for (const row of rows) {
-    if (!['blocked', 'failed'].includes(row.status) || !row.run) continue;
+    const run = row.run || bindings.get(row.id);
+    if (!['blocked', 'failed'].includes(row.status) || !run || (row.attemptId && row.attemptId !== run.id)) continue;
     const stage = row.workflow === 'upload' ? 'klaviyo' : row.workflow === 'correction' ? 'korrektur' : row.workflow;
     const matches = sets.filter(set => set.mode === 'production' && set.stage === stage
       && set.questions.some(q => ['open', 'waiting', 'accepted'].includes(q.status))
-      && set.taskId === row.run.taskId && set.workerId === row.workerId
-      && (set.headRunId || set.runId) === row.run.id && set.threadTs
+      && set.taskId === run.taskId && set.workerId === (run.workerId || row.workerId)
+      && (set.headRunId || set.runId) === run.id && set.threadTs
       && (stage !== 'translation' || row.id === `clickup:translation-${String(set.language).toLowerCase()}:${set.taskId}`));
     // Never guess between two journals for one source attempt.
     if (matches.length !== 1) continue;
@@ -29,7 +30,7 @@ export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}) {
       && job.state === 'queued' && set.questions.some(q => q.id === job.questionId && q.status === 'accepted' && q.revision === job.revision));
     const open = set.questions.filter(q => ['open', 'waiting'].includes(q.status));
     if (!pending && !open.length) continue;
-    row.attemptId = row.run.id;
+    row.attemptId = run.id;
     row.updatedAt = new Date(Math.max(Date.parse(row.updatedAt) || 0, set.createdAt || 0)).toISOString();
     row.blockedReason = open.map(q => `${q.id}: ${q.title}`).join(' · ').slice(0, 500) || undefined;
     row.status = 'queued';

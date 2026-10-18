@@ -12,6 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { cleanupErrorCopies, createErrorCleanupWriter } from './error-copy-cleanup.mjs';
 import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
 import taskState from './task-state.cjs';
+import { checkpointBlocker, applyBlockerContexts } from './blocker-context.mjs';
 import { createStatusAudit, saveStatusAudit } from './status-reconciliation.mjs';
 
 const require = createRequire(import.meta.url);
@@ -44,9 +45,10 @@ export const DEFAULT_WORKFLOWS = [
     queued: ['klaviyo upload · wartet', 'klaviyo upload · pausiert'], running: ['klaviyo upload · läuft'],
     blocked: ['klaviyo upload · blockiert'], completed: ['klaviyo upload · fertig'],
   } },
-  // One job per language; its start tag stays until "· fertig" or "· blockiert".
+  // Legacy language tags describe history, never a new order. Keep actual
+  // reservations and terminal outcomes visible while the worker is status-driven.
   ...TRANSLATION_LANGUAGES.map(language => ({ id: `translation-${language}`, queueWorkflow: 'translation', titleSuffix: language.toUpperCase(),
-    triggerTags: [`${language} translation`, `${language} translations`], claimWorkflow: `translation-${language}`, stateTags: {
+    triggerTags: [`${language} translation`, `${language} translations`], claimWorkflow: `translation-${language}`, reservationOnly: true, stateTags: {
       blocked: [`${language} translation · blockiert`], completed: [`${language} translation · fertig`],
     } })),
 ];
@@ -68,6 +70,7 @@ export function validateWorkflows(value) {
     ids.add(workflow.id);
     if (workflow.queueWorkflow !== undefined && !/^[a-z][a-z0-9-]{0,39}$/.test(workflow.queueWorkflow)) throw new Error(`Queue-Workflow ungültig: ${workflow.id}.`);
     if (workflow.titleSuffix !== undefined && (typeof workflow.titleSuffix !== 'string' || !/^[\p{L}\p{N} ]{1,20}$/u.test(workflow.titleSuffix))) throw new Error(`Titelzusatz ungültig: ${workflow.id}.`);
+    if (workflow.reservationOnly !== undefined && typeof workflow.reservationOnly !== 'boolean') throw new Error(`Reservierungspflicht ungültig: ${workflow.id}.`);
     if (!Array.isArray(workflow.triggerTags) || !workflow.triggerTags.length) throw new Error(`Start-Tags fehlen: ${workflow.id}.`);
     if (workflow.startStatuses !== undefined && (!Array.isArray(workflow.startStatuses) || !workflow.startStatuses.length || workflow.startStatuses.length > 10
       || workflow.startStatuses.some(status => typeof status !== 'string' || !normalizeStatus(status) || status.length > 60 || /[\u0000-\u001f\u007f]/.test(status))))
@@ -844,6 +847,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       // test workspace, cutover). Blocked and completed history and reserved runs
       // stay; downstream Pre-Gen statuses complete it below.
       const backed = Boolean(claim) && claim.outcome !== 'completed' && (LIVE_CLAIM_STATES.has(claim.state) || claim.paused === true);
+      if (workflow.reservationOnly && ['queued', 'running'].includes(status) && !backed) continue;
       if (starts.length && ['queued', 'running'].includes(status) && !backed
         && ((!ordered && !taskState.preGenFinished({ workflow: workflow.queueWorkflow ?? workflow.id, sourceStatus: taskStatus(task) }))
           || (ordered && admission.parked(task, statusKindOf(task), task.statusSince)))) continue;
@@ -863,7 +867,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         workerId: claim?.paused && claim.portable ? undefined : claim?.workerId, attemptId: claim?.runId, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
         updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30),
         // Internal only: addRunDetails reads progress and renders of this attempt, then removes it.
-        run: claim ? { id: claim.runId, jobId: claim.jobId, ts: threadOf(claim), taskId: task.id, channelId: claim.channelId, heartbeat: threadBeat(claim) } : undefined });
+        run: claim ? { id: claim.runId, jobId: claim.jobId, workerId: claim.workerId, ts: threadOf(claim), taskId: task.id, channelId: claim.channelId, heartbeat: threadBeat(claim) } : undefined });
     }
   }
   // Revisions come from the approval workflow. They can run while the old
@@ -891,7 +895,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId,
       phase, progress: status === 'completed' ? 100 : undefined, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
       ...completionEvidence([claim]),
-      run: { id: claim.runId, jobId: claim.jobId, ts: threadOf(claim), taskId: claim.taskId, channelId: claim.channelId, heartbeat: threadBeat(claim) } });
+      run: { id: claim.runId, jobId: claim.jobId, workerId: claim.workerId, ts: threadOf(claim), taskId: claim.taskId, channelId: claim.channelId, heartbeat: threadBeat(claim) } });
   }
   rows.push(...waitingCorrections(tasks, rows, updatedAt, admission));
   return rows.map(taskState.reconcileTask).sort((a, b) => a.id.localeCompare(b.id));
@@ -1309,7 +1313,18 @@ export async function readStoredCheckpoints(localHub) {
   const file = path.join(localHub, 'state/newsletter-continuations/queue.sqlite');
   try { await fs.access(file); } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
   const db = new (require('node:sqlite').DatabaseSync)(file, { readOnly: true });
-  try { return db.prepare('SELECT run_id,task_id,producer,owner,ready_at FROM checkpoints WHERE owner IS NULL').all(); }
+  try {
+    const rows = db.prepare('SELECT run_id,task_id,producer,owner,ready_at FROM checkpoints WHERE owner IS NULL').all();
+    const columns = db.prepare('PRAGMA table_info(checkpoints)').all().map(c => c.name);
+    if (columns.includes('packed') && columns.includes('digest')) {
+      const payload = db.prepare('SELECT digest,packed FROM checkpoints WHERE run_id=? AND task_id=? AND owner IS NULL');
+      for (const row of rows) if (row.ready_at === 8640000000000000) {
+        const packed = payload.get(row.run_id,row.task_id);
+        if (packed) row.blocker = checkpointBlocker({ ...row, ...packed });
+      }
+    }
+    return rows;
+  }
   finally { db.close(); }
 }
 
@@ -1327,6 +1342,7 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
     row.workerId = undefined;
     row.attemptId = entry.run_id;
     if (entry.ready_at === 8640000000000000) {
+      if (entry.blocker) Object.assign(row, entry.blocker);
       if (!/PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')) row.status = 'blocked';
       if (!/PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')) row.phase = 'Blockiert · Fortschritt im RS Hub gesichert';
     } else {
@@ -1434,11 +1450,14 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   // Keep a confirmed date after its source thread leaves the history window.
   // Any currently visible attempt prevents borrowing an older success.
   retainCompletionDates(queue, previousTasks, claims);
-  applyPmQuestions(queue, questionResult.value);
   const bindings = new Map(queue.filter(row => row.run).map(row => [row.id, row.run]));
   await addRunDetails(queue, { hubFetch, channelId: config.slack.channel_id, previews, previousTasks, now, statusCache });
   if (checkpointResult.status === 'fulfilled') applyStoredCheckpoints(queue, checkpointResult.value, bindings);
+  // A stored terminal upload may first become blocked here. Its open question
+  // still belongs to the exact source attempt after the producer Mac is cleared.
+  applyPmQuestions(queue, questionResult.value, bindings);
   queue.push(...salesResult.value);
+  applyBlockerContexts(queue, tasks, now);
   for (let index = 0; index < queue.length; index++) queue[index] = taskState.reconcileTask(queue[index]);
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
   const manualUploadIds = new Set(tasks.filter(task => admission.manualUpload(task)).map(task => task.id));
