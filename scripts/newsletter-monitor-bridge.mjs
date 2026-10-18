@@ -322,6 +322,8 @@ function claimDetails(kind, state, paused, text, reactions) {
   const terminalLine = text.split('\n')[1] || '';
   const doneLabel = kind === 'correction' && state === 'final' && /^(?:✅|:white_check_mark:)\s*Fertig:/u.test(terminalLine);
   return { doneLabel, ...claimOutcome(kind, state, paused, doneLabel, reactions),
+    ...(kind === 'correction' ? { figmaUrl: [...text.matchAll(/<([^|>]+)(?:\|[^>]+)?>/g)]
+      .map(match => figmaLink(match[1])).find(Boolean) } : {}),
     url, company: kind === 'correction' ? displayText(text.split('\n')[0].replace(/^\*?Korrektur\s*·\s*/, '').replace(/[*`]/g, ''), 200) : undefined,
     title: displayText((link?.[2] || text.split('\n')[0].replace(/[*`]/g, '')).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 300) };
 }
@@ -896,6 +898,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
     rows.push({ id: `correction:${claim.jobId}`, title: displayText(claim.title || task?.name, 300, `Korrektur ${claim.taskId}`),
       url: claim.url || (claim.taskId !== claim.jobId ? `https://app.clickup.com/t/${encodeURIComponent(claim.taskId)}` : undefined), workflow: 'correction',
       company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId,
+      figmaUrl: claim.figmaUrl,
       phase, progress: status === 'completed' ? 100 : undefined, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
       ...completionEvidence([claim]),
       run: { id: claim.runId, jobId: claim.jobId, workerId: claim.workerId, ts: threadOf(claim), taskId: claim.taskId, channelId: claim.channelId, heartbeat: threadBeat(claim) } });

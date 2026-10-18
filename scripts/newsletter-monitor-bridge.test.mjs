@@ -8,7 +8,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   DEFAULT_WORKFLOWS, normalizeTag, validateWorkflows, discoverTags, listTasks,
-  parseClaim, listClaims, parseWorkerIssue, buildQueue, parseObservedWorkers, readHubFleet,
+  parseClaim, parseRegisterClaim, listClaims, parseWorkerIssue, buildQueue, parseObservedWorkers, readHubFleet,
   collectSnapshot, relayEndpoint, publishSnapshot, syncOnce, runSyncLoop,
   parseRunStatus, parseBlockedReason, addRunDetails, readRenders, createRenderPreviews, uploadPreview,
   createClaimReader, readRunStatuses, freshClaimCycle,
@@ -237,6 +237,31 @@ test('a terminal correction marked Fertig in its parent is completed without a r
   assert.equal(parseClaim({ ...message, metadata: { ...message.metadata, event_payload: { ...message.metadata.event_payload, state: 'running' } } }).outcome, undefined);
   assert.equal(parseClaim({ ...message, text: '*Korrektur · Fertig*\n:repeat: Fortsetzung: Fertig' }).outcome, undefined);
   assert.equal(parseClaim({ ...message, text: '*Korrektur · Happy dogs*\n✅ Fertig: <https://app.clickup.com/t/86cb1enj9|Trockenfutter>' }).outcome, 'completed');
+});
+
+test('correction carries only the valid Figma result of its own bound claim', () => {
+  const figma = 'https://www.figma.com/design/corrected/Mail?node-id=85-2093';
+  const message = { ...jobClaim('ai_korrektur_claim', 'korrektur-cu-86cb1enj9@1791802497891-intern', 'macbook-1', 'final'),
+    text: `*Korrektur · Kunde*\n✅ Fertig: <https://app.clickup.com/t/86cb1enj9|Mail>\n<${figma}|Korrigierte Mail in Figma öffnen>` };
+  const row = buildQueue([], [parseClaim(message)], DEFAULT_WORKFLOWS, { now })[0];
+  assert.equal(row.figmaUrl, figma);
+  assert.equal(row.status, 'completed');
+  const event = message.metadata.event_payload;
+  const registered = parseRegisterClaim({ taskId: event.task_id, runId: event.run_id, worker: event.worker,
+    state: event.state, heartbeat: event.heartbeat, ts: message.ts, text: message.text });
+  assert.equal(buildQueue([], [registered], DEFAULT_WORKFLOWS, { now })[0].figmaUrl, figma);
+  const previous = parseClaim({ ...message, ts: '1791373100.001', text: message.text.replace('corrected', 'previous'),
+    metadata: { ...message.metadata, event_payload: { ...message.metadata.event_payload, run_id: 'previous-attempt', heartbeat: now / 1000 - 60 } } });
+  const missing = parseClaim({ ...message, text: message.text.split('\n').slice(0, 2).join('\n') });
+  const raw = { ...task('86cb1enj9'), custom_fields: [{ name: 'Figma Link', type: 'url', value: 'https://www.figma.com/design/unbound/CurrentTask' }] };
+  const missingRow = buildQueue([raw], [previous, missing], DEFAULT_WORKFLOWS, { now })
+    .find(value => value.workflow === 'correction');
+  assert.equal(missingRow.attemptId, missing.runId);
+  assert.equal(missingRow.figmaUrl, undefined, 'neither an older attempt nor the current task can invent this run result');
+  for (const value of ['https://figma.com.evil.example/design/wrong', 'https://user:pass@figma.com/design/wrong', 'javascript:alert(1)']) {
+    const unsafe = parseClaim({ ...message, text: message.text.replace(figma, value) });
+    assert.equal(buildQueue([], [unsafe], DEFAULT_WORKFLOWS, { now })[0].figmaUrl, undefined);
+  }
 });
 
 test('open PM questions show the exact bot question and survive cache reads only for the same attempt', async () => {
