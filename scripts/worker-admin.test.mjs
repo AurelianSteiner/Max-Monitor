@@ -65,6 +65,25 @@ test('list uses the same member authority and returns only bounded fleet fields'
   for(const call of f.calls)assert.equal(call.options.headers.Authorization,'Bearer '+member.token);
   assert.ok(!JSON.stringify(result).includes('never-output'));
 });
+test('list preserves paused admission and actual occupied places with their freshness', async () => {
+  const f=fixtures(), previousFetch=f.fetchImpl;
+  f.fetchImpl=async (url,options)=>url.endsWith('/fleet') ? {ok:true,json:async()=>({generatedAt:'now',machines:[{
+    workerId:'macbook-1',status:'online',workerRevision:'a'.repeat(40),workerVersionObservedAt:'2026-10-19T00:00:00Z',
+    activity:{state:'idle',fresh:true,acceptingTasks:false,sampledAt:'2026-10-19T00:00:00Z',runs:[],token:'never-output'},
+    load:{occupied:0,max:3,fresh:true,source:'agent',observedAt:'2026-10-19T00:00:00Z',token:'never-output'},
+  }]})} : previousFetch(url,options);
+  const worker=(await maintenance({...body,operation:'list'},f)).workers[0];
+  assert.deepEqual(worker.activity,{state:'idle',fresh:true,acceptingTasks:false,sampledAt:'2026-10-19T00:00:00Z'});
+  assert.deepEqual(worker.load,{occupied:0,max:3,fresh:true,source:'agent',observedAt:'2026-10-19T00:00:00Z'});
+  assert.equal(worker.workerRevision,'a'.repeat(40));
+  assert.ok(!JSON.stringify(worker).includes('never-output'));
+  f.fetchImpl=async (url,options)=>url.endsWith('/fleet') ? {ok:true,json:async()=>({generatedAt:'later',machines:[{
+    workerId:'macbook-1',activity:{state:'idle',fresh:false,acceptingTasks:true,runs:[]},
+    load:{occupied:1,max:3,fresh:false,source:'hub'},
+  }]})} : previousFetch(url,options);
+  const stale=(await maintenance({...body,operation:'list'},f)).workers[0];
+  assert.equal(stale.activity.fresh,false);assert.equal(stale.load.fresh,false);
+});
 test('invalid requests and ambiguous command syntax cannot become local shell commands', async () => {
   for(const patch of [{operation:'exec'},{sourceWorkerId:'worker;id'},{workerId:'worker;id'},{deviceId:'name'},{publicKey:'ssh-ed25519 AAAA'}]) {
     const f=fixtures();await assert.rejects(maintenance({...body,...patch},f));assert.equal(f.calls.length,0);

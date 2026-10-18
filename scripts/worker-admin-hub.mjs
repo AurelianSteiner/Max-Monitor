@@ -61,6 +61,19 @@ export async function maintenance(body, { settings = loadConfiguration(), fetchI
       return { workerId: target.workerId, username: target.username, name: machine.name || target.workerId,
         status: machine.status || 'unknown', lastSeenAt: machine.workerLastSeenAt || machine.lastSeenAt,
         service: machine.service, maintenance: machine.maintenance,
+        // An online process may have stopped accepting work (for example at its
+        // quota). Keep the relay's direct observation and capacity provenance so
+        // maintenance can distinguish an available worker from liveness alone.
+        ...(machine.activity ? { activity: {
+          state: machine.activity.state, fresh: machine.activity.fresh,
+          acceptingTasks: machine.activity.acceptingTasks, sampledAt: machine.activity.sampledAt,
+        } } : {}),
+        ...(machine.load ? { load: {
+          occupied: machine.load.occupied, max: machine.load.max, fresh: machine.load.fresh,
+          source: machine.load.source, observedAt: machine.load.observedAt,
+        } } : {}),
+        ...(machine.workerRevision ? { workerRevision: machine.workerRevision,
+          workerVersionObservedAt: machine.workerVersionObservedAt } : {}),
         activeRuns: (machine.activity?.runs || []).map(run => ({ id: run.id, title: run.title, status: run.status, progress: run.progress })),
         issues: (machine.workerIssues || []).map(issue => ({ stage: issue.stage, severity: issue.severity, message: issue.message })) };
     }) };
