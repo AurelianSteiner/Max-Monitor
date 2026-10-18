@@ -102,4 +102,60 @@ final class CredentialVaultTests: XCTestCase {
         XCTAssertEqual(CredentialVault.generateKey().count, CredentialVault.keyLength)
         XCTAssertNotEqual(CredentialVault.generateKey(), CredentialVault.generateKey())
     }
+
+    func testUnavailableAndInvalidKeysNeverReplaceExistingEncryptedVault() throws {
+        let originalKey = CredentialVault.generateKey()
+        let vault = try CredentialVault(fileURL: fileURL, key: originalKey)
+        XCTAssertTrue(vault.save(key: "accounts", value: "fixture-only"))
+        let originalFile = try Data(contentsOf: fileURL)
+        let failures: [VaultKeyReadResult] = [
+            .unavailable(-25308), .unavailable(-25293), .unavailable(-128),
+            .unavailable(-25291), .unavailable(-26275), .value("invalid-base64!"),
+            .value(Data([1, 2, 3]).base64EncodedString()), .notFound
+        ]
+        for failure in failures {
+            var creations = 0
+            let resolved = VaultKeyAccess.resolve(failure, existingVault: { true }, createKey: { _ in
+                creations += 1
+                return true
+            })
+            XCTAssertNil(resolved)
+            XCTAssertEqual(creations, 0)
+            XCTAssertEqual(try Data(contentsOf: fileURL), originalFile)
+            let reopened = try CredentialVault(fileURL: fileURL, key: originalKey)
+            XCTAssertEqual(reopened.load(key: "accounts"), "fixture-only")
+        }
+    }
+
+    func testVaultKeyReadPreservesValidKeyWithoutCreatingOne() throws {
+        let originalKey = CredentialVault.generateKey()
+        let resolved = VaultKeyAccess.resolve(.value(originalKey.base64EncodedString()),
+            existingVault: { XCTFail("Existing key requires no file probe"); return true },
+            createKey: { _ in XCTFail("Existing key must not be created again"); return false })
+        XCTAssertEqual(resolved, originalKey)
+    }
+
+    func testVaultKeyCreationRequiresConfirmedMissingKeyAndMissingFile() {
+        var created: Data?
+        let resolved = VaultKeyAccess.resolve(.notFound, existingVault: { false }, createKey: {
+            created = Data(base64Encoded: $0)
+            return true
+        })
+        XCTAssertEqual(resolved, created)
+        XCTAssertEqual(resolved?.count, CredentialVault.keyLength)
+    }
+
+    func testVaultFileProbeFailureAndDuplicateKeyRaceDoNotResolveANewKey() {
+        var creations = 0
+        XCTAssertNil(VaultKeyAccess.resolve(.notFound, existingVault: {
+            throw CocoaError(.fileReadNoPermission)
+        }, createKey: { _ in creations += 1; return true }))
+        XCTAssertEqual(creations, 0)
+        XCTAssertNil(VaultKeyAccess.resolve(.notFound, existingVault: { false }, createKey: { _ in
+            creations += 1
+            // SecItemAdd reports duplicate; the already stored key is untouched.
+            return false
+        }))
+        XCTAssertEqual(creations, 1)
+    }
 }

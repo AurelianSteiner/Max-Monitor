@@ -37,6 +37,36 @@
 import Foundation
 import CryptoKit
 
+/// Ein unlesbarer Schlüssel ist kein fehlender Schlüssel. Diese Entscheidung
+/// bleibt ohne Schlüsselbundzugriff prüfbar; nur ein sicher fehlender Schlüssel
+/// ohne bestehende Tresordatei darf einmalig per Add angelegt werden.
+nonisolated enum VaultKeyReadResult {
+    case value(String)
+    case notFound
+    case unavailable(Int32)
+}
+
+nonisolated enum VaultKeyAccess {
+    static func resolve(_ result: VaultKeyReadResult,
+                        existingVault: () throws -> Bool,
+                        createKey: (String) -> Bool) -> Data? {
+        switch result {
+        case .value(let stored):
+            guard let key = Data(base64Encoded: stored), key.count == CredentialVault.keyLength else { return nil }
+            return key
+        case .unavailable:
+            return nil
+        case .notFound:
+            // Ein verlorener Schlüssel macht vorhandene Chiffrate nicht zu
+            // einem neuen Tresor. Auch ein unklarer Dateizugriff bleibt read-only.
+            guard (try? existingVault()) == false else { return nil }
+            let fresh = CredentialVault.generateKey()
+            guard createKey(fresh.base64EncodedString()) else { return nil }
+            return fresh
+        }
+    }
+}
+
 nonisolated final class CredentialVault {
 
     /// Länge des Schlüssels in Bytes (AES-256)
