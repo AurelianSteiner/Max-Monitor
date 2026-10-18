@@ -4,7 +4,7 @@
   const names={newsletter:'Pre-Gen',correction:'Korrektur',translation:'Übersetzung',upload:'Klaviyo-Upload',sales:'Sales',other:'Sonstige Aufgaben'};
   const numeric=new Intl.NumberFormat('de-DE',{maximumFractionDigits:1,minimumFractionDigits:1});
   const date=new Intl.DateTimeFormat('de-DE',{dateStyle:'short',timeStyle:'short',timeZone:'Europe/Berlin'});
-  let data=null, request=null, busy=false, dirty=false, saving=false, generation=0;
+  let data=null, request=null, busy=false, dirty=false, saving=false, generation=0, draftRevision=null;
   function node(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
   function status(text,error=false){$('effort-status').textContent=text;$('effort-status').dataset.error=String(error);}
   function average(metric){return metric?.mean==null?'—':`≈ ${numeric.format(metric.mean)} PP`;}
@@ -45,11 +45,14 @@
         const cell=node('td');const select=node('select','effort-select');select.name=phase;select.setAttribute('aria-label',`${label}: zentraler Aufwand`);
         const inherit=node('option','','Bestehende Einstellung');inherit.value='';select.append(inherit);
         for(const level of data.levels){const option=node('option','',level);option.value=level;select.append(option);}
-        select.value=data.policy.phases[phase]||'';select.disabled=!data.canManage;select.addEventListener('change',()=>{dirty=true;status('Änderungen noch nicht gespeichert.');});
+        select.value=data.policy.phases[phase]||'';select.disabled=!data.canManage;select.addEventListener('change',()=>{if(!dirty)draftRevision=data.policy.revision;dirty=true;$('effort-discard').hidden=false;status('Änderungen noch nicht gespeichert.');});
         cell.dataset.label='Zentraler Sollwert';cell.append(select);row.append(cell);body.append(row);
       }
     }
     $('effort-save').hidden=!data?.canManage;
+    $('effort-discard').hidden=!dirty;
+    $('effort-discard').disabled=saving;
+    body.querySelectorAll('select').forEach(select=>{select.disabled=saving||!data?.canManage;});
     $('effort-save').disabled=saving;
     $('effort-save').textContent=saving?'Wird gespeichert…':'Aufwand zentral speichern';
     const account=$('consumption-account');const previous=account.value;
@@ -81,14 +84,16 @@
     $('effort-more').textContent=expanded?'Weniger Phasen anzeigen':'Sales & Kundenablage anzeigen';
   });
   $('consumption-retry').addEventListener('click',()=>refresh());
+  $('effort-discard').addEventListener('click',()=>{dirty=false;draftRevision=null;status('');draw();refresh();});
   $('effort-form').addEventListener('submit',async event=>{
     event.preventDefault();if(!request||saving||!data?.canManage)return;
     const phases=Object.fromEntries([...$('effort-body').querySelectorAll('select')].filter(s=>s.value).map(s=>[s.name,s.value]));
+    const epoch=generation;
     saving=true;$('effort-save').disabled=true;status('Aufwand wird gespeichert…');
-    try{const result=await request('/effort','PATCH',{revision:data.policy.revision,phases});data.policy=result.policy;dirty=false;status('Gespeichert. Die Macs übernehmen die Werte innerhalb einer Minute für neue Phasenstarts.');}
-    catch(e){status(e.message,true);}
-    finally{saving=false;draw();}
+    try{const result=await request('/effort','PATCH',{revision:draftRevision??data.policy.revision,phases});if(epoch!==generation)return;data.policy=result.policy;dirty=false;draftRevision=null;status('Gespeichert. Die Macs übernehmen die Werte innerhalb einer Minute für neue Phasenstarts.');}
+    catch(e){if(epoch===generation)status(e.message,true);}
+    finally{if(epoch===generation){saving=false;draw();}}
   });
   window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
-  window.MaxMonitorConsumption={refresh,reset(){generation++;data=null;request=null;dirty=false;busy=false;saving=false;status('');$('effort-body').replaceChildren();$('effort-save').hidden=true;$('effort-macs').replaceChildren();$('consumption-account').replaceChildren(node('option','','Alle Accounts'));$('consumption-since').textContent='Verbinde den Team-Server für den Tracking-Stand.';drawRows();}};
+  window.MaxMonitorConsumption={refresh,reset(){generation++;data=null;request=null;dirty=false;draftRevision=null;busy=false;saving=false;status('');$('effort-body').replaceChildren();$('effort-save').hidden=true;$('effort-discard').hidden=true;$('effort-macs').replaceChildren();$('consumption-account').replaceChildren(node('option','','Alle Accounts'));$('consumption-since').textContent='Verbinde den Team-Server für den Tracking-Stand.';drawRows();}};
 })();
