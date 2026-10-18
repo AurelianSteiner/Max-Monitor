@@ -347,9 +347,11 @@ class Ledger:
         covered = set()
         for (account, window, reset), rows in pairs.items():
             before = None
+            charge_begin = None
             for row in rows:
                 if before is None:
                     before = row
+                    charge_begin = row['at']
                     continue
                 if row["at"] <= before["at"]:
                     continue
@@ -364,13 +366,19 @@ class Ledger:
                 if row["at"] - before["at"] > 1800 or before["at"] < cutoff:
                     totals[key]["gaps"] += 1
                     before = row
+                    charge_begin = row['at']
                     continue
                 totals[key]["observed_pp"] += delta
                 totals[key]["intervals"] += 1
+                if delta == 0:
+                    # Rounded plateaus censor small charges. Hold the turns until
+                    # the next whole-point increase, instead of training zeroes.
+                    before = row
+                    continue
                 weights = defaultdict(float)
                 matched = []
                 times = message_times.get(account, [])
-                start = bisect_right(times, before["at"])
+                start = bisect_right(times, charge_begin)
                 end = bisect_right(times, row["at"])
                 for at, job, weight, event_id in messages[account][start:end]:
                     weights[job] += weight
@@ -385,6 +393,7 @@ class Ledger:
                 else:
                     totals[key]["unattributed_pp"] += delta
                 before = row
+                charge_begin = row['at']
         per_window = defaultdict(lambda: defaultdict(int))
         for job, at, window in covered:
             per_window[job][window] += 1
@@ -459,6 +468,8 @@ class Ledger:
                 continue  # Never replace a full archived result with a partial window.
             closed = bool(j["finished"]) and not j["in_progress"] and bool(terminal.intersection(j["states"]))
             carryover = not j["started"] or stamp(j["started"]) < since
+            if carryover and not j['sampled_messages']:
+                continue  # Historical unfinished metadata is not new tracking.
             checked = closed and not carryover and not j['partial_window'] and not j["pending_scan"] and not j["evidence_errors"]
             session_ready = checked and j['coverage_by_window']['five_hour'] >= .8
             weekly_ready = checked and j['coverage_by_window']['seven_day'] >= .8
@@ -518,7 +529,7 @@ class Ledger:
                 self.db.execute("DELETE FROM runs WHERE job=?", (job,))
             self.db.execute("DELETE FROM samples WHERE at<?", (cutoff - 1800,))
         return {"schema": 2, "generated_at": iso(now), "tracking_since": iso(since),
-                "method": "observed_account_deltas_equal_turn_share", "estimated": True,
+                "method": "observed_rounded_plateaus_equal_turn_share", "estimated": True,
                 "raw_resolution_pp": 1, "forecast_enabled": False,
                 "by_kind": group(by_kind), "by_account_kind": group(by_account), "by_customer_kind": group(by_customer),
                 "tracked": sum(not j['carryover'] for j in jobs.values()), "carryover": sum(j['carryover'] for j in jobs.values()),

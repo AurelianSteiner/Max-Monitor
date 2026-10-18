@@ -139,6 +139,28 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM runs').fetchone()[0], 0)
         self.assertEqual(self.ledger.dashboard(NOW + 900)['tracked'], 0)
 
+    def test_small_tasks_wait_for_a_whole_point_and_share_the_closed_plateau(self):
+        self.ledger.reset(NOW-1)
+        self.ledger.fleet(fleet(NOW,10),NOW)
+        a=payload();a['runs'][0]['pending_scan']=0
+        self.ledger.ingest(a,NOW+600)
+        self.ledger.fleet(fleet(NOW+600,10),NOW+600)
+        first=self.ledger.dashboard(NOW+650)
+        self.assertIsNone(next(r for r in first['by_kind'] if r['key']=='newsletter')['weekly_pp']['mean'])
+        b=payload();b['runs'][0].update(run_id='run-b',task_id='task-b@1',started=NOW+700,finished=NOW+900,pending_scan=0)
+        b['events']=[{'id':'message-b','event_type':'message','run_id':'run-b','at':NOW+800,'time_quality':'timestamp'}]
+        self.ledger.ingest(b,NOW+900)
+        # Same explicit account/reset context from the first job, plus a quota
+        # anchor for the second job before the now visible account increase.
+        b['events']=[{'id':'quota-b','event_type':'quota','run_id':'run-b','at':NOW+750,'time_quality':'adjacent','windows':{'seven_day':{'percent':10,'reset':RESET}}}]
+        self.ledger.ingest(b,NOW+900)
+        self.ledger.fleet(fleet(NOW+1000,11),NOW+1000)
+        final=self.ledger.dashboard(NOW+1100)
+        row=next(r for r in final['by_kind'] if r['key']=='newsletter')
+        self.assertEqual(row['weekly_pp']['n'],2)
+        self.assertEqual(row['weekly_pp']['total'],1)
+        self.assertEqual(row['weekly_pp']['mean'],.5)
+
     def test_every_task_is_counted_but_unknown_cost_does_not_become_zero(self):
         self.ledger.reset(NOW - 1)
         p=payload(False);p['events']=[]

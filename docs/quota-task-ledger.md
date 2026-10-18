@@ -29,6 +29,10 @@ als Verbrauch verrechnet. Die Rohauflösung beträgt derzeit einen Prozentpunkt.
 Die Zuordnung zu parallelen Aufgaben erfolgt gleichmäßig je erfasstem
 Assistenten-Antwortzug im jeweiligen Messintervall und ist ausdrücklich eine
 Schätzung, keine gemessene Einzelaufgabenabrechnung. Unbeobachtete Privatnutzung
+Ein gleichbleibender gerundeter Zähler bedeutet keinen belegten Nullverbrauch:
+Antwortzüge bleiben bis zum nächsten ganzen Prozentpunkt gemeinsam offen und
+werden erst dann auf die beteiligten Aufgaben verteilt. So entstehen aus vielen
+kleinen Aufgaben keine künstlichen Nullwerte im Durchschnitt.
 desselben Accounts kann enthalten sein. Es gibt keine angebliche Token-zu-Abo-
 Umrechnung; Kapazitätsprognosen bleiben bis zur Kalibrierung deaktiviert.
 
