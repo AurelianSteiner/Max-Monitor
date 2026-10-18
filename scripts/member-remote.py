@@ -51,11 +51,14 @@ def connection_args(ticket, directory, mode, command=None, identity_file=None):
     root = Path(directory)
     common = ["-F", "/dev/null", "-i", str(identity_file or root / "member"), "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
               "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=30", "-o", "PermitLocalCommand=no",
-              "-o", f'UserKnownHostsFile="{root / "known_hosts"}"', "-o", f'CertificateFile="{root / "member-cert.pub"}"',
+              "-o", f'UserKnownHostsFile="{root / "known_hosts"}"',
               "-o", "ControlMaster=no", "-o", "ControlPath=none"]
-    proxy = ["/usr/bin/ssh", *common, "-o", "HostKeyAlias=max-monitor-team-hub", "-W", f'127.0.0.1:{ticket["worker"]["port"]}',
+    # The certificate names the target Worker. The Hub accepts the bound source
+    # key, so offering the Worker certificate there only creates principal errors.
+    proxy = ["/usr/bin/ssh", *common, "-o", "CertificateFile=none", "-o", "HostKeyAlias=max-monitor-team-hub", "-W", f'127.0.0.1:{ticket["worker"]["port"]}',
              f'{ticket["hubUser"]}@{ticket["hubHost"]}']
-    args = ["/usr/bin/ssh", *common, "-o", f'HostKeyAlias=max-monitor-{ticket["worker"]["workerId"]}', "-o", "ProxyCommand=" + shlex.join(proxy)]
+    args = ["/usr/bin/ssh", *common, "-o", f'CertificateFile="{root / "member-cert.pub"}"',
+            "-o", f'HostKeyAlias=max-monitor-{ticket["worker"]["workerId"]}', "-o", "ProxyCommand=" + shlex.join(proxy)]
     if mode == "check":
         args += ["-T"]
     elif not command:

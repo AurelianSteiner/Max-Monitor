@@ -44,6 +44,19 @@ class MemberRemoteTest(unittest.TestCase):
         for field,value in [('workerId','macbook-2'),('username','-oProxyCommand=evil'),('username',None),('port',22),('port',True),('hostKey','ssh-ed25519 AAAA')]:
             with self.assertRaises(ValueError): client.validate_ticket({**self.ticket,'worker':{**self.ticket['worker'],field:value}},'RSMACS01','macbook-1')
 
+    def test_worker_certificate_is_never_offered_to_the_hub_proxy(self):
+        identity = Path(self.directory.name)/'key'
+        args = client.connection_args(self.ticket, self.directory.name, 'check', identity_file=identity)
+        proxy = client.shlex.split(next(v for v in args if v.startswith('ProxyCommand='))[len('ProxyCommand='):])
+        self.assertEqual([v for v in proxy if v.startswith('CertificateFile=')], ['CertificateFile=none'])
+        self.assertEqual([v for v in args if v.startswith('CertificateFile=')],
+                         [f'CertificateFile="{Path(self.directory.name)/"member-cert.pub"}"'])
+        for hop in [args, proxy]:
+            self.assertIn('IdentitiesOnly=yes', hop)
+            self.assertIn('IdentityAgent=none', hop)
+            self.assertIn('StrictHostKeyChecking=yes', hop)
+            self.assertEqual(hop[hop.index('-i')+1], str(identity))
+
     def test_credentials_are_never_sent_to_plain_http_or_in_a_url(self):
         for url in ['http://hub.example.test','https://user:pass@hub.example.test','https://hub.example.test?token=secret','https://hub.example.test#secret']:
             with self.assertRaises(ValueError): client.ticket_request(url,'RSMACS01','personal-token','macbook-1','unused')
