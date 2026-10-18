@@ -23,7 +23,7 @@
       body.append(tr);
     }
     $('consumption-empty').hidden=Boolean(summary?.closed);
-    $('consumption-totals').textContent=summary?`${summary.tracked} erfasst · ${summary.closed} abgeschlossen seit Start`:'Erfassung wird geladen…';
+    $('consumption-totals').textContent=summary?`${summary.tracked} erfasst · ${summary.closed} abgeschlossen seit Start${summary.carryover?` · ${summary.carryover} ältere Überhänge getrennt`:''}`:'Erfassung wird geladen…';
   }
   function draw(){
     const summary=data?.summary;
