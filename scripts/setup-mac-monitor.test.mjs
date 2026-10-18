@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged, readWorker, workerArtifactBundle, main, buildCause } from './setup-mac-monitor.mjs';
+import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged, readWorker, workerArtifactBundle, main, buildCause, storedMonitorPreferences } from './setup-mac-monitor.mjs';
 import { createHash } from 'node:crypto';
 
 const DEVICE_ID = '610be10e-8a00-4e00-b000-000000000051';
@@ -17,7 +17,10 @@ async function appBundle(directory, name) {
   await fs.writeFile(path.join(directory, 'Contents', 'MacOS', 'Usage4Claude'), 'fake executable, never launched');
 }
 
-function fDefault(value) { if (value == null) throw new Error('missing preference'); return value + '\n'; }
+function fDefault(value) {
+  if (value == null) throw Object.assign(new Error('missing preference'), {preferenceMissing:true});
+  return value + '\n';
+}
 
 async function fixture(t, { previous = false, configured = false } = {}) {
   // NSRunningApplication reports macOS canonical paths (/private/tmp, etc.).
@@ -563,6 +566,107 @@ test('an existing app with missing cached preferences still updates without crea
   assert.deepEqual(f.state.status,before);
   assert.equal(await f.marker(),'new app');
   assert.ok(!f.calls.some(c => c.command === 'ssh' || c.args[0] === '--enroll' || c.args[0] === '--enrollment-status'));
+});
+
+test('preference timeouts and read failures abort before closing or copying the installed app', async t => {
+  for (const failure of [Object.assign(new Error('private stderr'),{timedOut:true}),new Error('permission denied')]) {
+    const f = await fixture(t,{previous:true,configured:true});
+    const old = f.runningApp(), initial = {...f.state.status}, runner = f.dependencies.runner;
+    f.dependencies.runner = async (command,args,...rest) => {
+      if (command === '/usr/bin/defaults') throw failure;
+      return runner(command,args,...rest);
+    };
+    await assert.rejects(setup({...f.options,updateOnly:true},f.dependencies),error => {
+      assert.equal(error.code,'MONITOR_PREFERENCES_UNAVAILABLE');
+      assert.match(error.message,/Bindung nicht bestätigt/);
+      assert.ok(!error.message.includes(failure.message));
+      return true;
+    });
+    assert.equal(await f.marker(),'previous app');
+    assert.deepEqual(f.state.runningApps,[old]);
+    assert.deepEqual(f.state.status,initial);
+    assert.ok(!f.calls.some(c => c.command === '/usr/bin/ditto' || c.command === '/usr/bin/osascript'));
+    const receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+    assert.ok(receipt.lastFailure);
+    assert.equal(receipt.sourceRevision,undefined);
+    assert.equal(receipt.bindingVerification,undefined);
+  }
+});
+
+test('only explicitly missing keys become null and safe preference reads have a five second budget', async () => {
+  const calls = [];
+  const result = await storedMonitorPreferences(BUNDLE_ID,async (command,args,options) => {
+    calls.push({command,args,options});
+    throw Object.assign(new Error('missing'),{preferenceMissing:true});
+  });
+  assert.equal(result.configured,false);
+  assert.equal(result.deviceId,null);
+  assert.equal(calls.length,6);
+  assert.ok(calls.every(call => call.command === '/usr/bin/defaults' && call.args[0] === 'read' && call.options.timeout === 5000));
+});
+
+test('a preference read failure after replacement restores the old bundle and running app', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  f.runningApp();
+  const initial = {...f.state.status}, runner = f.dependencies.runner;
+  f.dependencies.runner = async (command,args,...rest) => {
+    if (command === '/usr/bin/defaults' && await f.marker() === 'new app') throw new Error('read failed');
+    return runner(command,args,...rest);
+  };
+  await assert.rejects(setup({...f.options,updateOnly:true},f.dependencies),{code:'MONITOR_PREFERENCES_UNAVAILABLE'});
+  assert.equal(await f.marker(),'previous app');
+  assert.deepEqual(f.state.status,initial);
+  assert.equal(f.state.runningApps.length,1);
+  assert.equal(f.state.runningApps[0].bundlePath,f.destination);
+  assert.deepEqual(await fs.readdir(path.dirname(f.destination)),['Max Monitor.app']);
+});
+
+test('explicit code-only maintenance swaps only the app and leaves binding acceptance required', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  f.runningApp();
+  await f.writeReceipt('a'.repeat(40));
+  const initial = {...f.state.status}, runner = f.dependencies.runner;
+  f.dependencies.runner = async (command,args,...rest) => {
+    assert.ok(!['/usr/bin/defaults','ssh'].includes(command));
+    assert.ok(!args.includes('--enroll') && !args.includes('--enrollment-status'));
+    return runner(command,args,...rest);
+  };
+  const result = await setup({...f.options,updateOnly:true,codeOnly:true},f.dependencies);
+  assert.deepEqual(result,{schema:1,mode:'installed',bindingVerification:'required'});
+  assert.deepEqual(f.state.status,initial);
+  assert.equal(await f.marker(),'new app');
+  assert.equal(f.state.runningApps.length,1);
+  assert.ok(f.calls.some(c => c.command === '/usr/bin/codesign'));
+  const receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+  assert.equal(receipt.bindingVerification,'required');
+  assert.equal(receipt.sourceRevision,REVISION);
+  assert.equal(receipt.workerId,f.worker.workerId); // historical receipt, not a new identity read
+  assert.equal(receipt.deviceId,undefined);
+  assert.ok(f.logs.some(line => line.includes('Bindung noch nicht bestätigt')));
+  assert.deepEqual(await fs.readdir(path.dirname(f.destination)),['Max Monitor.app']);
+});
+
+test('explicit code-only maintenance retains rollback and restores the old process on failed signing', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  f.runningApp(); f.state.signatureFailure = true;
+  await assert.rejects(setup({...f.options,updateOnly:true,codeOnly:true},f.dependencies),/App-Signatur/);
+  assert.equal(await f.marker(),'previous app');
+  assert.equal(f.state.runningApps.length,1);
+  assert.equal(f.state.runningApps[0].bundlePath,f.destination);
+  assert.deepEqual(await fs.readdir(path.dirname(f.destination)),['Max Monitor.app']);
+  assert.equal(JSON.parse(await fs.readFile(f.receiptPath,'utf8')).bindingVerification,undefined);
+});
+
+test('code-only is explicitly update-only and never installs the worker observer', async () => {
+  for (const args of [['--code-only'],['--code-only','--update-only','--check'],['--code-only','--update-only','--dry-run']])
+    assert.throws(()=>optionsFrom(args),/benötigt --update-only/);
+  const output = [];
+  await main(['--update-only','--code-only'],{
+    setupImpl:async options => {assert.equal(options.codeOnly,true); return {schema:1,mode:'installed',bindingVerification:'required'};},
+    observerImpl:async()=>assert.fail('code-only must not install a worker observer'),
+    out:value=>output.push(value),err:value=>assert.fail(value),
+  });
+  assert.deepEqual(output,[JSON.stringify({schema:1,mode:'installed',bindingVerification:'required'})]);
 });
 
 test('background installation preserves settings flushed by the old GUI at shutdown', async t => {

@@ -13,6 +13,8 @@ const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BUNDLE_ID = 'xyz.fi5h.Usage4Claude';
 const DEFAULT_HELPER = '/opt/max-monitor/scripts/enroll-monitor-worker.mjs';
+const PREFERENCE_FIELDS = {deviceId:'fleetDeviceId',workerId:'fleetWorkerId',serverURL:'teamServerURL',
+  teamId:'teamServerTeamId',memberId:'teamServerMemberId',role:'teamServerRole'};
 
 export function optionsFrom(args) {
   const result = { workerRoot: path.join(os.homedir(), 'Documents', 'AI Newsletter Creation'),
@@ -24,6 +26,7 @@ export function optionsFrom(args) {
     if (argument === '--check') result.check = true;
     else if (argument === '--dry-run') result.dryRun = true;
     else if (argument === '--update-only') result.updateOnly = true;
+    else if (argument === '--code-only') result.codeOnly = true;
     else if (argument === '--no-open') result.open = false;
     else if (argument === '--no-launch-at-login') result.launchAtLogin = false;
     else if (argument === '--allow-loopback') result.allowLoopback = true;
@@ -35,6 +38,8 @@ export function optionsFrom(args) {
     } else throw new Error(`Unbekannte Option: ${argument}`);
   }
   if (result.check && result.dryRun) throw new Error('--check und --dry-run sind getrennte Aufrufe.');
+  if (result.codeOnly && (!result.updateOnly || result.check || result.dryRun))
+    throw new Error('--code-only benötigt --update-only; die Verbindung wird danach in der laufenden App geprüft.');
   if (!/^\/[A-Za-z0-9._/-]+$/.test(result.hubHelper)) throw new Error('Ungültiger Hub-Helferpfad.');
   if (!/^[A-Za-z][A-Za-z0-9.-]{2,119}$/.test(result.bundleId)) throw new Error('Ungültige App-Bundle-ID.');
   result.workerRoot = path.resolve(result.workerRoot);
@@ -64,6 +69,9 @@ export function run(command, args, { input, env = process.env, cwd, timeout = 45
     const child = spawn(command, args, { cwd, env, shell: false,
       stdio: [input === undefined ? 'ignore' : 'pipe', inherit && !forward ? 'inherit' : 'pipe', inherit && !forward ? 'inherit' : 'pipe'] });
     let stdout = '', tooLarge = false, timedOut = false, stderrBuffer = '', stage = null, tail = '';
+    const preferenceRead = command === '/usr/bin/defaults' && args.length === 3 && args[0] === 'read'
+      && Object.values(PREFERENCE_FIELDS).includes(args[2]);
+    let preferenceError = '';
     const stages = Object.keys(ENROLLMENT_STAGES);
     const expire = () => { timedOut = true; child.kill('SIGKILL'); };
     let timer = setTimeout(expire, timeout);
@@ -75,6 +83,7 @@ export function run(command, args, { input, env = process.env, cwd, timeout = 45
     });
     // Raw stderr stays private. Accept only fixed, forward-moving native phase markers.
     child.stderr?.on('data', chunk => {
+      if (preferenceRead) preferenceError = (preferenceError + chunk).slice(-4096);
       if (forward) { forward.stderr?.write(chunk); keep(chunk); return; }
       if (!onProgress) return;
       stderrBuffer = (stderrBuffer + chunk).slice(-4096);
@@ -96,7 +105,10 @@ export function run(command, args, { input, env = process.env, cwd, timeout = 45
       if (timedOut || tooLarge || code !== 0) {
         const reason = timedOut ? `Zeitüberschreitung${stage ? `: ${ENROLLMENT_STAGES[stage]}` : ''}`
           : tooLarge ? 'Antwort zu groß' : `Exit ${code}`;
+        const preferenceMissing = preferenceRead && !timedOut && code === 1
+          && /^The domain\/default pair of \([^\n]*\) does not exist\s*$/m.test(preferenceError);
         reject(Object.assign(new Error(`${label} fehlgeschlagen (${reason}).`), { timedOut, stage, exitCode:code,
+          ...(preferenceMissing ? {preferenceMissing:true} : {}),
           ...(forward ? { outputTail:tail } : {}) }));
       } else resolve(stdout);
     });
@@ -390,12 +402,17 @@ async function recordUpdateFailure(receiptPath, error, at) {
 
 export async function storedMonitorPreferences(bundleId, runner = run) {
   const safe = {schema:1,bundleId};
-  for (const [field,key] of Object.entries({deviceId:'fleetDeviceId',workerId:'fleetWorkerId',
-    serverURL:'teamServerURL',teamId:'teamServerTeamId',memberId:'teamServerMemberId',role:'teamServerRole'})) {
-    try { safe[field] = (await runner('/usr/bin/defaults',['read',bundleId,key],{label:'Gespeicherte Monitor-Einstellung lesen'})).trim() || null; }
-    catch { safe[field] = null; }
+  for (const [field,key] of Object.entries(PREFERENCE_FIELDS)) {
+    try { safe[field] = (await runner('/usr/bin/defaults',['read',bundleId,key],
+      {label:'Gespeicherte Monitor-Einstellung lesen',timeout:5000})).trim() || null; }
+    catch (error) {
+      if (error.preferenceMissing === true) safe[field] = null;
+      else throw Object.assign(new Error(`Monitor-Einstellungen nicht lesbar (${key}); Bindung nicht bestätigt. `
+        + 'Für einen ausdrücklich nur auf App-Code begrenzten Austausch --update-only --code-only verwenden '
+        + 'und die bestehende Verbindung danach in der laufenden App prüfen.'), {code:'MONITOR_PREFERENCES_UNAVAILABLE'});
+    }
   }
-  safe.deviceId = safe.deviceId?.toLowerCase();
+  safe.deviceId = safe.deviceId?.toLowerCase() || null;
   safe.configured = Boolean(safe.serverURL && safe.teamId && /^[0-9a-f-]{36}$/.test(safe.deviceId || ''));
   return safe;
 }
@@ -464,7 +481,7 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   if (!app) throw new Error('Kein eingerichteter Monitor vorhanden – zuerst die Worker-Einrichtung ausführen.');
   // Background maintenance must never launch the credential-reading native CLI.
   // The running GUI owns Keychain access and reports its authenticated heartbeat.
-  let before = await storedMonitorPreferences(options.bundleId,runner);
+  let before = options.codeOnly ? null : await storedMonitorPreferences(options.bundleId,runner);
   // Updating an existing bundle does not require an account or change its binding.
   // Missing cached preferences must not disable future native code updates.
   const recorded = receipt?.binarySourceRevision || receipt?.sourceRevision;
@@ -476,8 +493,11 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
     // mistakes the unbuilt revision for the installed app.
     const safe = {schema:1,maintenanceVersion:failure ? receipt?.maintenanceVersion : 1,
       sourceRevision:failure ? receipt?.sourceRevision : revision,binarySourceRevision,appVersion:app.version,
-      appPath:options.appPath,workerId:before.workerId || worker.workerId,deviceId:before.deviceId,
-      serverURL:before.serverURL,teamId:before.teamId,checkedAt:new Date(now()).toISOString(),
+      appPath:options.appPath,...(before ? {workerId:before.workerId || worker.workerId,deviceId:before.deviceId,
+        serverURL:before.serverURL,teamId:before.teamId,bindingVerification:'preferences_preserved'} : {
+        bindingVerification:'required',
+        ...Object.fromEntries(['workerId','deviceId','serverURL','teamId'].filter(key => receipt?.[key] != null)
+          .map(key => [key,receipt[key]]))}),checkedAt:new Date(now()).toISOString(),
       installedAt:installed ? new Date(now()).toISOString() : receipt?.installedAt,
       ...(failure ? {buildFailure:failure} : {}),
       ...(receipt?.lastFailure && typeof receipt.lastFailure === 'object' ? {lastFailure:failure ? receipt.lastFailure
@@ -495,8 +515,9 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
       await openMonitorApp(options.appPath,options.bundleId,runner,pause);
     }
     await writeReceipt(recorded,false);
-    log('Max Monitor ist aktuell; die vorhandenen Einstellungen bleiben erhalten.');
-    return {schema:1,mode:'existing',...before};
+    log(before ? 'Max Monitor ist aktuell; die vorhandenen Einstellungen bleiben erhalten.'
+      : 'Max Monitor ist aktuell; bestehende Verbindung in der laufenden App noch prüfen.');
+    return {schema:1,mode:'existing',...(before || {bindingVerification:'required'})};
   }
   let bundle = options.appBundle;
   const artifact = !bundle ? await artifactReader(revision,runner) : null;
@@ -535,18 +556,19 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
     await stopMonitorApps(options.bundleId,runner,pause,original,true);
     // Shutdown can flush settings changed by the resident GUI. Preserve that
     // durable snapshot rather than treating its own flush as an installer write.
-    before = await storedMonitorPreferences(options.bundleId,runner);
+    if (!options.codeOnly) before = await storedMonitorPreferences(options.bundleId,runner);
     install = await installBundle(bundle,options.appPath,runner);
     app = await appReader(options.appPath,runner,options.bundleId);
     if (!app || app.version !== built.version) throw new Error('App-Version: Installierte Monitor-App stimmt nicht.');
-    const after = await storedMonitorPreferences(options.bundleId,runner);
-    if (['deviceId','serverURL','teamId','workerId','memberId','role'].some(key => after[key] !== before[key]))
+    const after = options.codeOnly ? null : await storedMonitorPreferences(options.bundleId,runner);
+    if (before && ['deviceId','serverURL','teamId','workerId','memberId','role'].some(key => after[key] !== before[key]))
       throw new Error('Bestehender älterer Monitor-Zugang nach dem Update nicht vollständig bestätigt.');
     if (options.open) await openMonitorApp(options.appPath,options.bundleId,runner,pause);
     await writeReceipt(artifact && releaseCurrent ? release.sourceRevision : revision,true);
     await install.finish().catch(()=>{});
-    log('Max Monitor aktualisiert; die vorhandenen Einstellungen bleiben erhalten.');
-    return {schema:1,mode:'installed',...after};
+    log(after ? 'Max Monitor aktualisiert; die vorhandenen Einstellungen bleiben erhalten.'
+      : 'Max Monitor App-Code aktualisiert; Bindung noch nicht bestätigt. Bestehende Verbindung in der laufenden App prüfen.');
+    return {schema:1,mode:'installed',...(after || {bindingVerification:'required'})};
   } catch (error) {
     if (install) await stopMonitorApps(options.bundleId,runner,pause);
     await install?.rollback();
@@ -751,16 +773,17 @@ export async function main(args = process.argv.slice(2), { setupImpl = setup, ob
       out('Max Monitor automatisch für diesen Newsletter-Worker einrichten.\n' +
         'setup-mac-monitor.sh --worker-root PATH [--check | --dry-run | --update-only]\n' +
         'Optional: --app-bundle PATH --app-path PATH --no-open --no-launch-at-login\n' +
+        '--update-only --code-only: nur vorhandene App austauschen; Verbindung danach in der laufenden App prüfen.\n' +
         'Server und eigener Mitglieds-Token kommen über den bestehenden Hub-Zugang.');
       return;
     }
     const result = await setupImpl(options);
-    if (!options.check && !options.dryRun) {
+    if (!options.check && !options.dryRun && !options.codeOnly) {
       const observer = await observerImpl(options);
       if (observer.installed) out('Worker-Beobachter aktiv; direkte Meldungen alle 15 Sekunden, Wartung jede Minute.');
     }
     if (options.check && result.loginActionRequired) err(result.loginHint);
-    if (options.check || options.dryRun || result?.deferred === true) out(JSON.stringify(result));
+    if (options.check || options.dryRun || options.codeOnly || result?.deferred === true) out(JSON.stringify(result));
   } catch (error) { err(`Max Monitor: ${error.message}`); process.exitCode = 1; }
 }
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) await main();
