@@ -66,6 +66,8 @@ async function fixture(t, { previous = false, configured = false } = {}) {
       return fDefault(state.status[field]);
     }
     if (command === '/bin/ps') return '';
+    if (command === '/usr/bin/python3' && args[1]?.startsWith('# monitor-keychain-state:'))
+      return JSON.stringify(state.keychainStatus || {available:true,unlocked:true});
     if (command === '/usr/bin/osascript') {
       assert.deepEqual(args.slice(0, 3), ['-l', 'JavaScript', '-e']);
       const mode = args.at(-2), bundleId = args.at(-1);
@@ -713,6 +715,67 @@ test('unreadable signing requirements and an unexpected certificate on an ad-hoc
     assert.equal(await f.marker(),'previous app');
     assert.deepEqual(f.state.runningApps,[old]);
     assert.ok(!f.calls.some(c => ['/usr/bin/ditto','/usr/bin/osascript'].includes(c.command)));
+  }
+});
+
+test('locked, unavailable and unknown login keychains never stop or replace an existing app', async t => {
+  for (const keychainStatus of [{available:true,unlocked:false},{available:false,unlocked:null},
+    {available:true,unlocked:null},{available:true},{}, {available:'true',unlocked:true}]) {
+    for (const codeOnly of [false,true]) {
+      const f = await fixture(t,{previous:true,configured:true});
+      const old = f.runningApp(); f.state.keychainStatus = keychainStatus;
+      await assert.rejects(setup({...f.options,updateOnly:true,codeOnly},f.dependencies),
+        {code:keychainStatus.available === true && keychainStatus.unlocked === false
+          ? 'MONITOR_KEYCHAIN_LOCKED' : 'MONITOR_KEYCHAIN_UNAVAILABLE'});
+      assert.equal(await f.marker(),'previous app');
+      assert.deepEqual(f.state.runningApps,[old]);
+      assert.ok(!f.calls.some(c => ['/usr/bin/ditto','/usr/bin/osascript'].includes(c.command)));
+      assert.ok(!f.logs.some(line => line.includes('aktualisiert')));
+      assert.equal(JSON.parse(await fs.readFile(f.receiptPath,'utf8')).bindingVerification,undefined);
+    }
+  }
+});
+
+test('failed keychain metadata reads preserve the old app without trying any unlock or credential command', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  const old = f.runningApp(), runner = f.dependencies.runner;
+  f.dependencies.runner = async (command,args,...rest) => {
+    if (command === '/usr/bin/python3' && args[1]?.startsWith('# monitor-keychain-state:'))
+      throw Object.assign(new Error('metadata timeout'),{timedOut:true});
+    return runner(command,args,...rest);
+  };
+  await assert.rejects(setup({...f.options,updateOnly:true,codeOnly:true},f.dependencies),{code:'MONITOR_KEYCHAIN_UNAVAILABLE'});
+  assert.equal(await f.marker(),'previous app');
+  assert.deepEqual(f.state.runningApps,[old]);
+  assert.ok(!f.calls.some(c => ['/usr/bin/ditto','/usr/bin/osascript','/usr/bin/security'].includes(c.command)));
+});
+
+test('the existing-code migration restart also waits for an unlocked login keychain', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  const old = f.runningApp(); f.state.keychainStatus = {available:true,unlocked:false};
+  await f.writeReceipt();
+  await assert.rejects(setup({...f.options,appBundle:undefined,updateOnly:true},f.dependencies),{code:'MONITOR_KEYCHAIN_LOCKED'});
+  assert.equal(await f.marker(),'previous app');
+  assert.deepEqual(f.state.runningApps,[old]);
+  assert.ok(!f.calls.some(c => ['/usr/bin/ditto','/usr/bin/osascript'].includes(c.command)));
+});
+
+test('the current-code fast path preserves another active copy while locked and reuses the exact active app without a keychain probe', async t => {
+  for (const otherCopy of [true,false]) {
+    const f = await fixture(t,{previous:true,configured:true});
+    const old = f.runningApp(otherCopy ? path.join(f.directory,'Other Monitor.app') : f.destination);
+    f.state.keychainStatus = {available:true,unlocked:false};
+    await f.writeReceipt();
+    const receipt = JSON.parse(await fs.readFile(f.receiptPath,'utf8'));
+    await fs.writeFile(f.receiptPath,JSON.stringify({...receipt,maintenanceVersion:1}));
+    const action = setup({...f.options,appBundle:undefined,updateOnly:true},f.dependencies);
+    if (otherCopy) await assert.rejects(action,{code:'MONITOR_KEYCHAIN_LOCKED'});
+    else assert.equal((await action).mode,'existing');
+    assert.equal(await f.marker(),'previous app');
+    assert.deepEqual(f.state.runningApps,[old]);
+    assert.ok(!f.calls.some(c => ['/usr/bin/ditto','/usr/bin/open'].includes(c.command)));
+    assert.ok(!f.calls.some(c => c.command === '/usr/bin/osascript' && ['terminate','forceTerminate'].includes(c.args.at(-2))));
+    assert.equal(f.calls.some(c => c.command === '/usr/bin/python3'),otherCopy);
   }
 });
 

@@ -258,7 +258,10 @@ export async function openMonitorApp(appPath, bundleId, runner = run, pause = de
     app.executablePath.startsWith(path.join(intended,'Contents','MacOS') + path.sep);
   const active = await runningMonitorApps(bundleId, runner);
   if (active.length === 1 && isIntended(active[0])) return active[0];
-  if (active.length) await stopMonitorApps(bundleId, runner, pause, active);
+  if (active.length) {
+    await requireUnlockedLoginKeychain(runner);
+    await stopMonitorApps(bundleId, runner, pause, active);
+  }
   await runner('/usr/bin/open', ['-g','-n',appPath], {label:'Max Monitor öffnen'});
   for (let attempt = 0; attempt < 20; attempt++) {
     const launched = await runningMonitorApps(bundleId, runner);
@@ -501,6 +504,34 @@ export async function preserveExistingSigningIdentity(installed, candidate, runn
   }
 }
 
+export async function requireUnlockedLoginKeychain(runner = run) {
+  let state;
+  try {
+    state = parseJson(await runner('/usr/bin/python3',['-c',
+      '# monitor-keychain-state: metadata only; no credential, ACL, create or unlock API\n' +
+      'import ctypes,json,pathlib\n' +
+      'p=pathlib.Path.home()/"Library/Keychains/login.keychain-db"\n' +
+      'if not p.exists(): p=pathlib.Path.home()/"Library/Keychains/login.keychain"\n' +
+      'lib=ctypes.CDLL("/System/Library/Frameworks/Security.framework/Security")\n' +
+      'ref=ctypes.c_void_p(); flags=ctypes.c_uint32()\n' +
+      'lib.SecKeychainOpen.argtypes=[ctypes.c_char_p,ctypes.POINTER(ctypes.c_void_p)]\n' +
+      'lib.SecKeychainGetStatus.argtypes=[ctypes.c_void_p,ctypes.POINTER(ctypes.c_uint32)]\n' +
+      'opened=lib.SecKeychainOpen(str(p).encode(),ctypes.byref(ref)) if p.exists() else -1\n' +
+      'status=lib.SecKeychainGetStatus(ref,ctypes.byref(flags)) if opened==0 else -1\n' +
+      'print(json.dumps({"available":status==0,"unlocked":bool(flags.value&1) if status==0 else None}))\n'],
+      {label:'Login-Schlüsselbundstatus prüfen',timeout:5000}), 'Login-Schlüsselbundstatus');
+  } catch {
+    throw Object.assign(new Error('Login-Schlüsselbundstatus nicht lesbar; installierte App bleibt unverändert. '
+      + 'Vor dem App-Update den bestehenden Schlüsselbund am Mac regulär entsperren.'),{code:'MONITOR_KEYCHAIN_UNAVAILABLE'});
+  }
+  if (state.available !== true || typeof state.unlocked !== 'boolean')
+    throw Object.assign(new Error('Login-Schlüsselbundstatus nicht bestätigt; installierte App bleibt unverändert.'),
+      {code:'MONITOR_KEYCHAIN_UNAVAILABLE'});
+  if (!state.unlocked)
+    throw Object.assign(new Error('Login-Schlüsselbund gesperrt; installierte App bleibt unverändert. '
+      + 'Vor dem App-Update am Mac regulär entsperren.'),{code:'MONITOR_KEYCHAIN_LOCKED'});
+}
+
 async function updateExistingMonitor(options, {worker, app, revision, release, releaseCurrent,
   receipt, receiptPath, runner, appReader, artifactReader, log, pause, now = Date.now}) {
   if (!app) throw new Error('Kein eingerichteter Monitor vorhanden – zuerst die Worker-Einrichtung ausführen.');
@@ -536,7 +567,10 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
     if (options.open) {
       // One migration restart clears GUI processes left waiting by the old CLI probes.
       // Subsequent minute checks keep the resident credential owner running.
-      if (receipt?.maintenanceVersion !== 1) await stopMonitorApps(options.bundleId,runner,pause,undefined,true);
+      if (receipt?.maintenanceVersion !== 1) {
+        await requireUnlockedLoginKeychain(runner);
+        await stopMonitorApps(options.bundleId,runner,pause,undefined,true);
+      }
       await openMonitorApp(options.appPath,options.bundleId,runner,pause);
     }
     await writeReceipt(recorded,false);
@@ -575,6 +609,7 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   if (!built) throw new Error('App-Version: Die aktuelle Monitor-App ist ungültig.');
   if (artifact && releaseCurrent && built.version !== release.version)
     throw new Error('App-Version: Die Monitor-Release-Version stimmt nicht.');
+  await requireUnlockedLoginKeychain(runner);
   await preserveExistingSigningIdentity(options.appPath,bundle,runner);
   const original = await runningMonitorApps(options.bundleId,runner);
   let install;
