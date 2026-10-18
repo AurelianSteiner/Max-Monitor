@@ -61,6 +61,18 @@ def configuration():
     # the whole configuration or any provider/Slack/ClickUp credentials.
     program = """const {loadConfig}=require(process.argv[1]+'/src/config.js');
 const c=loadConfig(process.argv[2],{root:process.argv[1]});
+let policySupported=false,runningRevision='';
+try{
+ const start=require(process.argv[1]+'/src/update-readiness').lastServiceStart(c.paths.log_file);
+ const cp=require('node:child_process');
+ const state=cp.execFileSync('/bin/launchctl',['print','gui/'+process.getuid()+'/de.ruegamer-steiner.ai-newsletter'],{encoding:'utf8',timeout:5000});
+ const pid=Number(/^\s*pid = (\d+)\s*$/m.exec(state)?.[1]);
+ if(start?.pid===pid && /^[a-f0-9]{40}$/.test(start?.head||'')){
+  runningRevision=start.head;
+  cp.execFileSync('git',['-C',process.argv[1],'cat-file','-e',start.head+':src/effort-policy.js'],{stdio:'pipe',timeout:5000});
+  policySupported=true;
+ }
+}catch{}
 console.log(JSON.stringify({worker:c.worker_id,paths:c.paths,hub:{ssh_host:c.hub.ssh_host,
 identity_file:c.hub.identity_file,known_hosts_file:c.hub.known_hosts_file},settings:{
 newsletter:c.claude.effort,newsletter_review:c.claude.effort,
@@ -68,7 +80,7 @@ filing:require(process.argv[1]+'/src/kundenablage-step.js').kundenablageConfig(c
 correction:require(process.argv[1]+'/src/korrektur-config.js').korrekturConfig(c).effort,
 translation:c.translation.effort,upload:c.klaviyo.effort,slicing:c.slicen.effort,
 sales:c.sales_newsletter?.effort||c.claude.effort,model:c.claude.model,
-policy_supported:require('fs').existsSync(process.argv[1]+'/src/effort-policy.js')
+policy_supported:policySupported,running_revision:runningRevision
 }}));"""
     result = subprocess.run([node, "-e", program, str(root), cf], capture_output=True, text=True, timeout=15, check=True)
     config = json.loads(result.stdout)
