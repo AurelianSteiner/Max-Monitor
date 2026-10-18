@@ -4,19 +4,21 @@
 // its bootstrap before this script runs; browsers use the connection dialog.
 (() => {
   const $ = (id) => document.getElementById(id);
-  // Display names do not change task ownership or the SSH/enrollment identity.
-  const workerDisplayNames = new Map([
-    ["mac-worker-6-64d66918", "MacWorker 6"],
-    ["macbook-air-von-gustav-ccdf84ef", "MacWorker 7"],
-    ["macbook-1", "Mac 1"],
-    ["macbook-2", "Mac 2"],
-    ["newsletter-mac-141b2976", "Mac 4"],
-    ["macworker-5-schwarz", "Mac 5 schwarz"],
-    ["macbook-till-main", "Till Main"],
-    ["macbook-von-till-main-2", "Till Main 2"],
-    ["mac-f121ae17", "Macworker vale"],
-  ]);
-  const workerName = (workerId, fallback = "Mac") => workerDisplayNames.get(workerId) || workerId || fallback;
+  // One shared palette, delivered by the relay. Never use names for identity bindings.
+  const workerName = (workerId, fallback = "Mac") => snapshot?.workerIdentities?.[workerId]?.name
+    || ({ "macbook-till-main": "Till Main", "macbook-von-till-main-2": "Till Main 2",
+      "mac-worker-6-64d66918": "MacWorker 6", "macbook-air-von-gustav-ccdf84ef": "MacWorker 7",
+      "macbook-1": "Mac 1", "macbook-2": "Mac 2", "newsletter-mac-141b2976": "Mac 4",
+      "macworker-5-schwarz": "Mac 5 schwarz", "mac-f121ae17": "Macworker vale" })[workerId]
+    || workerId || fallback;
+  function workerSwatch(workerId) {
+    const color = snapshot?.workerIdentities?.[workerId]?.color;
+    if (!/^#[0-9A-Fa-f]{6}$/.test(color || "")) return null;
+    const swatch = node("span", "worker-color");
+    swatch.style.backgroundColor = color;
+    swatch.setAttribute("aria-hidden", "true");
+    return swatch;
+  }
   // The relay can be hosted at / or behind a shared Hub path such as /max-monitor.
   const relayPrefix = location.pathname.replace(/\/(?:fleet|monitor)\/?$/, "");
   const bootstrap = window.__MAX_MONITOR__;
@@ -104,6 +106,11 @@
     timeZone: "Europe/Berlin",
   });
   const clockFormat = new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" });
+  const resetFormat = new Intl.DateTimeFormat("de-DE", {
+    weekday: "short",
+    day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+    timeZone: "Europe/Berlin",
+  });
   const numberFormat = new Intl.NumberFormat("de-DE");
   const dayFormat = new Intl.DateTimeFormat("de-DE", { dateStyle: "short", timeZone: "Europe/Berlin" });
   function setSync(text, state) {
@@ -1005,6 +1012,19 @@
     return track;
   }
 
+  // Always show each window's own reported reset, regardless of utilization.
+  function limitReset(limit, stale) {
+    const resetsAt = timestamp(limit?.resetsAt);
+    const text = resetsAt === null ? "Reset unbekannt"
+      : `Reset ${resetFormat.format(resetsAt).replace(/^(\S+)\., /, "$1 ").replace(", ", " ")}`;
+    const note = node("small", "limit-reset", text);
+    note.title = resetsAt === null ? "Noch kein Reset-Zeitpunkt gemeldet"
+      : `Gemeldeter Reset: ${exact(limit.resetsAt)}`;
+    if (resetsAt !== null && resetsAt <= Date.now()) note.title += " · Neue Messung ausstehend";
+    if (limitStale(limit, stale)) note.title += " · Messung veraltet";
+    return note;
+  }
+
   function meter(limit, stale) {
     const value = limit?.percent ?? null;
     const outdated = limitStale(limit, stale);
@@ -1014,6 +1034,8 @@
     const number = node("b", "", value == null ? "—" : `${value} %`);
     number.dataset.tone = wrap.dataset.tone;
     wrap.append(usageTrack(value), number);
+    const reset = limitReset(limit, stale);
+    if (reset) wrap.append(reset);
     return wrap;
   }
   function sortedMachines(devices) {
@@ -1054,6 +1076,8 @@
       signal.title = statusNames[displayStatus] || "Unbekannt";
       const identity = node("span");
       const open = node("button", "", label);
+      const swatch = workerSwatch(machine.workerId);
+      if (swatch) open.prepend(swatch);
       open.type = "button";
       open.title = label;
       open.setAttribute("aria-label", `${label} · ${statusNames[displayStatus] || "Unbekannt"} · Details`);
@@ -1094,6 +1118,7 @@
       if (account) {
         sessionCell.append(meter(machineLimit(machine, account, "session"), stale));
         weeklyCell.append(meter(machineLimit(machine, account, "weekly"), stale));
+        row.classList.add("has-limit-reset");
         if (stale) sessionCell.title = weeklyCell.title = `Letzte Messung ${relative(machine.usageUpdatedAt)}`;
       } else {
         const unbound = node("span", "fleet-unbound", "kein Account");
@@ -1133,6 +1158,8 @@
       const identity = node("div", "machine-name");
       const label = workerName(machine.workerId, machine.name);
       const machineName = node("h3", "", label);
+      const swatch = workerSwatch(machine.workerId);
+      if (swatch) machineName.prepend(swatch);
       machineName.title = label;
       const deviceName = machine.deviceName || (machine.name !== machine.workerId ? machine.name : null);
       const subtitle = node("small", "", !machine.workerId ? "Worker-ID nicht zugeordnet"
@@ -1198,6 +1225,7 @@
           number.dataset.tone = limit.dataset.tone;
           line.append(node("span", "", `${name} genutzt`), number);
           limit.append(line, usageTrack(value));
+          limit.append(limitReset(measurement, stale));
           limitGroup.append(limit);
         }
         card.append(limitGroup);
@@ -1236,7 +1264,7 @@
         if (!matchesWorkflow(task, workflowFilter)) return false;
         return (
           !needle ||
-          [task.title, task.id, task.company, task.workerId, workerName(task.workerId, ""), workerNames.get(task.workerId), task.url, task.blockedReason, task.phase, task.step, ...(task.tags || [])]
+          [task.title, task.id, task.company, task.pmOwner, task.workerId, workerName(task.workerId, ""), workerNames.get(task.workerId), task.url, task.blockedReason, task.phase, task.step, ...(task.tags || [])]
             .filter(Boolean).join(" ").toLocaleLowerCase().includes(needle)
         );
       })
@@ -1394,6 +1422,9 @@
           `${task.company ? " · " : ""}${drafts === 1 ? "Entwurf" : `${drafts} Entwürfe`}`));
         titleCell.append(company);
       }
+      if (stageOf(task) === "clarification") {
+        titleCell.append(node("span", "pm-owner", `Wartet auf: ${task.pmOwner || "PM in Slack noch nicht bestätigt"}`));
+      }
       titleCell.append(node("span", "task-id", task.id));
       if (task.status === "completed") titleCell.append(node("span", "task-completion-time",
         task.completedAt ? `Abgeschlossen ${exact(task.completedAt)}` : "Abschlussdatum unbekannt"));
@@ -1506,7 +1537,7 @@
     return parts.map((part, index) => (shared ? part.at(-1) : previews[index].title) || `Mail ${index + 1}`);
   }
   function taskSignature(task) {
-    return JSON.stringify([task.status, packageHint(task), task.progress, task.step, task.phase, task.blockedReason, task.workerId, task.completion,
+    return JSON.stringify([task.status, packageHint(task), task.progress, task.step, task.phase, task.blockedReason, task.workerId, task.pmOwner, task.completion,
       (task.previews || []).map((entry) => [entry.id, entry.render])]);
   }
   function draftSection(task, keep) {
@@ -1633,6 +1664,7 @@
         (task.workflow === "sales" ? salesStatuses[task.sourceStatus] : task.sourceStatus) || "Unbekannt"),
       detailField("Aktualisiert", exact(task.updatedAt)),
     );
+    if (stageOf(task) === "clarification") grid.append(detailField("Wartet auf", task.pmOwner || "PM in Slack noch nicht bestätigt"));
     if (task.blockedReason) grid.append(detailField(task.status === "clarification" ? "Offene Klärung" : "Blockiergrund", task.blockedReason, true));
     const source = runningPackage(task);
     if (source) grid.append(detailField("Sprachpaket", source.title || source.id, true),
@@ -1801,7 +1833,7 @@
         ),
       );
       if (limit.resetsAt)
-        list.append(node("p", "form-hint", `Reset: ${exact(limit.resetsAt)}`));
+        list.append(limitReset(limit, outdated));
     });
     for (const account of machine.accounts || []) {
       if (
