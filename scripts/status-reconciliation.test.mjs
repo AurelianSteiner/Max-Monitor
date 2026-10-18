@@ -76,7 +76,8 @@ test('live heartbeat cannot reopen a bound completion or dispatch an unanswered 
 
 test('projection preserves manual decisions, separate corrections and real waiting work', () => {
   const manual = { id: 'manual', status: 'completed', completion: 'manual', phase: 'Manuell erledigt' };
-  assert.equal(policy.reconcileTask(manual), manual);
+  assert.deepEqual(policy.reconcileTask(manual), { ...manual, progress: 100,
+    step: undefined, blockedReason: undefined, errorUrl: undefined });
   for (const workflow of ['upload', 'correction', 'translation', 'sales']) {
     const waiting = { id: workflow, workflow, status: 'queued', sourceStatus: 'revision intern', phase: 'Wartet · Fortsetzung in der zentralen Queue' };
     assert.equal(policy.reconcileTask(waiting).status, 'queued');
@@ -84,6 +85,57 @@ test('projection preserves manual decisions, separate corrections and real waiti
   const current = policy.reconcileTask({ id: 'x', workflow: 'upload', status: 'running', completedAt: new Date(now).toISOString(), completionSource: 'slack' });
   assert.equal(current.status, 'running');
   assert.equal(current.completedAt, undefined);
+});
+
+test('manual completion clears stale blocker details while preserving the source and completion evidence', () => {
+  const manual = { id: 'sales:1791753755.856959', workflow: 'sales', status: 'completed',
+    phase: 'Manuell erledigt', sourceStatus: 'blocked', workerId: 'mac-worker',
+    attemptId: 'same-source-attempt', taskVersion: 'same-source-version',
+    completion: 'manual', completionSource: 'manual', completedAt: new Date(now - 5000).toISOString(),
+    blockedReason: 'Mail 3 hat die Endabnahme nicht bestanden', step: 'QA blockiert',
+    errorUrl: 'https://app.slack.com/archives/CERROR/p1791753755856959', progress: 65 };
+  const original = structuredClone(manual);
+  assert.deepEqual(policy.auditTaskStates([manual]).map(finding => finding.code), ['stale_terminal_details']);
+  const result = policy.reconcileTask(manual);
+  assert.equal(result.status, 'completed');
+  assert.equal(result.phase, 'Manuell erledigt');
+  assert.equal(result.progress, 100);
+  for (const field of ['blockedReason', 'step', 'errorUrl']) assert.equal(result[field], undefined);
+  for (const field of ['id', 'workflow', 'sourceStatus', 'workerId', 'attemptId', 'taskVersion',
+    'completion', 'completionSource', 'completedAt']) assert.equal(result[field], manual[field]);
+  assert.deepEqual(manual, original);
+  assert.deepEqual(policy.auditTaskStates([result]), []);
+  assert.deepEqual(policy.reconcileTask(result), result);
+  assert.equal(policy.reportMayReplace(result, { runId: manual.attemptId }, new Date(now).toISOString()), false);
+  const review = policy.reconcileTask({ ...manual, workflow: 'newsletter', sourceStatus: 'approval intern' });
+  assert.equal(review.phase, 'Manuell erledigt');
+  assert.equal(review.completionSource, 'manual');
+  assert.deepEqual(policy.auditTaskStates([review]), []);
+});
+
+test('a fresh complete status audit records the manual blocker display as repaired', async () => {
+  const sourceAt = new Date(now).toISOString();
+  const manual = { id: 'sales:1791753755.856959', workflow: 'sales', status: 'completed',
+    phase: 'Manuell erledigt', completion: 'manual', completionSource: 'manual',
+    completedAt: new Date(now - 5000).toISOString(), blockedReason: 'Previous QA blocker' };
+  let rows = [manual], saved;
+  const audit = createStatusAudit({ now: () => now,
+    readFleet: async () => ({ queue: { tasks: rows, source: { lastSuccessAt: sourceAt } } }),
+    save: async report => { saved = report; } });
+  await audit.begin();
+  rows = rows.map(policy.reconcileTask);
+  const report = await audit.finish({ source: { lastSuccessAt: sourceAt }, tasks: [
+    { id: manual.id, workflow: 'sales', status: 'blocked', blockedReason: 'Previous QA blocker' },
+  ] });
+  assert.equal(report, saved);
+  assert.equal(report.ok, true);
+  assert.deepEqual(report.findings, []);
+  assert.deepEqual(report.repaired.map(entry => [entry.taskId, entry.code]),
+    [[manual.id, 'stale_terminal_details']]);
+  assert.equal(rows[0].completion, 'manual');
+  assert.equal(rows[0].completedAt, manual.completedAt);
+  assert.deepEqual(policy.auditTaskStates([{ id: 'stale', status: 'completed', blockedReason: 'real conflict' }])
+    .map(finding => finding.code), ['stale_terminal_details']);
 });
 
 test('half-hour audit rereads the saved fleet, records repairs and waits a full interval', async () => {

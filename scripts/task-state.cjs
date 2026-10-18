@@ -9,7 +9,8 @@ function preGenFinished(task) {
 }
 
 function reconcileTask(task) {
-  if (task.completion === 'manual') return task;
+  if (task.completion === 'manual') return { ...task, status: 'completed', progress: 100,
+    phase: 'Manuell erledigt', step: undefined, blockedReason: undefined, errorUrl: undefined };
   if (task.status === 'completed' || preGenFinished(task)) {
     return { ...task, status: 'completed', progress: 100, workerId: task.status === 'completed' ? task.workerId : null,
       phase: preGenFinished(task) ? 'Pre-Gen abgeschlossen · ' + task.sourceStatus : task.status === 'completed' && !/Pausiert|Wartet|blockiert/i.test(task.phase || '') ? task.phase : undefined,
