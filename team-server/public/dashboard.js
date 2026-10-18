@@ -72,7 +72,7 @@
     paused: "Pausiert",
     running: "Läuft",
     blocked: "Blockiert",
-    clarification: "Klärung nötig",
+    clarification: "PM Rückfragen",
     completed: "Erledigt",
     failed: "Fehler",
   };
@@ -93,7 +93,7 @@
     ["queued", "Wartet", "queued"],
     ["paused", "Pausiert", "paused"],
     ["running", "Läuft", "running"],
-    ["clarification", "Klärung nötig", "clarification"],
+    ["clarification", "PM Rückfragen", "clarification"],
     ["blocked", "Blockiert", "blocked"],
     ["completed", "Erledigt", "completed"],
     ["failed", "Fehler", "failed"],
@@ -132,6 +132,8 @@
   function stageOf(task) {
     if (runningPackage(task)) return "running";
     if (task.status !== "queued") return task.status;
+    // Older relays keep open PM questions queued until an answer is accepted.
+    if (task.phase === "Wartet · PM-Rückfrage") return "clarification";
     const waiting = task.workerId || (task.tags || []).some((tag) =>
       String(tag).toLocaleLowerCase("de-DE").replace(/[^\p{L}\p{N}]/gu, "").endsWith("wartet"))
       || /^(Reserviert|Worker-Abgleich|Wartet)/.test(task.phase || "");
@@ -1340,7 +1342,11 @@
       ? "Verbinde den Team-Server, um die vollständige Queue zu laden."
       : items.length === 0 && !snapshot.queue.source?.lastSuccessAt
         ? "Queue-Quelle noch nicht verbunden. Richte die Newsletter-Brücke ein, um offene ClickUp-Aufgaben zu sehen."
-        : "Keine Aufgaben für diesen Filter.";
+        : statusFilter === "clarification"
+          ? items.some(task => matchesStatus(task, "clarification"))
+            ? "Keine PM-Rückfragen für diese Filter. Entferne die Suche oder Filter, um alle PM-Rückfragen zu sehen."
+            : "Aktuell sind keine PM-Rückfragen offen."
+          : "Keine Aufgaben für diesen Filter.";
     $("result-count").textContent = snapshot
       ? `${visible.length} von ${items.length} Aufgaben`
       : "Noch keine Queue-Daten";
