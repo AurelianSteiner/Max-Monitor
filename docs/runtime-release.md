@@ -1,8 +1,9 @@
 # Nachvollziehbare Runtime-Ausrollung
 
-`Config/runtime-release-files.json` benennt die 30 ausgeführten Relay-, Queue- und
-Wartungsquellen. UI-Dateien, private Konfiguration, Datenbanken und vorhandene
-zusätzliche Betriebshilfen gehören nicht zu dieser gezielten Ausrollung.
+`Config/runtime-release-files.json` benennt die ausgeführten Relay-, Queue- und
+Wartungsquellen einschließlich der dort aufgeführten statischen Dashboard-Dateien.
+Die native App, private Konfiguration, Datenbanken und vorhandene zusätzliche
+Betriebshilfen gehören nicht zu dieser gezielten Ausrollung.
 
 Der geprüfte Commit muss sauber und exakt als `origin/main` veröffentlicht sein.
 Die Nutzdaten werden mit `git show <Commit>:<Datei>` gelesen. Der Releaseweg nutzt
@@ -24,8 +25,8 @@ Gezielter Release und regulärer Hub-Installer verwenden
 `/run/lock/max-monitor-code-release.lock`. Der gezielte Installer sichert die
 vorherigen Quellen und Quittung, ersetzt nur Manifestdateien, startet ausschließlich
 die zuvor aktiven Monitor-Dienste und prüft sämtliche Quellhashes zurück. Die
-Quittung `relay-release.json` enthält Commit und tatsächliche Hashes aller 30
-Dateien. Unbekannte Helfer bleiben erhalten und werden separat gehasht. Bei einem
+Quittung `relay-release.json` enthält Commit und tatsächliche Hashes aller
+Manifestdateien. Unbekannte Helfer bleiben erhalten und werden separat gehasht. Bei einem
 Fehler wird nur die eigene, noch unverändert vorliegende Mutation zurückgenommen.
 
 Der reguläre Installer schreibt ebenfalls eine neue Quittung für seine Quellen.
@@ -36,5 +37,6 @@ Integrationsvertrag, Worker-Identitäten und das Blockerkontext-Modul.
 
 Die Ausrollung startet weder Newsletter-Worker noch Produktionsaufträge und führt
 keine ClickUp-/FileStage-Schreibtests aus. Anschließend Dienst, frischen regulären
-Queue-Snapshot, alle 30 Hashes und die tatsächlichen Verträge der acht Worker
-lesend abnehmen. Native App und Web-Oberfläche werden hier nicht veröffentlicht.
+Queue-Snapshot, alle Manifesthashes und die tatsächlichen Verträge der acht Worker
+lesend abnehmen. Enthaltene statische Dashboard-Dateien werden aus demselben
+Commit veröffentlicht; die native App wird hier weder gebaut noch ausgetauscht.
