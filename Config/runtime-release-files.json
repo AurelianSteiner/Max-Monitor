@@ -11,6 +11,7 @@
     "scripts/member-remote.py",
     "scripts/newsletter-monitor-bridge.mjs",
     "scripts/pm-question-status.mjs",
+    "scripts/pm-owner.mjs",
     "scripts/report-monitor-worker.mjs",
     "scripts/setup-mac-monitor.mjs",
     "scripts/setup-worker-remote.sh",

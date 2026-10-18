@@ -120,6 +120,7 @@ test('generate-only stages private secrets without changing existing nginx or co
   const rerun = prepareInstallation({ stageDirectory, nginxConfigPath, workerRoot, existingConfigPath });
   assert.equal(rerun.settings.ownerToken, ownerToken);
   assert.ok(plan.files.some((file) => file.target === '/opt/max-monitor/team-server/enrollment.js'));
+  assert.ok(plan.files.some((file) => file.target === '/opt/max-monitor/scripts/pm-owner.mjs'), 'fresh installations include the bridge dependency');
   assert.ok(plan.files.every((file) => !file.target.startsWith('/var/lib/')));
   const sourceConfig = fs.readFileSync(path.join(stageDirectory, 'payload/opt/max-monitor/newsletter-source/config/worker.local.json'), 'utf8');
   assert.ok(!sourceConfig.includes('MAC_SECRET_NEVER_COPY'));

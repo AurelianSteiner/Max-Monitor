@@ -22,6 +22,10 @@ test('all production kinds show their actual unanswered questions, including upl
     assert.equal(current.status, 'queued');
     assert.equal(current.phase, 'Wartet · PM-Rückfrage');
     assert.equal(current.blockedReason, 'Q3: Gutscheincode?');
+    assert.equal(current.blockerReason, 'Q3: Gutscheincode?');
+    assert.equal(current.reasonCode, 'pm_decision_pending');
+    assert.equal(current.responsibleRole, 'PM');
+    assert.match(current.nextStep, /bestehenden Rückfragen-Thread/);
     assert.equal(current.attemptId, 'run1');
   }
 });
@@ -46,6 +50,8 @@ test('accepted current answers show queued continuation while capacity is occupi
   const job = {setId:'s1',questionId:'Q3',sourceVersion:'v1',revision:2,state:'queued'};
   const current = row(); applyPmQuestions([current],{sets:[accepted],jobs:[job]});
   assert.equal(current.status,'queued');assert.equal(current.phase,'Wartet auf Fortsetzung');
+  assert.equal(current.reasonCode,'continuation_pending');assert.equal(current.responsibleRole,'Produktion');
+  assert.match(current.nextStep,/gespeicherte PM-Antwort/);
   for (const overrides of [{sourceVersion:'old'},{revision:1},{state:'blocked'}]) {
     const current = row(); applyPmQuestions([current],{sets:[accepted],jobs:[{...job,...overrides}]});assert.equal(current.status,'blocked');
   }
@@ -54,6 +60,13 @@ test('accepted current answers show queued continuation while capacity is occupi
 test('a retired historical question set cannot hide the active replacement on the same source run', () => {
   const current=row();applyPmQuestions([current],{sets:[set('klaviyo',{id:'retired',questions:[{id:'Q3',status:'replaced'}]}),set()]});
   assert.equal(current.status,'queued');assert.equal(current.blockedReason,'Q3: Gutscheincode?');
+});
+
+test('archived journals cannot replace an active decision or revive a retired question', () => {
+  const old=set('klaviyo',{id:'archived',archivedAt:1234});
+  const only=row();applyPmQuestions([only],{sets:[old]});assert.equal(only.status,'blocked');
+  const current=row();applyPmQuestions([current],{sets:[old,set()]});
+  assert.equal(current.reasonCode,'pm_decision_pending');assert.equal(current.blockedReason,'Q3: Gutscheincode?');
 });
 
 test('the monitor reads the durable journal without modifying it and uses the authoritative job state', t => {

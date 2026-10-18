@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { cleanupErrorCopies, createErrorCleanupWriter } from './error-copy-cleanup.mjs';
 import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
+import { applyPmOwners, createPmRoutingReader } from './pm-owner.mjs';
 import taskState from './task-state.cjs';
 import { checkpointBlocker, applyBlockerContexts } from './blocker-context.mjs';
 import { createStatusAudit, saveStatusAudit } from './status-reconciliation.mjs';
@@ -895,6 +896,14 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       : status === 'completed' ? 'Korrektur abgeschlossen' : claim.awaitingPm ? 'PM-Rückfrage offen'
         : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
     const task = tasks.find(task => task.id === claim.taskId);
+    // A terminal/portable attempt is history after a human moves the order on.
+    // Keep genuinely live writers visible; never call a manual handoff success.
+    if (task && (!active || paused && claim.portable)) {
+      const currentOrigin = CORRECTION_STATUSES[normalizeStatus(taskStatus(task))];
+      const order = CORRECTION_JOB.exec(claim.jobId);
+      if (status !== 'completed' && (!currentOrigin || admission.parked(task, 'korrektur', task.statusSince)
+        || order && (order[3] !== currentOrigin || task.statusSince && order[2] !== String(task.statusSince)))) continue;
+    }
     rows.push({ id: `correction:${claim.jobId}`, title: displayText(claim.title || task?.name, 300, `Korrektur ${claim.taskId}`),
       url: claim.url || (claim.taskId !== claim.jobId ? `https://app.clickup.com/t/${encodeURIComponent(claim.taskId)}` : undefined), workflow: 'correction',
       company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId,
@@ -1362,7 +1371,7 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
 // errorPayloads (optional Map): filled with ts -> metadata of every top-level copy
 // in #ai-fehler, only after a complete read of that channel; the error-copy
 // cleanup decides from it which copies stay before reading any thread.
-export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, checkpointReader, reservationReader, maxTasksOf, claimReader = listClaims, statusCache, epochRefusals = new Map(), warn = () => {}, admission = workerAdmission(), errorPayloads, now = Date.now() }) {
+export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, pmRouting, checkpointReader, reservationReader, maxTasksOf, claimReader = listClaims, statusCache, epochRefusals = new Map(), warn = () => {}, admission = workerAdmission(), errorPayloads, now = Date.now() }) {
   validateWorkflows(workflows);
   const issues = new Map();
   const onMessage = message => {
@@ -1452,7 +1461,27 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const observedWorkers = workerResult.status === 'fulfilled' ? workerResult.value : undefined;
   const fleetDetail = workerResult.status === 'rejected'
     ? 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.' : undefined;
-  const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl, admission, workers: observedWorkers });
+  const queueOptions = { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl, admission, workers: observedWorkers };
+  // Completed/manual source tasks disappear from the tag/start-status queries.
+  // Read missing sources of visible unfinished corrections before deciding that
+  // their old reservation still describes an order. Failure preserves the cache.
+  const missing = [...new Set(buildQueue(tasks, claims, workflows, queueOptions)
+    .filter(row => row.workflow === 'correction' && row.status !== 'completed' && row.run
+      && !tasks.some(task => task.id === row.run.taskId)).map(row => row.run.taskId))];
+  try {
+    for (const id of missing) {
+      const task = await requestJson(hubFetch, `https://api.clickup.com/api/v2/task/${encodeURIComponent(id)}`, 'ClickUp');
+      if (task.id !== id || !taskStatus(task) || !Array.isArray(task.tags)) throw Error('ClickUp: Korrekturquelle unvollständig.');
+      if (CORRECTION_STATUSES[normalizeStatus(taskStatus(task))]) {
+        const epochs = await readStatusEpochs(hubFetch, [task], { refusals: epochRefusals, now });
+        if (epochs.has(id)) task.statusSince = epochs.get(id);
+      }
+      tasks.push(task);
+    }
+  } catch (error) {
+    return { source: { name: SOURCE_NAME, error: displayText(error.message, 300, 'Korrekturquelle nicht lesbar.') } };
+  }
+  const queue = buildQueue(tasks, claims, workflows, queueOptions);
   // Keep a confirmed date after its source thread leaves the history window.
   // Any currently visible attempt prevents borrowing an older success.
   retainCompletionDates(queue, previousTasks, claims);
@@ -1464,6 +1493,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   applyPmQuestions(queue, questionResult.value, bindings);
   queue.push(...salesResult.value);
   applyBlockerContexts(queue, tasks, now);
+  await applyPmOwners(queue, tasks, { questions: questionResult.value, routing: pmRouting, now });
   for (let index = 0; index < queue.length; index++) queue[index] = taskState.reconcileTask(queue[index]);
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
   const manualUploadIds = new Set(tasks.filter(task => admission.manualUpload(task)).map(task => task.id));
@@ -1604,6 +1634,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     upload: options.dryRun ? async () => {} : (id, data) => uploadPreview(id, data, options) }) : undefined;
   const controller = new AbortController();
   const claimReader = createClaimReader();
+  const pmRouting = options.localHub ? createPmRoutingReader(options.localHub) : undefined;
   const statusCache = new Map();
   const epochRefusals = new Map();
   const errorPayloads = new Map();
@@ -1636,7 +1667,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
           }); } catch { console.error(`${new Date().toISOString()} Status-Audit: Monitor nicht lesbar; regulärer Quellenabgleich läuft weiter.`); }
         }
         const readsBefore = { ...claimReader.stats };
-        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, statusCache, epochRefusals, admission, errorPayloads, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
+        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, pmRouting, statusCache, epochRefusals, admission, errorPayloads, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
           warn: message => console.error(`${new Date().toISOString()} ${displayText(message, 300)}`),
           previews, previousTasks: cached?.tasks, ...(typeof maxTasksPerMac === 'function' ? { maxTasksOf: maxTasksPerMac } : {}),
           ...(options.localHub ? { fleetReader: readLocalHubFleet,
