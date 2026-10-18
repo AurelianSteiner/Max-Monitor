@@ -49,3 +49,9 @@ test('missing register or stale snapshot never produces a preference; hidden Mac
   summary.scheduling.generated_at=at;
   v=distribution(summary,machines.slice(1),now).by_kind.newsletter;assert.equal(v.rows.some(r=>r.worker==='a'),false);
 });
+test('fresh independent load remains visible for a paused worker without renewing intake',()=>{
+  const {summary,machines}=fixture();summary.scheduling.routing.fleet[0].seen_at=new Date(now-3601000).toISOString();delete summary.scheduling.routing.fleet[0].max_tasks;
+  machines[0].load={fresh:true,occupied:2,max:6};
+  const row=distribution(summary,machines,now).by_kind.newsletter.rows.find(r=>r.worker==='a');
+  assert.equal(row.load,2);assert.equal(row.cap,6);assert.equal(row.preferred,false);assert.equal(row.reason,'stale_worker');
+});

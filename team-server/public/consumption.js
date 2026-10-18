@@ -12,11 +12,12 @@
   function drawDistribution(){
     const kind=$('distribution-kind').value;
     const view=data?.distribution?.by_kind?.[kind];
+    const unavailable=!view||view.mode==='unavailable';
     const rows=view?.rows||[];
     const preferred=rows.filter(r=>r.preferred);
     const reasons={unavailable:'Verteilungsdaten fehlen oder sind veraltet',stale_worker:'Keine frische Aufgabenabfrage',not_accepting:'Nimmt derzeit keine Aufgaben an',missing_slots:'Platzmeldung unvollständig',full:'Alle Plätze belegt',kind_full:'Kein freier Platz für diese Aufgabenart',quota:'Kontingent reicht mit Puffer nicht aus'};
-    $('distribution-preferred').textContent=preferred.length?`${preferred.length>1?'Gleichrangig bevorzugt':'Aktuell bevorzugt'}: ${preferred.map(r=>r.name).join(', ')}`:view?.mode==='unavailable'?'Aktuell keine verlässliche Präferenz':'Aktuell kein Mac startbereit';
-    $('distribution-explanation').textContent=view?.mode==='unavailable'?'Die aktuelle Verteilung kann noch nicht berechnet werden. Die Ansicht aktualisiert sich automatisch.':!preferred.length?'Die Gründe je Mac zeigen, was einen neuen Start derzeit verhindert.':view?.mode==='quota'?'Reset-Nähe, verbleibendes Kontingent und freie Plätze bestimmen die Präferenz für '+names[kind]+'.':'Keine aktuellen Kontingentwerte verfügbar. Die belegten Plätze bestimmen die Präferenz.';
+    $('distribution-preferred').textContent=preferred.length?`${preferred.length>1?'Gleichrangig bevorzugt':'Aktuell bevorzugt'}: ${preferred.map(r=>r.name).join(', ')}`:unavailable?'Aktuell keine verlässliche Präferenz':'Aktuell kein Mac startbereit';
+    $('distribution-explanation').textContent=unavailable?'Die aktuelle Verteilung kann noch nicht berechnet werden. Die Ansicht aktualisiert sich automatisch.':!preferred.length?'Die Gründe je Mac zeigen, was einen neuen Start derzeit verhindert.':view?.mode==='quota'?'Reset-Nähe, verbleibendes Kontingent und freie Plätze bestimmen die Präferenz für '+names[kind]+'.':'Keine aktuellen Kontingentwerte verfügbar. Die belegten Plätze bestimmen die Präferenz.';
     const body=$('distribution-body');body.replaceChildren();
     for(const row of rows){
       const tr=node('tr',row.preferred?'distribution-preferred':'');

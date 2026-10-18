@@ -37,7 +37,12 @@ function distribution(summary, machines, nowMs = Date.now()) {
           at: Number.isFinite(raw?.at) ? raw.at : null,
           ...(scored || {})}];
       }));
-      return {worker, name: machine.name || worker, load, cap, seen_at: m?.seen_at || null, reason, windows, input};
+      // A paused worker can stop its intake heartbeat while its independent
+      // observer still proves physical load. Display it without renewing intake.
+      return {worker, name: machine.name || worker,
+        load: load ?? (machine.load?.fresh ? machine.load.occupied ?? null : null),
+        cap: cap ?? (machine.load?.fresh ? machine.load.max ?? null : null),
+        seen_at: m?.seen_at || null, reason, windows, input};
     });
     const candidates = rows.filter(r => !r.reason).map(r => r.input);
     const scores = available ? quotaScores({candidates, peers, jobs, kind, nowMs}) : null;
