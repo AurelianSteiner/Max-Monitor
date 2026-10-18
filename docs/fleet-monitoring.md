@@ -786,3 +786,22 @@ Beim Rollout nur geprüfte Relay-Dateien aktualisieren und vorhandene zusätzlic
 Live-Wartungshelfer erhalten; die laufende Relay-Revision, die echte Fleet-Antwort
 und frische Worker-Polls nachweisen. Simulationen erzeugen keine ClickUp-Aufgaben,
 FileStage-Uploads, Kundenschreibvorgänge oder Nachrichten.
+
+### Durable blocked-operation context (F09, 18 October 2026)
+
+The central bridge reads the exact unowned checkpoint's verified manifest for a
+blocked operation, retaining its original run, commission, digest and recorded
+time. It does not restore files, acquire a reservation, reopen a PM question or
+start production. SHA-256/identity failures are visible as unreadable context.
+Only bounded metadata is cached; checkpoint bytes and worker leases are untouched.
+The projection carries `blockerReason`, `reasonCode`, `responsibleRole`, `nextStep`
+and source proof. The existing `blockedReason` display includes the action and
+role, so current app versions can show it without a native app update.
+
+`pmOwner`/`pmOwnerId` come exclusively from the current ClickUp PM users field
+`c266c259-3eb9-47d4-b108-3232d6bbd7a7`, never assignees, QA fields or old snapshots.
+No PM or an ambiguous mapping is explicitly unassigned. The PM coordinates work;
+a technical blocker can still belong to Klaviyo technique or Design/QA. Source
+causes describe the saved attempt; they do not assert that an old technical or
+customer condition has been rechecked now. A changed commission cannot inherit
+an older checkpoint. The relay preserves context on disk across restarts.

@@ -12,6 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { cleanupErrorCopies, createErrorCleanupWriter } from './error-copy-cleanup.mjs';
 import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
 import taskState from './task-state.cjs';
+import { checkpointBlocker, applyBlockerContexts } from './blocker-context.mjs';
 import { createStatusAudit, saveStatusAudit } from './status-reconciliation.mjs';
 
 const require = createRequire(import.meta.url);
@@ -1312,7 +1313,18 @@ export async function readStoredCheckpoints(localHub) {
   const file = path.join(localHub, 'state/newsletter-continuations/queue.sqlite');
   try { await fs.access(file); } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
   const db = new (require('node:sqlite').DatabaseSync)(file, { readOnly: true });
-  try { return db.prepare('SELECT run_id,task_id,producer,owner,ready_at FROM checkpoints WHERE owner IS NULL').all(); }
+  try {
+    const rows = db.prepare('SELECT run_id,task_id,producer,owner,ready_at FROM checkpoints WHERE owner IS NULL').all();
+    const columns = db.prepare('PRAGMA table_info(checkpoints)').all().map(c => c.name);
+    if (columns.includes('packed') && columns.includes('digest')) {
+      const payload = db.prepare('SELECT digest,packed FROM checkpoints WHERE run_id=? AND task_id=? AND owner IS NULL');
+      for (const row of rows) if (row.ready_at === 8640000000000000) {
+        const packed = payload.get(row.run_id,row.task_id);
+        if (packed) row.blocker = checkpointBlocker({ ...row, ...packed });
+      }
+    }
+    return rows;
+  }
   finally { db.close(); }
 }
 
@@ -1330,6 +1342,7 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
     row.workerId = undefined;
     row.attemptId = entry.run_id;
     if (entry.ready_at === 8640000000000000) {
+      if (entry.blocker) Object.assign(row, entry.blocker);
       if (!/PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')) row.status = 'blocked';
       if (!/PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')) row.phase = 'Blockiert · Fortschritt im RS Hub gesichert';
     } else {
@@ -1444,6 +1457,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   // still belongs to the exact source attempt after the producer Mac is cleared.
   applyPmQuestions(queue, questionResult.value, bindings);
   queue.push(...salesResult.value);
+  applyBlockerContexts(queue, tasks, now);
   for (let index = 0; index < queue.length; index++) queue[index] = taskState.reconcileTask(queue[index]);
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
   const manualUploadIds = new Set(tasks.filter(task => admission.manualUpload(task)).map(task => task.id));

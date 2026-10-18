@@ -133,3 +133,19 @@ test('older complete snapshots and delayed source errors cannot roll back newer 
     assert.equal(snapshot.queue.source.lastSuccessAt, at(0));
   }
 });
+
+test('durable blocker context and current PM survive relay restart without becoming a worker assignment', t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'blocker-persist-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const store=createFleetStore(directory,()=>now);
+  const update=tasks=>store.updateQueue('TEAM1234',{tasks,source:{name:'ClickUp',lastSuccessAt:at(0)}});
+  const fields = { reasonCode:'product_feed_missing', responsibleRole:'Klaviyo-Technik', nextStep:'Produktfeed einrichten und Draft prüfen.',
+    pmOwner:'Current PM',pmOwnerId:'123',pmCheckedAt:at(0),blockerReason:'Produktfeed fehlt.',blockerSource:'checkpoint',
+    blockerSourceRunId:'saved-run',blockerSourceHash:'a'.repeat(64),blockerRecordedAt:at(-10000),blockedReason:'Produktfeed fehlt · PM: Current PM' };
+  update([mail('saved',fields)]);
+  const first=store.snapshot('TEAM1234').queue.tasks.find(row=>row.id===mail('saved').id);
+  for(const [key,value] of Object.entries(fields))assert.equal(first[key],value,key);
+  // createFleetStore caches only within its own instance; a second instance rereads fleet.json.
+  const restarted=createFleetStore(directory,()=>now).snapshot('TEAM1234').queue.tasks.find(row=>row.id===first.id);
+  for(const [key,value] of Object.entries(fields))assert.equal(restarted[key],value,key);
+  assert.ok(!restarted.workerId);
+});
