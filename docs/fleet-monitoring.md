@@ -416,11 +416,11 @@ ClickUp-Aufgabe bleiben als `completed` sichtbar.
 
 Standardmäßig werden diese Workflows erkannt:
 
-| Workflow | Start-Tags | Status-Tags |
+| Workflow | Auftrag / historische Tags | Status-Tags |
 | --- | --- | --- |
-| `newsletter` (Pre-Gen) | `pre gen.` | `pre gen · wartet`, `pre gen · läuft`, `pre gen · pausiert`, `pre gen · blockiert`, `pre gen · fertig` |
-| `upload` (Klaviyo-Upload) | `klaviyo upload` | `klaviyo upload · wartet`, `klaviyo upload · läuft`, `klaviyo upload · blockiert`, `klaviyo upload · fertig` |
-| `translation-en` … `translation-sp` (Übersetzung) | `en translation` (auch `en translations`), ebenso `it`, `fr`, `se`, `sp` | `<sprache> translation · blockiert`, `<sprache> translation · fertig` |
+| `newsletter` (Pre-Gen) | Status `pre-gen`; Tags nur für Fortschritt und Historie | `pre gen · wartet`, `pre gen · läuft`, `pre gen · pausiert`, `pre gen · blockiert`, `pre gen · fertig` |
+| `upload` (Klaviyo-Upload) | Status `klaviyo upload`; Tags nur für Fortschritt und Historie | `klaviyo upload · wartet`, `klaviyo upload · läuft`, `klaviyo upload · blockiert`, `klaviyo upload · fertig` |
+| `translation-en` … `translation-sp` (Übersetzung) | Alte Sprach-Tags erzeugen keinen Auftrag; aktive oder pausierte Reservierungen bleiben sichtbar | `<sprache> translation · blockiert`, `<sprache> translation · fertig` |
 
 Die Tags entsprechen genau denen des Newsletter-Workers (`AI Newsletter Creation`,
 `src/pre-gen.js`). Übersetzungen erscheinen je Sprache als eigene Zeile mit dem
@@ -430,9 +430,11 @@ unter **Läuft** mit „Paket läuft“. Die Zuordnung nutzt dieselbe ClickUp-Au
 oder einen eindeutigen Briefing-Link zur DE-Aufgabe desselben Kunden. Status und
 Worker-Plätze der einzelnen Fassung bleiben erhalten; Blockaden, Pausen und
 PM-Rückfragen bleiben in ihrer bisherigen Ansicht.
-Ist eine EN-Mail unter derselben ClickUp-ID bereits im Review, blendet die Ansicht
-ihren unreservierten alten Übersetzungs-Tag-Eintrag aus. Die abgeschlossene Mail
-bleibt erhalten; aktive oder blockierte Übersetzungen werden nicht ausgeblendet.
+Unreservierte alte Übersetzungs-Tags erzeugen keine wartende Zeile, auch wenn die
+Sprachfassung eine eigene ClickUp-ID hat. Abgeschlossene und blockierte
+Übersetzungen bleiben als Historie erhalten.
+Offene PM-Fragen des aktuellen Versuchs erscheinen auch nach zentraler Sicherung
+als „Wartet · PM-Rückfrage“, ohne einen Platz auf dem ursprünglichen Mac zu belegen.
 Groß-/Kleinschreibung, Leerzeichen und Satzzeichen werden beim Abgleich
 normalisiert; ClickUp-Abfragen verwenden trotzdem die genaue vorhandene
 Schreibweise. Alle Tags werden in **einer** seitenweisen ClickUp-Abfrage gelesen
@@ -784,3 +786,27 @@ Beim Rollout nur geprüfte Relay-Dateien aktualisieren und vorhandene zusätzlic
 Live-Wartungshelfer erhalten; die laufende Relay-Revision, die echte Fleet-Antwort
 und frische Worker-Polls nachweisen. Simulationen erzeugen keine ClickUp-Aufgaben,
 FileStage-Uploads, Kundenschreibvorgänge oder Nachrichten.
+
+### Durable blocked-operation context (F09, 18 October 2026)
+
+The central bridge reads the exact unowned checkpoint's verified manifest for a
+blocked operation, retaining its original run, commission, digest and recorded
+time. It does not restore files, acquire a reservation, reopen a PM question or
+start production. SHA-256/identity failures are visible as unreadable context.
+Only bounded metadata is cached; checkpoint bytes and worker leases are untouched.
+The projection carries `blockerReason`, `reasonCode`, `responsibleRole`, `nextStep`
+and source proof. The existing `blockedReason` display includes the action and
+role, so current app versions can show it without a native app update.
+
+`pmOwner`/`pmOwnerId` come exclusively from the current ClickUp PM users field
+`c266c259-3eb9-47d4-b108-3232d6bbd7a7`, never assignees, QA fields or old snapshots.
+No PM or an ambiguous mapping is explicitly unassigned. The PM coordinates work;
+a technical blocker can still belong to Klaviyo technique or Design/QA. Source
+causes describe the saved attempt; they do not assert that an old technical or
+customer condition has been rechecked now. A changed commission cannot inherit
+an older checkpoint. The relay preserves context on disk across restarts.
+
+Human clarification/completion identities for typed saved blockers use the exact
+original outcome fingerprint. A PM-name/display update cannot undo a reviewed
+decision; a new source digest or attempt requires a new review. Legacy signatures
+for tasks without typed source proof remain unchanged.

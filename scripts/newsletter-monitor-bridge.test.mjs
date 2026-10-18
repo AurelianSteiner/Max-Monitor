@@ -111,6 +111,15 @@ test('a Klaviyo upload accepted by a Mac stays visible with its exact worker', (
   assert.equal(queue.some(item => item.workflow === 'newsletter'), false, 'an upload is not a Pre-Gen task');
 });
 
+test('legacy translation tags cannot queue work without a live or paused reservation', () => {
+  const tasks = ['pre-gen', 'revision intern', 'approval intern', 'go live'].map((status, i) =>
+    taskIn(status, `bresser-${i}`, ['bresser', i % 2 ? 'en translations' : 'fr translation']));
+  const released = parseClaim(jobClaim('ai_translation_claim', 'bresser-2-uebersetzung-fr', 'macbook-1', 'released'));
+  const rows = buildQueue(tasks, [released], DEFAULT_WORKFLOWS, { now });
+  assert.equal(rows.some(row => row.workflow === 'translation'), false);
+  assert.equal(rows.find(row => row.id === 'clickup:newsletter:bresser-0').status, 'queued', 'the actual Pre-Gen order stays visible');
+});
+
 test('translations appear per language with their own reservation', () => {
   const claims = [
     parseClaim(jobClaim('ai_translation_claim', 't-uebersetzung-en', 'macbook-1')),
@@ -143,7 +152,8 @@ test('language packages preserve exact source links and reject ambiguous or cros
     const input = { ...en, markdown_description: en.markdown_description + ' https://app.clickup.com/t/de2' };
     assert.equal(buildQueue([...sources, input], [], DEFAULT_WORKFLOWS, { now }).find(row => row.id.endsWith(':en1')).packageId, 'en1');
   }
-  const steps = buildQueue([taskIn('pre-gen', 'single', ['pre gen · läuft', 'en translation'])], [], DEFAULT_WORKFLOWS, { now });
+  const steps = buildQueue([taskIn('pre-gen', 'single', ['pre gen · läuft', 'en translation'])],
+    [parseClaim(jobClaim('ai_translation_claim', 'single-uebersetzung-en', 'macbook-1'))], DEFAULT_WORKFLOWS, { now });
   assert.ok(steps.every(row => row.packageId === 'single'));
   assert.equal(steps.find(row => row.workflow === 'translation').language, 'en');
 });
