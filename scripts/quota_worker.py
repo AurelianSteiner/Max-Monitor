@@ -20,6 +20,7 @@ import time
 LABEL = "de.rs.max-monitor.quota"
 MAX_LINE = 8 * 1024 * 1024
 MAX_EVENTS = 400
+STAGE = "startup"
 TOKEN_KEYS = {"input_tokens": "input_tokens", "output_tokens": "output_tokens",
               "cache_creation_input_tokens": "cache_create", "cache_read_input_tokens": "cache_read"}
 
@@ -182,11 +183,13 @@ def send(config, payload):
 
 
 def collect(config, cache, hours=72, sender=send, now=None):
+    global STAGE
     now = time.time() if now is None else now
     cache = Path(cache)
     cache.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     cursors = sqlite3.connect(str(cache), timeout=5)
     cursors.execute("CREATE TABLE IF NOT EXISTS cursors(file TEXT PRIMARY KEY,offset INTEGER,at REAL,modified REAL)")
+    STAGE = "inventory"
     inventory = run_inventory(config, hours, now)
     errors = 0
     sent = 0
@@ -194,6 +197,7 @@ def collect(config, cache, hours=72, sender=send, now=None):
     # means zero quota consumption: evidence completeness is a separate field.
     for start in range(0, len(inventory), 200):
         runs = [{k: v for k, v in r.items() if k != "stream"} for r in inventory[start:start + 200]]
+        STAGE = "announce"
         sender(config, {"schema": 1, "worker": config["worker"], "runs": runs, "events": [], "backfill_hours": hours})
     for run in inventory:
         filename = run["stream"]
@@ -208,12 +212,14 @@ def collect(config, cache, hours=72, sender=send, now=None):
         # Bounded batches also allow launchd to recover a failed upload without
         # ever skipping data. Each event is independently idempotent at the Hub.
         for _ in range(20):
+            STAGE = "stream"
             events, after, last_at, skipped = read_chunk(filename, offset, last_at)
             errors += skipped
             for event in events:
                 event["run_id"] = run["run_id"]
             announced = {k: v for k, v in run.items() if k != "stream"}
             announced.update(evidence_errors=skipped, pending_scan=int(after < stat.st_size))
+            STAGE = "export"
             sender(config, {"schema": 1, "worker": config["worker"], "runs": [announced],
                             "events": events, "backfill_hours": hours, "errors": errors})
             cursors.execute("INSERT OR REPLACE INTO cursors VALUES(?,?,?,?)", (filename, after, last_at, stat.st_mtime))
@@ -239,7 +245,14 @@ def install():
     os.chmod(source, 0o600)
     agent = home / "Library/LaunchAgents" / (LABEL + ".plist")
     agent.parent.mkdir(parents=True, exist_ok=True)
-    value = {"Label": LABEL, "ProgramArguments": [sys.executable, str(source), "--once"],
+    with (home / "Library/LaunchAgents/de.ruegamer-steiner.ai-newsletter.plist").open("rb") as stream:
+        production = plistlib.load(stream)
+    node = next(a for a in production["ProgramArguments"] if Path(a).name == "node")
+    # Use the already authorized worker runtime as the responsible process.
+    # A separate Python launchd entry cannot read Documents on protected Macs.
+    wrapper = "const r=require('node:child_process').spawnSync(process.argv[1],process.argv.slice(2),{stdio:'inherit'});process.exit(r.status??1)"
+    value = {"Label": LABEL, "ProgramArguments": [node, "-e", wrapper, sys.executable, str(source), "--once"],
+             "WorkingDirectory": str(runtime),
              "StartInterval": 60, "RunAtLoad": True, "ProcessType": "Background", "LowPriorityIO": True,
              "StandardOutPath": str(runtime / "collector.log"), "StandardErrorPath": str(runtime / "collector-error.log")}
     # Only replace our observer; never unload/restart the newsletter service.
@@ -252,6 +265,7 @@ def install():
 
 
 def main():
+    global STAGE
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--install", action="store_true")
@@ -262,6 +276,7 @@ def main():
     if args.install:
         result = install()
     else:
+        STAGE = "configuration"
         result = collect(configuration(), args.cache, args.hours)
     print(json.dumps(result, ensure_ascii=False))
 
@@ -269,6 +284,11 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError):
-        print(json.dumps({"ok": False, "error": "quota_export_failed", "at": datetime.now(timezone.utc).isoformat()}), file=sys.stderr)
+    except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as error:
+        diagnostic = {"ok": False, "error": "quota_export_failed", "stage": STAGE,
+                      "exception": type(error).__name__, "errno": getattr(error, "errno", None),
+                      "exit_code": getattr(error, "returncode", None), "at": datetime.now(timezone.utc).isoformat()}
+        stderr = str(getattr(error, "stderr", "") or "").lower()
+        diagnostic["permission_denied"] = "permission denied" in stderr or "operation not permitted" in stderr
+        print(json.dumps(diagnostic), file=sys.stderr)
         sys.exit(1)
