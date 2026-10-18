@@ -416,7 +416,7 @@
     queuePage = 0;
     saveFilters();
     render();
-    if(view==='usage') refreshConsumption();
+    if(view==='usage') { window.scrollTo({top:0,left:0,behavior:'auto'}); refreshConsumption(); }
   }
   async function consumptionRequest(route, method='GET', body) {
     if(!credentials) throw Error('Verbinde zuerst den Team-Server.');
