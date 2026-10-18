@@ -111,6 +111,16 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(row["observed_pp"], 3)
         self.assertEqual(row["counter_decreases"], 1)
 
+    def test_jobs_crossing_report_boundary_do_not_train_partial_costs(self):
+        self.ledger.fleet(fleet(NOW, 10), NOW)
+        p = payload()
+        p["runs"][0]["started"] = NOW - 86400
+        self.ledger.ingest(p, NOW + 600)
+        self.ledger.fleet(fleet(NOW + 600, 14), NOW + 600)
+        report = self.ledger.report(24, NOW + 700)
+        self.assertTrue(report["jobs"][0]["partial_window"])
+        self.assertFalse(report["averages"]["kind"])
+
     def test_malformed_ingestion_cannot_store_arbitrary_fields(self):
         p = payload()
         p["secret"] = "must-not-be-stored"

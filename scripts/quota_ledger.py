@@ -98,6 +98,7 @@ class Ledger:
 
     def fleet(self, data, now=None):
         now = time.time() if now is None else now
+        activity = {r.get("workerId"): r.get("activity") or {} for r in data.get("workerReports", [])}
         for machine in data.get("machines", []):
             worker = clean(machine.get("workerId"), 100)
             if not worker:
@@ -114,7 +115,7 @@ class Ledger:
               worker=excluded.worker,name=excluded.name,last_seen=excluded.last_seen,
               max_tasks=COALESCE(excluded.max_tasks,accounts.max_tasks)""",
                             (account, worker, clean(machine.get("name")), now, now,
-                             (machine.get("activity") or {}).get("maxTasks")))
+                             (machine.get("activity") or activity.get(worker) or {}).get("maxTasks")))
             current = self.db.execute("SELECT account FROM bindings WHERE worker=? AND until IS NULL", (worker,)).fetchone()
             if not current or current[0] != account:
                 self.db.execute("UPDATE bindings SET until=? WHERE worker=? AND until IS NULL", (now, worker))
@@ -123,7 +124,8 @@ class Ledger:
                 if limit.get("accountId") != bound.get("accountId") or limit.get("kind") not in WINDOWS:
                     continue
                 at = stamp(limit.get("usageUpdatedAt") or bound.get("usageUpdatedAt") or machine.get("usageUpdatedAt"))
-                if at is None or at > now + 60 or now - at > 900 or limit.get("usageError") or bound.get("usageError"):
+                if (at is None or at > now + 60 or now - at > 900 or limit.get("usageError")
+                        or bound.get("usageError") or machine.get("usageError")):
                     continue
                 window = WINDOWS[limit["kind"]]
                 reset = stamp(limit.get("resetsAt"))
@@ -323,7 +325,9 @@ class Ledger:
             j["duration_seconds"] = max(0, max(j["finished"]) - min(j["started"])) if j["finished"] and j["started"] and not j["in_progress"] else None
             # Averages train only on finished, sufficiently observed jobs. Missing
             # counters are unknown, never zero-cost completed tasks.
+            j["partial_window"] = not j["started"] or min(j["started"]) < cutoff
             if (j["completed"] and not j["in_progress"] and not j["pending_scan"] and not j["evidence_errors"]
+                    and not j["partial_window"]
                     and j["coverage"] >= .8 and j["estimated_weekly_pp"] is not None):
                 groups["kind"][j["kind"]].append(j)
                 groups["customer"][j["customer"]].append(j)
@@ -351,6 +355,7 @@ class Ledger:
             "quality": {"job_allocations_are_estimates": True, "unknown_account_messages": unknown_messages,
                         "minimum_training_coverage": .8, "minimum_forecast_jobs": 5,
                         "five_hour_is_not_a_daily_limit": True,
+                        "cross_account_percentages_not_capacity_equivalent": True,
                         "external_usage_can_overlap_jobs": True},
             "collectors": [dict(r) for r in self.db.execute("SELECT * FROM collectors ORDER BY worker")],
             "accounts": [dict(r) for r in self.db.execute("SELECT * FROM accounts ORDER BY account")],

@@ -172,7 +172,7 @@ def send(config, payload):
         raise ValueError("Invalid existing Hub host")
     args = ["/usr/bin/ssh", "-i", os.path.expanduser(hub["identity_file"]), "-o", "BatchMode=yes",
             "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
-            "-o", "UserKnownHostsFile=" + os.path.expanduser(hub["known_hosts_file"]),
+            "-o", 'UserKnownHostsFile="' + os.path.expanduser(hub["known_hosts_file"]).replace('"', '\\"') + '"',
             host, "python3 /opt/max-monitor-quota/quota_ledger.py ingest"]
     result = subprocess.run(args, input=json.dumps(payload), text=True, capture_output=True, timeout=45, check=True)
     answer = json.loads(result.stdout)
