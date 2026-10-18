@@ -5,7 +5,7 @@ import re
 import sqlite3
 
 
-def routing_inputs(hub=Path('/opt/rs-hub')):
+def hub_runtime(hub=Path('/opt/rs-hub')):
     root = hub
     try:
         for line in (hub / '.env').read_text().splitlines():
@@ -15,6 +15,14 @@ def routing_inputs(hub=Path('/opt/rs-hub')):
     except OSError:
         pass
     if not root.is_absolute() or '..' in root.parts:
+        raise ValueError('Invalid Hub runtime path')
+    return root
+
+
+def routing_inputs(hub=Path('/opt/rs-hub')):
+    try:
+        root = hub_runtime(hub)
+    except ValueError:
         return {'available': False}
     fleet, jobs = [], []
     try:

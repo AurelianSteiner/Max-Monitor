@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from quota_routing import hub_runtime
 
 SERVICE = "max-monitor-quota.service"
 UNIT = """[Unit]
@@ -36,6 +37,19 @@ WantedBy=multi-user.target
 """
 
 
+def unit_text():
+    # SQLite's read-only WAL readers may need to initialize coordination
+    # sidecars. Keep the database and an existing WAL mounted read-only;
+    # allow sidecar creation only in this one register directory.
+    register = hub_runtime() / 'state/worker-reservations'
+    if not all(c.isalnum() or c in '/._-' for c in str(register)):
+        raise ValueError('Unsafe reservation path')
+    return UNIT.replace('ReadWritePaths=/var/lib/max-monitor-quota',
+                        'ReadWritePaths=/var/lib/max-monitor-quota -' + str(register)
+                        + '\nReadOnlyPaths=-' + str(register / 'claims.sqlite')
+                        + ' -' + str(register / 'claims.sqlite-wal'))
+
+
 def plan(source):
     source = Path(source)
     return [(source / "quota_ledger.py", Path("/opt/max-monitor-quota/quota_ledger.py")),
@@ -61,7 +75,7 @@ def main():
     if args.generate_only:
         output = Path(args.generate_only)
         output.mkdir(parents=True, exist_ok=False, mode=0o700)
-        (output / SERVICE).write_text(UNIT)
+        (output / SERVICE).write_text(unit_text())
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     else:
         if os.geteuid() != 0:
@@ -87,7 +101,7 @@ def main():
         public = state / 'public'
         public.mkdir(exist_ok=True)
         os.chmod(public, 0o755)
-        unit.write_text(UNIT)
+        unit.write_text(unit_text())
         os.chmod(unit, 0o644)
         subprocess.run(["/usr/bin/systemd-analyze", "verify", str(unit)], check=True)
         subprocess.run(["/usr/bin/python3", "/opt/max-monitor-quota/quota_ledger.py", "collect"], check=True, capture_output=True)

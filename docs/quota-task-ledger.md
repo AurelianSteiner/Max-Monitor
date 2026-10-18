@@ -114,6 +114,11 @@ keine Aufgabentexte oder Zugangsdaten. Der begrenzte Snapshot wird mit der
 Verbrauchsübersicht etwa minütlich erneuert. Fehlt das Register, gibt es keine
 scheinbar leere Last und keine Empfehlung.
 
+SQLite-WAL-Leser dürfen im Registerverzeichnis die Koordinationsdateien
+initialisieren. Die Dienst-Sandbox bindet die Datenbank und eine vorhandene WAL
+weiterhin schreibgeschützt ein; die Verbindung nutzt ausschließlich `mode=ro`.
+Kein exklusiver Lock und kein `immutable`-Lesen einer laufenden Datenbank.
+
 `team-server/distribution.js` verwendet den unveränderten Worker-Scorer aus
 `quota-scores.js` (Provenienz: `team-server/vendor/README.md`). Frische Meldung,
 Annahme, Art-Plätze, physisches Maximum, geteilte Account-Reservierungen und
