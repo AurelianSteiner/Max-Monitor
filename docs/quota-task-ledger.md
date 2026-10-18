@@ -84,3 +84,22 @@ Observer über den vorhandenen Max-Monitor-Wartungsweg nach check/diagnose
 aktualisieren. Die Installation ersetzt nur ihren eigenen LaunchAgent,
 nicht den Newsletter-Dienst. Erfolg verlangt frische Meldungen jedes Macs,
 API-Readback, tatsächlich gespeicherte neue Messdaten und Browserprüfung.
+
+## Reset-aware scheduling evidence (18.10.2026)
+
+The compact summary now includes `scheduling.workers`: a hashed shared account ID,
+per-window measurement timestamps/reset/usage, and per-account/task-kind mean,
+standard deviation and sample count. The worker's existing authenticated Fleet
+read carries this optional evidence. The worker applies the 55/20/25 budget,
+5h headroom and physical load preference; no new admission authority is created.
+
+Existing CapacityGate CLI probes export only structured quota windows through
+the passive observer. A matching, unambiguous native account/reset anchor and
+the worker binding are required. Anchors retain identity beyond the 15-minute
+usage freshness limit; they never make old usage fresh. Ambiguous accounts are
+left unknown. Samples and temporary sources remain bounded; tracking is not reset.
+
+No fixed Max-plan token price, cross-account capacity equivalence or guaranteed
+weekly task count is inferred. Fit predictions require at least three completed
+measurements on the same account/type and include observed variance and rounding
+margin. Existing production caps, permissions and transaction locks remain final.

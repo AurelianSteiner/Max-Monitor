@@ -201,6 +201,55 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(tuple(row), ("shop.example", "completed", NOW + 600))
 
 
+    def test_scheduler_preserves_measurement_age_and_shares_one_account_budget(self):
+        self.ledger.fleet(fleet(NOW, 23, worker='mac-a'), NOW)
+        shared = fleet(NOW, 23)
+        shared['machines'][0]['workerId'] = 'mac-b'
+        self.ledger.fleet(shared, NOW)
+        account = self.ledger.db.execute('SELECT account FROM accounts').fetchone()[0]
+        groups = [{'key': account+'|newsletter', 'weekly_pp': {'n': 3, 'mean': 4, 'sd': 1},
+                   'five_hour_pp': {'n': 0, 'mean': None, 'sd': 0}}]
+        s = self.ledger.scheduling(groups, NOW + 1000)['workers']
+        self.assertEqual(s['mac-a']['account'], s['mac-b']['account'])
+        self.assertEqual(s['mac-a']['windows']['seven_day']['at'], NOW)
+        self.assertEqual(s['mac-b']['costs']['newsletter']['weekly_pp']['mean'], 4)
+        self.assertIsNone(s['mac-a']['costs']['newsletter']['five_hour_pp']['mean'])
+
+    def test_scheduler_uses_only_exact_unambiguous_device_links(self):
+        data = fleet(NOW, 20)
+        data['machines'][0].update(workerId=None, deviceId='device-a')
+        data['workerLinks'] = [{'deviceId': 'device-a', 'workerId': 'mac-linked'}]
+        self.ledger.fleet(data, NOW)
+        self.assertIn('mac-linked', self.ledger.scheduling([], NOW)['workers'])
+        data['workerLinks'].append({'deviceId': 'device-a', 'workerId': 'mac-other'})
+        fresh = ledger_module.Ledger(':memory:');fresh.fleet(data, NOW)
+        self.assertEqual(fresh.scheduling([], NOW)['workers'], {})
+
+    def test_existing_cli_probe_refreshes_only_its_proven_account_and_keeps_real_sample_time(self):
+        self.ledger.fleet(fleet(NOW, 20), NOW)
+        p = {'schema': 1, 'worker': 'mac-1', 'probe': {'at': NOW+500,
+             'windows': {'seven_day': {'percent': 24, 'reset': RESET},
+                         'five_hour': {'percent': 12, 'reset': NOW+3600}}}}
+        self.ledger.ingest(p, NOW+501)
+        q = self.ledger.scheduling([], NOW+700)['workers']['mac-1']
+        self.assertEqual(q['windows']['seven_day']['used'], 24)
+        self.assertEqual(q['windows']['five_hour']['at'], NOW+500)
+        p['worker'] = 'another-mac'
+        self.ledger.ingest(p, NOW+502)
+        self.assertEqual(self.ledger.db.execute("SELECT COUNT(*) FROM samples WHERE source='probe'").fetchone()[0], 2)
+
+        p['worker'] = 'mac-1';p['probe']['windows']['seven_day']['reset'] = RESET+1234
+        self.ledger.ingest(p, NOW+503)
+        self.assertEqual(self.ledger.db.execute("SELECT COUNT(*) FROM samples WHERE source='probe'").fetchone()[0], 2)
+
+    def test_stale_native_identity_can_bind_new_cli_evidence_without_refreshing_old_usage(self):
+        self.ledger.fleet(fleet(NOW-1800, 20), NOW)
+        self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM samples').fetchone()[0], 0)
+        self.ledger.ingest({'schema': 1, 'worker': 'mac-1', 'probe': {'at': NOW,
+                           'windows': {'seven_day': {'percent': 30, 'reset': RESET}}}}, NOW)
+        q = self.ledger.scheduling([], NOW)['workers']['mac-1']
+        self.assertEqual(q['windows']['seven_day'], {'used': 30, 'reset': RESET, 'at': NOW})
+
 class WorkerTests(unittest.TestCase):
     def test_inventory_includes_phase_and_subagent_streams_in_the_same_logical_task(self):
         import sqlite3

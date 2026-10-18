@@ -68,6 +68,7 @@ class Ledger:
           first_seen REAL,last_seen REAL,max_tasks INTEGER);
         CREATE TABLE IF NOT EXISTS bindings(worker TEXT,account TEXT,since REAL,until REAL,
           PRIMARY KEY(worker,since));
+        CREATE TABLE IF NOT EXISTS account_resets(account TEXT,reset REAL,seen REAL,PRIMARY KEY(account,reset));
         CREATE TABLE IF NOT EXISTS samples(id TEXT PRIMARY KEY,account TEXT,worker TEXT,
           window TEXT,reset REAL,at REAL,percent REAL,quality TEXT,source TEXT);
         CREATE INDEX IF NOT EXISTS samples_account_time ON samples(account,window,at);
@@ -103,7 +104,7 @@ class Ledger:
         if since is None or since > time.time() + 60:
             raise ValueError("Invalid tracking start")
         with self.db:
-            for table in ("samples", "events", "runs", "compact_jobs", "collectors", "worker_settings", "bindings", "accounts", "metadata"):
+            for table in ("samples", "events", "runs", "compact_jobs", "collectors", "worker_settings", "bindings", "account_resets", "accounts", "metadata"):
                 self.db.execute("DELETE FROM " + table)
             self.meta("schema", SCHEMA)
             self.meta("tracking_since", since)
@@ -124,8 +125,16 @@ class Ledger:
     def fleet(self, data, now=None):
         now = time.time() if now is None else now
         activity = {r.get("workerId"): r.get("activity") or {} for r in data.get("workerReports", [])}
+        # Same exact device link as the Fleet read model; never match Mac names.
+        # This identifies quota evidence only, never grants worker admission.
+        explicit = {m.get('workerId') for m in data.get('machines', []) if m.get('workerId')}
+        links = defaultdict(set)
+        for link in data.get('workerLinks', []):
+            if link.get('workerId') not in explicit:
+                links[link.get('deviceId')].add(link.get('workerId'))
         for machine in data.get("machines", []):
-            worker = clean(machine.get("workerId"), 100)
+            linked = links.get(machine.get('deviceId'), set())
+            worker = clean(machine.get("workerId") or (next(iter(linked)) if len(linked) == 1 else None), 100)
             if not worker:
                 continue
             accounts = machine.get("accounts") or []
@@ -149,11 +158,15 @@ class Ledger:
                 if limit.get("accountId") != bound.get("accountId") or limit.get("kind") not in WINDOWS:
                     continue
                 at = stamp(limit.get("usageUpdatedAt") or bound.get("usageUpdatedAt") or machine.get("usageUpdatedAt"))
+                reset = stamp(limit.get("resetsAt"))
+                # Identity evidence may outlive a usage value. A stale native
+                # report can bind a NEW CLI observation, never claim fresh usage.
+                if limit['kind'] == 'weekly' and reset is not None and at is not None and now - 14 * 86400 <= at <= now + 60 and abs(reset - now) <= 8 * 86400:
+                    self.db.execute('INSERT INTO account_resets VALUES(?,?,?) ON CONFLICT(account,reset) DO UPDATE SET seen=MAX(seen,excluded.seen)', (account, reset, at))
                 if (at is None or at > now + 60 or now - at > 900 or limit.get("usageError")
                         or bound.get("usageError") or machine.get("usageError")):
                     continue
                 window = WINDOWS[limit["kind"]]
-                reset = stamp(limit.get("resetsAt"))
                 key = identifier([account, window, reset, at, limit.get("percent"), "fleet"])
                 self.sample(key, account, worker, window, reset, at, limit.get("percent"), "monitor_bound", "fleet")
         context = {}
@@ -187,6 +200,19 @@ class Ledger:
         context = json.loads(saved_context[0]) if saved_context else {}
         since = self.setting("tracking_since", 0)
         with self.db:
+            probe = payload.get('probe')
+            if isinstance(probe, dict) and isinstance(probe.get('windows'), dict):
+                at = stamp(probe.get('at'))
+                weekly = probe['windows'].get('seven_day') or {}
+                account = self.resolve(stamp(weekly.get('reset')))
+                bound = self.db.execute('SELECT account FROM bindings WHERE worker=? AND until IS NULL', (worker,)).fetchone()
+                if account and bound and bound[0] == account and at is not None and max(since, now - 900) <= at <= now + 60:
+                    for window in ('five_hour', 'seven_day'):
+                        value = probe['windows'].get(window) or {}
+                        reset = stamp(value.get('reset'))
+                        if reset is not None:
+                            self.sample(identifier(['probe', worker, window, at, value]), account, worker, window,
+                                        reset, at, value.get('percent'), 'reset_bound_probe', 'probe')
             settings = payload.get("settings")
             if isinstance(settings, dict):
                 safe = {k: clean(v, 100) for k, v in settings.items()
@@ -267,7 +293,7 @@ class Ledger:
         if weekly_reset is None:
             return None
         matches = set()
-        for row in self.db.execute("SELECT DISTINCT account,reset FROM samples WHERE source='fleet' AND window='seven_day' AND reset IS NOT NULL"):
+        for row in self.db.execute("SELECT DISTINCT account,reset FROM samples WHERE source IN ('fleet','probe') AND window='seven_day' AND reset IS NOT NULL UNION SELECT account,reset FROM account_resets"):
             if abs(weekly_reset - row["reset"]) < 1 or abs(weekly_reset - (row["reset"] - WEEK)) < 1:
                 matches.add(row["account"])
         return next(iter(matches)) if len(matches) == 1 else None
@@ -499,6 +525,7 @@ class Ledger:
                 for field in ("five_hour_pp", "weekly_pp"):
                     measured = [j[field] for j in closed if j[field] is not None]
                     values[field] = {"n": len(measured), "mean": statistics.mean(measured) if measured else None,
+                                     "sd": statistics.pstdev(measured) if len(measured) > 1 else 0,
                                      "total": sum(measured)}
                 result.append({"key": key, "tracked": len(selected), "closed": len(closed),
                                "carryover": sum(j["carryover"] for j in selected),
@@ -528,16 +555,40 @@ class Ledger:
                 self.db.execute("DELETE FROM events WHERE job=?", (job,))
                 self.db.execute("DELETE FROM runs WHERE job=?", (job,))
             self.db.execute("DELETE FROM samples WHERE at<?", (cutoff - 1800,))
+            self.db.execute('DELETE FROM account_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))
+        account_groups = group(by_account)
         return {"schema": 2, "generated_at": iso(now), "tracking_since": iso(since),
                 "method": "observed_rounded_plateaus_equal_turn_share", "estimated": True,
                 "raw_resolution_pp": 1, "forecast_enabled": False,
-                "by_kind": group(by_kind), "by_account_kind": group(by_account), "by_customer_kind": group(by_customer),
+                "by_kind": group(by_kind), "by_account_kind": account_groups, "by_customer_kind": group(by_customer),
+                "scheduling": self.scheduling(account_groups, now),
                 "tracked": sum(not j['carryover'] for j in jobs.values()), "carryover": sum(j['carryover'] for j in jobs.values()),
                 "closed": sum(j["closed"] and not j["carryover"] for j in jobs.values()),
                 "recent_jobs": sorted(jobs.values(), key=lambda j: j["started"] or "", reverse=True)[:30],
                 "account_deltas": report["account_deltas"], "settings": settings, "accounts": report['accounts'],
                 "collectors": report["collectors"], "raw_retention_days": 2,
                 "compact_bytes": self.db.execute("SELECT COALESCE(SUM(LENGTH(payload)),0) FROM compact_jobs").fetchone()[0]}
+
+    def scheduling(self, groups, now):
+        """Small read-only scheduling evidence, one shared budget per account.
+
+        Keep timestamps on every window: a new summary never refreshes old quota.
+        Resets must be confirmed by a newer sample, never extrapolated to zero.
+        """
+        workers = {}
+        for binding in self.db.execute('SELECT worker,account FROM bindings WHERE until IS NULL'):
+            worker, account = binding['worker'], binding['account']
+            windows = {}
+            for window in ('five_hour', 'seven_day'):
+                row = self.db.execute("SELECT percent,reset,at FROM samples WHERE account=? AND window=? ORDER BY at DESC LIMIT 1",
+                                      (account, window)).fetchone()
+                if row:
+                    windows[window] = {'used': row['percent'], 'reset': row['reset'], 'at': row['at']}
+            costs = {g['key'][len(account)+1:]: {f: g[f] for f in ('five_hour_pp', 'weekly_pp')}
+                     for g in groups if g['key'].startswith(account + '|')}
+            workers[worker] = {'schema': 1, 'generated_at': iso(now), 'account': identifier(account)[:24],
+                               'windows': windows, 'costs': costs}
+        return {'schema': 1, 'generated_at': iso(now), 'workers': workers}
 
 
 def write_json(path, value):

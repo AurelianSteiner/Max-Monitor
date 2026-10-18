@@ -61,7 +61,7 @@ def configuration():
     # the whole configuration or any provider/Slack/ClickUp credentials.
     program = """const {loadConfig}=require(process.argv[1]+'/src/config.js');
 const c=loadConfig(process.argv[2],{root:process.argv[1]});
-let policySupported=false,runningRevision='';
+let policySupported=false,distributionSupported=false,runningRevision='';
 try{
  const start=require(process.argv[1]+'/src/update-readiness').lastServiceStart(c.paths.log_file);
  const cp=require('node:child_process');
@@ -71,16 +71,23 @@ try{
   runningRevision=start.head;
   cp.execFileSync('git',['-C',process.argv[1],'cat-file','-e',start.head+':src/effort-policy.js'],{stdio:'pipe',timeout:5000});
   policySupported=true;
+  try{cp.execFileSync('git',['-C',process.argv[1],'cat-file','-e',start.head+':src/quota-distribution.js'],{stdio:'pipe',timeout:5000});distributionSupported=true;}catch{}
  }
 }catch{}
+let quotaProbe=null;
+try{
+ const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(c.paths.state_db,{readOnly:true});
+ const row=db.prepare("SELECT value FROM meta WHERE key='quota_windows'").get();db.close();
+ if(row)quotaProbe=JSON.parse(row.value);
+}catch{}
 console.log(JSON.stringify({worker:c.worker_id,paths:c.paths,hub:{ssh_host:c.hub.ssh_host,
-identity_file:c.hub.identity_file,known_hosts_file:c.hub.known_hosts_file},settings:{
+identity_file:c.hub.identity_file,known_hosts_file:c.hub.known_hosts_file},probe:quotaProbe,settings:{
 newsletter:c.claude.effort,newsletter_review:c.claude.effort,
 filing:require(process.argv[1]+'/src/kundenablage-step.js').kundenablageConfig(c).effort,
 correction:require(process.argv[1]+'/src/korrektur-config.js').korrekturConfig(c).effort,
 translation:c.translation.effort,upload:c.klaviyo.effort,slicing:c.slicen.effort,
 sales:c.sales_newsletter?.effort||c.claude.effort,model:c.claude.model,
-policy_supported:policySupported,running_revision:runningRevision
+policy_supported:policySupported,distribution_supported:distributionSupported,running_revision:runningRevision
 }}));"""
     result = subprocess.run([node, "-e", program, str(root), cf], capture_output=True, text=True, timeout=15, check=True)
     config = json.loads(result.stdout)
@@ -281,7 +288,7 @@ def collect(config, cache, hours=72, sender=send, now=None):
     except (OSError, ValueError, TypeError):
         settings["policy_revision"] = 0
     answer = sender(config, {"schema": 1, "worker": config["worker"], "runs": [], "events": [],
-                             "settings": settings, "backfill_hours": hours}) or {}
+                             "settings": settings, "probe": config.get('probe'), "backfill_hours": hours}) or {}
     since = answer.get("tracking_since") or 0
     config['tracking_since'] = since
     prior = cursors.execute("SELECT value FROM tracker_meta WHERE key='tracking_since'").fetchone()
