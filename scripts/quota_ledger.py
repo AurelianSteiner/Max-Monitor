@@ -5,6 +5,7 @@ Account deltas are observations; their allocation to jobs is always an estimate.
 No Claude calls, admission decisions, credentials or production task writes.
 """
 import argparse
+from bisect import bisect_right
 from collections import defaultdict
 from datetime import datetime, timezone
 import hashlib
@@ -294,6 +295,10 @@ class Ledger:
         totals = defaultdict(lambda: {"observed_pp": 0.0, "estimated_assigned_pp": 0.0,
             "unattributed_pp": 0.0, "intervals": 0, "gaps": 0, "counter_decreases": 0})
         pairs = defaultdict(list)
+        message_times = {}
+        for account, entries in messages.items():
+            entries.sort(key=lambda entry: entry[0])
+            message_times[account] = [entry[0] for entry in entries]
         for row in self.db.execute("SELECT * FROM samples WHERE at BETWEEN ? AND ? AND reset IS NOT NULL ORDER BY at,source", (cutoff - 900, now)):
             pairs[(row["account"], row["window"], row["reset"])].append(row)
         covered = set()
@@ -321,10 +326,12 @@ class Ledger:
                 totals[key]["intervals"] += 1
                 weights = defaultdict(float)
                 matched = []
-                for at, job, weight, event_id in messages[account]:
-                    if before["at"] < at <= row["at"]:
-                        weights[job] += weight
-                        matched.append((job, event_id))
+                times = message_times.get(account, [])
+                start = bisect_right(times, before["at"])
+                end = bisect_right(times, row["at"])
+                for at, job, weight, event_id in messages[account][start:end]:
+                    weights[job] += weight
+                    matched.append((job, event_id))
                 if weights:
                     denominator = sum(weights.values())
                     for job_id, weight in weights.items():
