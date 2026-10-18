@@ -353,6 +353,8 @@ class Ledger:
                     "measurement": "estimated_allocation", "forecast_ready": len(items) >= 5}
         return {"schema": SCHEMA, "generated_at": iso(now), "hours": hours,
             "quality": {"job_allocations_are_estimates": True, "unknown_account_messages": unknown_messages,
+                        "pending_scan_jobs": sum(bool(j["pending_scan"]) for j in jobs.values()),
+                        "jobs_with_evidence_errors": sum(bool(j["evidence_errors"]) for j in jobs.values()),
                         "minimum_training_coverage": .8, "minimum_forecast_jobs": 5,
                         "five_hour_is_not_a_daily_limit": True,
                         "cross_account_percentages_not_capacity_equivalent": True,
@@ -367,6 +369,9 @@ class Ledger:
         report = self.report(max(72, hours))
         output = []
         for account in selected:
+            if report["quality"]["pending_scan_jobs"]:
+                output.append({"account": account, "tasks_per_week": None, "reason": "historical_backfill_in_progress"})
+                continue
             values = []
             for kind, share in mix.items():
                 row = report["averages"]["account_kind"].get(account + "|" + kind)
@@ -415,12 +420,14 @@ def main():
             raise ValueError("Quota batch too large")
         result = ledger.ingest(json.loads(raw))
     elif args.command in ("collect", "serve"):
+        last_report = 0
         while True:
             try:
                 ledger.fleet(json.loads(Path(args.fleet).read_text()))
-                if args.output:
+                if args.output and time.time() - last_report >= 300:
                     for hours in (24, 72):
                         write_json(Path(args.output) / ("summary-%sh.json" % hours), ledger.report(hours))
+                    last_report = time.time()
                 result = {"ok": True, "sampled_at": iso()}
                 if args.command == "collect":
                     break

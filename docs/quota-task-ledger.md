@@ -29,6 +29,8 @@ getrennt geführt; ein 24-Stunden-Bericht ist kein tägliches Anbieterlimit.
   ausschließlich private Dateirechte. Die Rohmetadaten bleiben für spätere
   Neuauswertung erhalten. JSON-Berichte für 24 und 72 Stunden stehen unter
   `/var/lib/max-monitor-quota/reports/summary-{24,72}h.json`.
+  Die Berichte werden alle fünf Minuten erneuert; der Kontingentverlauf wird
+  unabhängig davon alle 15 Sekunden eingelesen.
 
 ## Messung und Schätzung
 
@@ -69,6 +71,9 @@ nicht über gleiche Prozentwerte gleichgesetzt. Die Schätzung nennt eine obere
 Grenze aus Wochen- und Fünfstundenbudget; Slotgrenzen, Ausfälle, Reserven und
 Auftragsfristen müssen im anschließenden Annahmeplan zusätzlich berücksichtigt
 werden. Bei fehlenden Daten liefert sie `null`, keine erfundene Wochenkapazität.
+Solange historische Stream-Dateien noch nachgeliefert werden, bleibt die
+Kapazitätsschätzung ebenfalls gesperrt; unvollständige Parallelverläufe dürfen
+keinen scheinbar vollständigen Verbrauch erzeugen.
 
 ## Einrichtung und Prüfung
 

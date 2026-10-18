@@ -197,6 +197,13 @@ def collect(config, cache, hours=72, sender=send, now=None):
     # means zero quota consumption: evidence completeness is a separate field.
     for start in range(0, len(inventory), 200):
         runs = [{k: v for k, v in r.items() if k != "stream"} for r in inventory[start:start + 200]]
+        for run, original in zip(runs, inventory[start:start + 200]):
+            saved = cursors.execute("SELECT offset,modified FROM cursors WHERE file=?", (original["stream"],)).fetchone()
+            try:
+                stat = Path(original["stream"]).stat()
+                run["pending_scan"] = int(not saved or saved[0] != stat.st_size or saved[1] != stat.st_mtime)
+            except OSError:
+                run["pending_scan"] = 0  # Missing evidence stays unknown, never a zero-cost task.
         STAGE = "announce"
         sender(config, {"schema": 1, "worker": config["worker"], "runs": runs, "events": [], "backfill_hours": hours})
     for run in inventory:
