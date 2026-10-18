@@ -131,6 +131,17 @@ class LedgerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.ledger.ingest(p, NOW + 600)
 
+    def test_sales_metadata_uses_exact_queue_identity_without_assuming_completion(self):
+        data = fleet(NOW, 10)
+        data["queue"] = {"tasks": [{"id": "sales:123.456", "workflow": "sales", "url": "https://shop.example/a",
+            "title": "Sales · shop.example", "status": "completed", "completedAt": NOW + 600}]}
+        self.ledger.fleet(data, NOW)
+        p = payload(False)
+        p["runs"][0].update(task_id="sales:123.456", customer="", kind="sales", state="unverified", finished=None)
+        self.ledger.ingest(p, NOW + 600)
+        row = self.ledger.db.execute("SELECT customer,state,finished FROM runs").fetchone()
+        self.assertEqual(tuple(row), ("shop.example", "completed", NOW + 600))
+
 
 class WorkerTests(unittest.TestCase):
     def test_stream_omits_content_deduplicates_usage_and_marks_quota_time(self):

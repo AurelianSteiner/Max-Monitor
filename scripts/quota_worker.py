@@ -16,6 +16,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from urllib.parse import urlsplit
 
 LABEL = "de.rs.max-monitor.quota"
 MAX_LINE = 8 * 1024 * 1024
@@ -84,6 +85,16 @@ def run_inventory(config, hours, now):
                        "stream": str(Path(row["run_dir"]) / "stream.jsonl")})
     db.close()
     known = {r["stream"] for r in result}
+    sales_active = {}
+    for receipt in filename.parent.glob("sales-active*.json"):
+        try:
+            if receipt.stat().st_size > 65536:
+                continue
+            raw = json.loads(receipt.read_text())
+            if raw.get("runDir"):
+                sales_active[str(Path(raw["runDir"]))] = raw
+        except (OSError, ValueError):
+            continue
     runs_dir = Path(config["paths"]["runs_dir"])
     for stream in runs_dir.glob("*/stream.jsonl"):
         if str(stream) in known or stream.stat().st_mtime < now - hours * 3600:
@@ -92,9 +103,22 @@ def run_inventory(config, hours, now):
         # customer/state is explicit rather than guessed from a similar name.
         directory = stream.parent
         sales = re.match(r"sales-([0-9]+\.[0-9]+)-", directory.name)
+        active = sales_active.get(str(directory), {})
+        customer = ""
+        try:
+            url = active.get("url")
+            saved = directory / "ergebnis-sales.json"
+            if not url and saved.is_file() and saved.stat().st_size <= 1024 * 1024:
+                url = json.loads(saved.read_text()).get("shop_url")
+            customer = text(urlsplit(url or "").hostname)
+        except (OSError, ValueError):
+            pass
+        started = active.get("startedAt")
+        started = datetime.fromtimestamp(started / 1000, timezone.utc).isoformat() if isinstance(started, (int, float)) else None
         result.append({"run_id": directory.name, "task_id": "sales:" + sales[1] if sales else directory.name,
-                       "title": directory.name, "customer": "", "kind": "sales" if sales else "other",
-                       "started": None, "finished": None, "state": "unverified",
+                       "title": "Sales · " + customer if sales and customer else directory.name,
+                       "customer": customer, "kind": "sales" if sales else "other",
+                       "started": started, "finished": None, "state": "running" if active else "unverified",
                        "stream": str(stream)})
     return result
 

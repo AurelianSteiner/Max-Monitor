@@ -17,6 +17,7 @@ import sqlite3
 import statistics
 import sys
 import time
+from urllib.parse import urlsplit
 
 SCHEMA = 1
 WEEK = 7 * 86400
@@ -131,6 +132,22 @@ class Ledger:
                 reset = stamp(limit.get("resetsAt"))
                 key = identifier([account, window, reset, at, limit.get("percent"), "fleet"])
                 self.sample(key, account, worker, window, reset, at, limit.get("percent"), "monitor_bound", "fleet")
+        context = {}
+        for task in (data.get("queue") or {}).get("tasks", []):
+            customer = clean(task.get("company"))
+            if task.get("workflow") == "sales" and not customer:
+                try:
+                    customer = clean(urlsplit(task.get("url") or "").hostname)
+                except ValueError:
+                    pass
+            facts = {"customer": customer, "title": clean(task.get("title")),
+                     "finished": task.get("completedAt") if task.get("status") == "completed" else None,
+                     "state": "completed" if task.get("status") == "completed" else None}
+            if task.get("attemptId"):
+                context["run:" + clean(task["attemptId"], 240)] = facts
+            if task.get("workflow") == "sales" and task.get("id"):
+                context["task:" + clean(task["id"])] = facts
+        self.meta("task_context", context)
         self.meta("last_fleet_sample", iso(now))
         self.db.commit()
 
@@ -142,21 +159,28 @@ class Ledger:
         runs, events = payload.get("runs", []), payload.get("events", [])
         if not isinstance(runs, list) or not isinstance(events, list) or len(runs) > 1000 or len(events) > 1000:
             raise ValueError("Quota batch exceeds limit")
+        saved_context = self.db.execute("SELECT value FROM metadata WHERE key='task_context'").fetchone()
+        context = json.loads(saved_context[0]) if saved_context else {}
         with self.db:
             for run in runs:
                 run_id = clean(run.get("run_id"), 240)
                 task_id = clean(run.get("task_id"), 300)
                 kind = run.get("kind") if run.get("kind") in KINDS else "other"
+                known = context.get("run:" + run_id) or (context.get("task:" + task_id) if kind == "sales" else None) or {}
                 if not run_id or not task_id:
                     continue
                 job = kind + ":" + task_id
                 self.db.execute("""INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(worker,run_id)
                   DO UPDATE SET title=excluded.title,customer=COALESCE(NULLIF(excluded.customer,''),runs.customer),
-                  finished=excluded.finished,state=excluded.state,last_seen=excluded.last_seen,
+                  started=COALESCE(runs.started,excluded.started),
+                  finished=COALESCE(excluded.finished,runs.finished),
+                  state=CASE WHEN excluded.state='unverified' THEN runs.state ELSE excluded.state END,last_seen=excluded.last_seen,
                   evidence_errors=MAX(runs.evidence_errors,excluded.evidence_errors),
                   pending_scan=COALESCE(excluded.pending_scan,runs.pending_scan)""",
-                                (worker, run_id, job, task_id, clean(run.get("title")), clean(run.get("customer")), kind,
-                                 stamp(run.get("started")), stamp(run.get("finished")), clean(run.get("state"), 80), now,
+                                (worker, run_id, job, task_id, clean(known.get("title") or run.get("title")),
+                                 clean(run.get("customer") or known.get("customer")), kind,
+                                 stamp(run.get("started")), stamp(known.get("finished") or run.get("finished")),
+                                 clean(known.get("state") or run.get("state"), 80), now,
                                  max(0, int(run.get("evidence_errors", 0))), run.get("pending_scan")))
             for event in events:
                 event_id = clean(event.get("id"), 240)
