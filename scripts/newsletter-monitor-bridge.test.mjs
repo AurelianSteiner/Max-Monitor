@@ -314,6 +314,18 @@ test('queue carries the ClickUp customer and prefers the generated Figma link', 
   assert.equal(buildQueue([taskIn('pre-gen', 'old')], [], DEFAULT_WORKFLOWS, { now })[0].figmaUrl, undefined);
 });
 
+test('upload opens its current Figma source while the same task Pre-Gen keeps its generated result', () => {
+  const source = 'https://www.figma.com/design/current/Mail?node-id=93-3088';
+  const generated = 'https://www.figma.com/design/older/PreGen?node-id=1665-2';
+  const raw = { ...taskIn('klaviyo upload', 'moved-mail', ['pre gen · fertig', 'klaviyo upload']), custom_fields: [
+    { id: '3530f8a4-44e1-4ea5-894d-4d87fb5c418d', name: 'Figma Link', type: 'url', value: source },
+    { id: 'ef2ba681-7e9d-40a3-b79a-dda5cd402015', name: 'Figma Pre-Gen', type: 'url', value: generated },
+  ] };
+  const rows = buildQueue([raw], [], DEFAULT_WORKFLOWS, { now });
+  assert.equal(rows.find(row => row.workflow === 'upload').figmaUrl, source);
+  assert.equal(rows.find(row => row.workflow === 'newsletter').figmaUrl, generated);
+});
+
 test('Figma fallback uses the configured creation board and optional bad links cannot break the queue', () => {
   const board = 'https://www.figma.com/design/creation';
   const raw = { ...taskIn('klaviyo upload', 'both', ['pre gen · fertig', 'klaviyo upload']), custom_fields: [

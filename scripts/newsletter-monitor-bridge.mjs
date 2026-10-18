@@ -686,11 +686,14 @@ function figmaLink(value) {
   return undefined;
 }
 
-function taskFigmaLink(task) {
+function taskFigmaLink(task, preferGenerated) {
   const fields = Array.isArray(task.custom_fields) ? task.custom_fields.filter(field => field && typeof field === 'object') : [];
+  const generated = fields.find(field => field.id === 'ef2ba681-7e9d-40a3-b79a-dda5cd402015');
+  const source = fields.find(field => field.id === '3530f8a4-44e1-4ea5-894d-4d87fb5c418d');
   const candidates = [
-    fields.find(field => field.id === 'ef2ba681-7e9d-40a3-b79a-dda5cd402015'),
-    fields.find(field => field.id === '3530f8a4-44e1-4ea5-894d-4d87fb5c418d'),
+    // Pre-Gen opens its generated result. Uploads open the current task source,
+    // which can differ after the design team has moved or corrected the mail.
+    ...(preferGenerated ? [generated, source] : [source, generated]),
     ...fields.filter(field => field.type === 'url' && /^figma(?:[ _-]+(?:link|board))?$/i.test(field.name || '')),
   ];
   for (const field of candidates) {
@@ -863,7 +866,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         completionSource: evidence.completionSource || (status === 'completed' ? 'clickup' : undefined),
         sourceStatus: displayText(typeof task.status === 'string' ? task.status : task.status?.status, 120),
         company: task.folder?.hidden ? undefined : displayText(task.folder?.name, 200),
-        figmaUrl: taskFigmaLink(task) || ((workflow.claimWorkflow ?? workflow.id) === 'newsletter' ? figmaLink(figmaBoardUrl) : undefined),
+        figmaUrl: taskFigmaLink(task, (workflow.claimWorkflow ?? workflow.id) === 'newsletter') || ((workflow.claimWorkflow ?? workflow.id) === 'newsletter' ? figmaLink(figmaBoardUrl) : undefined),
         workerId: claim?.paused && claim.portable ? undefined : claim?.workerId, attemptId: claim?.runId, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
         updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30),
         // Internal only: addRunDetails reads progress and renders of this attempt, then removes it.
