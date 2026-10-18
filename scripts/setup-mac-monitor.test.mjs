@@ -78,6 +78,7 @@ async function fixture(t, { previous = false, configured = false } = {}) {
     if (command === '/usr/bin/ditto') { await fs.cp(args[0], args[1], { recursive: true }); return ''; }
     if (command === '/usr/bin/codesign') {
       if (state.signatureFailure) throw new Error('App-Signatur prüfen fehlgeschlagen.');
+      if (args.includes('-r-')) return '# designated => identifier "xyz.fi5h.Usage4Claude" and cdhash H"aabb"\n';
       return '';
     }
     if (command === '/usr/bin/open') {
@@ -655,6 +656,64 @@ test('explicit code-only maintenance retains rollback and restores the old proce
   assert.equal(f.state.runningApps[0].bundlePath,f.destination);
   assert.deepEqual(await fs.readdir(path.dirname(f.destination)),['Max Monitor.app']);
   assert.equal(JSON.parse(await fs.readFile(f.receiptPath,'utf8')).bindingVerification,undefined);
+});
+
+test('an update retains the installed certificate requirement before stopping its app', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  f.runningApp();
+  const runner = f.dependencies.runner, requirement = 'identifier "xyz.fi5h.Usage4Claude" and certificate leaf = H"'+'a'.repeat(40)+'"';
+  let verified = false;
+  f.dependencies.runner = async (command,args,...rest) => {
+    if (command === '/usr/bin/codesign' && args.includes('-r-')) return 'designated => '+requirement+'\n';
+    if (command === '/usr/bin/codesign' && args.includes('-R')) {
+      assert.equal(args[args.indexOf('-R')+1],'='+requirement);
+      assert.equal(args.at(-1),f.source);
+      assert.equal(await f.marker(),'previous app');
+      assert.equal(f.state.runningApps.length,1);
+      verified = true;
+      return '';
+    }
+    return runner(command,args,...rest);
+  };
+  await setup({...f.options,updateOnly:true},f.dependencies);
+  assert.equal(verified,true);
+  assert.equal(await f.marker(),'new app');
+});
+
+test('missing or different artifact signing identity preserves the installed app and process', async t => {
+  for (const codeOnly of [false,true]) {
+    const f = await fixture(t,{previous:true,configured:true});
+    const old = f.runningApp(), runner = f.dependencies.runner;
+    f.dependencies.runner = async (command,args,...rest) => {
+      if (command === '/usr/bin/codesign' && args.includes('-r-')) return 'designated => identifier "xyz.fi5h.Usage4Claude" and certificate leaf = H"'
+        +(args.at(-1) === f.destination ? 'a' : 'b').repeat(40)+'"\n';
+      if (command === '/usr/bin/codesign' && args.includes('-R')) throw new Error('candidate does not satisfy installed certificate requirement');
+      return runner(command,args,...rest);
+    };
+    await assert.rejects(setup({...f.options,updateOnly:true,codeOnly},f.dependencies),/Vorhandene Signieridentität.*nicht bestätigt/);
+    assert.equal(await f.marker(),'previous app');
+    assert.deepEqual(f.state.runningApps,[old]);
+    assert.ok(!f.calls.some(c => ['/usr/bin/ditto','/usr/bin/osascript'].includes(c.command)));
+  }
+});
+
+test('unreadable signing requirements and an unexpected certificate on an ad-hoc app stop before replacement', async t => {
+  for (const unreadable of [true,false]) {
+    const f = await fixture(t,{previous:true,configured:true});
+    const old = f.runningApp(), runner = f.dependencies.runner;
+    f.dependencies.runner = async (command,args,...rest) => {
+      if (command === '/usr/bin/codesign' && args.includes('-r-')) {
+        if (unreadable) return '';
+        return 'designated => identifier "xyz.fi5h.Usage4Claude" and '+(args.at(-1) === f.destination
+          ? 'cdhash H"aabb"' : 'certificate leaf = H"'+'b'.repeat(40)+'"')+'\n';
+      }
+      return runner(command,args,...rest);
+    };
+    await assert.rejects(setup({...f.options,updateOnly:true,codeOnly:true},f.dependencies),/Signieridentität/);
+    assert.equal(await f.marker(),'previous app');
+    assert.deepEqual(f.state.runningApps,[old]);
+    assert.ok(!f.calls.some(c => ['/usr/bin/ditto','/usr/bin/osascript'].includes(c.command)));
+  }
 });
 
 test('code-only is explicitly update-only and never installs the worker observer', async () => {

@@ -476,6 +476,31 @@ export async function workerArtifactBundle(revision, runner = run, {
   return bundle;
 }
 
+export async function preserveExistingSigningIdentity(installed, candidate, runner = run) {
+  const read = async bundle => {
+    const output = await runner('/usr/bin/codesign',['-d','-r-',bundle],
+      {label:'Vorhandene App-Signieridentität prüfen'});
+    const requirement = output.trim().match(/^(?:# )?designated => (.+)$/m)?.[1];
+    if (!requirement) throw new Error('App-Signatur: Vorhandene Signieridentität nicht lesbar; installierte App bleibt erhalten.');
+    return requirement;
+  };
+  const before = await read(installed), after = await read(candidate);
+  if (!/\bcertificate\b/.test(before)) {
+    if (/\bcertificate\b/.test(after))
+      throw new Error('App-Signatur: Wechsel der vorhandenen Signieridentität nicht erlaubt; installierte App bleibt erhalten.');
+    return;
+  }
+  // The installed app's own designated requirement binds its certificate, not
+  // its human-readable label. A missing/expired local identity must never turn
+  // the optional artifact re-sign into a silent switch to the publisher.
+  try {
+    await runner('/usr/bin/codesign',['--verify','--strict','-R','='+before,candidate],
+      {label:'Bestehende App-Signieridentität erhalten'});
+  } catch {
+    throw new Error('App-Signatur: Vorhandene Signieridentität für das Update nicht bestätigt; installierte App bleibt erhalten.');
+  }
+}
+
 async function updateExistingMonitor(options, {worker, app, revision, release, releaseCurrent,
   receipt, receiptPath, runner, appReader, artifactReader, log, pause, now = Date.now}) {
   if (!app) throw new Error('Kein eingerichteter Monitor vorhanden – zuerst die Worker-Einrichtung ausführen.');
@@ -550,6 +575,7 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   if (!built) throw new Error('App-Version: Die aktuelle Monitor-App ist ungültig.');
   if (artifact && releaseCurrent && built.version !== release.version)
     throw new Error('App-Version: Die Monitor-Release-Version stimmt nicht.');
+  await preserveExistingSigningIdentity(options.appPath,bundle,runner);
   const original = await runningMonitorApps(options.bundleId,runner);
   let install;
   try {
