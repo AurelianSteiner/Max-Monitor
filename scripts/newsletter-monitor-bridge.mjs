@@ -890,6 +890,14 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       : status === 'completed' ? 'Korrektur abgeschlossen' : claim.awaitingPm ? 'PM-Rückfrage offen'
         : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
     const task = tasks.find(task => task.id === claim.taskId);
+    // A terminal/portable attempt is history after a human moves the order on.
+    // Keep genuinely live writers visible; never call a manual handoff success.
+    if (task && (!active || paused && claim.portable)) {
+      const currentOrigin = CORRECTION_STATUSES[normalizeStatus(taskStatus(task))];
+      const order = CORRECTION_JOB.exec(claim.jobId);
+      if (status !== 'completed' && (!currentOrigin || admission.parked(task, 'korrektur', task.statusSince)
+        || order && (order[3] !== currentOrigin || task.statusSince && order[2] !== String(task.statusSince)))) continue;
+    }
     rows.push({ id: `correction:${claim.jobId}`, title: displayText(claim.title || task?.name, 300, `Korrektur ${claim.taskId}`),
       url: claim.url || (claim.taskId !== claim.jobId ? `https://app.clickup.com/t/${encodeURIComponent(claim.taskId)}` : undefined), workflow: 'correction',
       company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId,
@@ -1446,7 +1454,27 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const observedWorkers = workerResult.status === 'fulfilled' ? workerResult.value : undefined;
   const fleetDetail = workerResult.status === 'rejected'
     ? 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.' : undefined;
-  const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl, admission, workers: observedWorkers });
+  const queueOptions = { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl, admission, workers: observedWorkers };
+  // Completed/manual source tasks disappear from the tag/start-status queries.
+  // Read missing sources of visible unfinished corrections before deciding that
+  // their old reservation still describes an order. Failure preserves the cache.
+  const missing = [...new Set(buildQueue(tasks, claims, workflows, queueOptions)
+    .filter(row => row.workflow === 'correction' && row.status !== 'completed' && row.run
+      && !tasks.some(task => task.id === row.run.taskId)).map(row => row.run.taskId))];
+  try {
+    for (const id of missing) {
+      const task = await requestJson(hubFetch, `https://api.clickup.com/api/v2/task/${encodeURIComponent(id)}`, 'ClickUp');
+      if (task.id !== id || !taskStatus(task) || !Array.isArray(task.tags)) throw Error('ClickUp: Korrekturquelle unvollständig.');
+      if (CORRECTION_STATUSES[normalizeStatus(taskStatus(task))]) {
+        const epochs = await readStatusEpochs(hubFetch, [task], { refusals: epochRefusals, now });
+        if (epochs.has(id)) task.statusSince = epochs.get(id);
+      }
+      tasks.push(task);
+    }
+  } catch (error) {
+    return { source: { name: SOURCE_NAME, error: displayText(error.message, 300, 'Korrekturquelle nicht lesbar.') } };
+  }
+  const queue = buildQueue(tasks, claims, workflows, queueOptions);
   // Keep a confirmed date after its source thread leaves the history window.
   // Any currently visible attempt prevents borrowing an older success.
   retainCompletionDates(queue, previousTasks, claims);

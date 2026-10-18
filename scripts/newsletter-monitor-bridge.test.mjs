@@ -183,7 +183,7 @@ test('correction failures retain their owner and a later retry supersedes the fa
     reactions: reactions.map(name => ({ name })), metadata: { event_type: 'ai_korrektur_claim', event_payload: {
       task_id: job, worker: 'macbook-2', run_id: `attempt-${ts}`, state, heartbeat: now / 1000 - 60 } } });
   const failed = make('final', '100.001', ['x']);
-  const rows = claims => buildQueue([task('86cbgtpjr', ['pre gen · fertig'])], claims, DEFAULT_WORKFLOWS, { now }).filter(row => row.workflow === 'correction');
+  const rows = claims => buildQueue([], claims, DEFAULT_WORKFLOWS, { now }).filter(row => row.workflow === 'correction');
   assert.equal(rows([failed])[0].status, 'blocked');
   assert.equal(rows([failed])[0].workerId, 'macbook-2');
   assert.equal(rows([failed])[0].title, 'Warm Up Kampagne: B2C');
