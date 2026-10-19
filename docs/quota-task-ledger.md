@@ -1,5 +1,45 @@
 # Verbrauch & Aufwand
 
+## Frische, Wiederherstellung und verlustfreie Ablage
+
+`max-monitor-quota-watchdog.timer` prüft alle 30 Sekunden den Inhalt von
+`generated_at`, nicht nur Prozessstatus oder Dateidatum. Nach zwei getrennten
+Prüfungen mit mehr als drei Minuten alten/ungültigen Daten startet er ausschließlich
+`max-monitor-quota.service` neu. Bewusst gestoppte Dienste bleiben gestoppt;
+Anlaufzeit und zehn Minuten Abstand zwischen Wiederherstellungsversuchen schützen
+vor Neustartschleifen. Der private Zustandsbeleg liegt unter
+`/var/lib/max-monitor-quota-watchdog/state.json`. Newsletter-Worker, Hub, Queue
+und Relay werden nicht neu gestartet.
+
+Die Zuordnung eines Antwortzugs zu seiner zeitlich nächsten Quotenmessung nutzt
+eine binäre Suche. Gleiche Zeitpunkte, gleich große Abstände und unbekannte
+Account-Zuordnungen behalten das bisherige Ergebnis.
+
+Jede Ledger-Verbindung begrenzt das nach einem sicheren WAL-Recycling aufbewahrte
+Journal auf 1 MiB. Passive Checkpoints und ein kleinerer Auto-Checkpoint erhalten
+aktive Leser und sämtliche bestätigten Transaktionen; eine gerade aktive WAL kann
+vorübergehend größer sein.
+
+Vor der bisherigen Bereinigung des heißen Datenbestands werden alle betroffenen
+Zeilen einschließlich sämtlicher Spalten in `raw_archives` verlustfrei mit zlib 9
+komprimiert und per SHA-256 geprüft. Archiv und Entfernung werden gemeinsam
+bestätigt; bei einem Fehler bleiben die Rohzeilen erhalten. Bereits vor Einführung
+entfernte Rohdaten werden dadurch nicht rekonstruiert. Die vorhandenen komprimierten
+Aufgabensummen bleiben zusätzlich erhalten.
+
+```sh
+python3 /opt/max-monitor-quota/quota_archive.py verify
+python3 /opt/max-monitor-quota/quota_archive.py export --output /private/new-export.jsonl.xz
+```
+
+Für unveränderliche Wiederherstellungshistorie kann ein komprimiertes SquashFS
+unter den bisherigen Pfaden eingehängt werden. `scripts/cold_history.py` sichert
+vorher die vollständigen Dateimetadaten einschließlich Nanosekunden und prüft
+danach jede Datei, Verknüpfung, Berechtigung und jedes erweiterte Attribut. Inhalte
+werden per SHA-256 verglichen; Hardlinks werden nur einmal gelesen. Originale
+werden erst nach erfolgreicher Prüfung und bestätigter Einhängung freigegeben.
+Aktive Datenbanken oder laufende Auftragsdateien werden nicht umgepackt.
+
 Max Monitor zeigt einen eigenen Reiter zwischen Queue & Macs und Account Limits.
 Der separate Beobachter läuft auf dem RS Hub und auf allen acht Worker-Macs.
 Er entscheidet nicht über Aufträge und verändert keine Kundenobjekte.

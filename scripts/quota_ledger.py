@@ -5,7 +5,7 @@ Account deltas are observations; their allocation to jobs is always an estimate.
 No Claude calls, admission decisions, credentials or production task writes.
 """
 import argparse
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from datetime import datetime, timezone
 import hashlib
@@ -55,6 +55,15 @@ def number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
+def nearest_observation(rows, times, at):
+    index = bisect_left(times, at)
+    # First observation wins duplicate times and equal-distance ties, including
+    # an unknown identity. This preserves the original linear scan's result.
+    indices = ([bisect_left(times, times[index-1])] if index else []) + ([index] if index < len(times) else [])
+    nearby = [rows[i] for i in indices if abs(rows[i][0]-at) <= 1800]
+    return min(nearby, key=lambda q: abs(q[0]-at)) if nearby else None
+
+
 class Ledger:
     def __init__(self, filename):
         if str(filename) != ":memory:":
@@ -63,6 +72,10 @@ class Ledger:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA busy_timeout=30000")
+        # Recycle only a small journal once readers release their snapshots.
+        # Neither setting discards committed data or forces readers out.
+        self.db.execute("PRAGMA journal_size_limit=1048576")
+        self.db.execute("PRAGMA wal_autocheckpoint=256")
         self.db.executescript("""
         CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS accounts(account TEXT PRIMARY KEY,worker TEXT,name TEXT,
@@ -88,6 +101,8 @@ class Ledger:
           scanned INTEGER,backfill_hours INTEGER,errors INTEGER);
         CREATE TABLE IF NOT EXISTS worker_settings(worker TEXT PRIMARY KEY,at REAL,settings TEXT);
         CREATE TABLE IF NOT EXISTS compact_jobs(job TEXT PRIMARY KEY,finished REAL,payload BLOB);
+        CREATE TABLE IF NOT EXISTS raw_archives(id TEXT PRIMARY KEY,archived_at REAL,
+          raw_bytes INTEGER,payload BLOB);
         """)
         self.meta("schema", SCHEMA)
         self.db.commit()
@@ -98,6 +113,20 @@ class Ledger:
     def setting(self, key, default=None):
         row = self.db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
         return json.loads(row[0]) if row else default
+
+    def archive_rows(self, tables, now):
+        """Preserve every source column before removing rows from hot tables."""
+        tables = {name: rows for name, rows in tables.items() if rows}
+        if not tables:
+            return
+        raw = json.dumps({"schema": 1, "tables": tables}, sort_keys=True,
+                         separators=(",", ":"), ensure_ascii=False).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        packed = zlib.compress(raw, 9)
+        if zlib.decompress(packed) != raw:
+            raise ValueError("Raw archive verification failed")
+        self.db.execute("INSERT OR IGNORE INTO raw_archives VALUES(?,?,?,?)",
+                        (digest, now, len(raw), packed))
 
     def reset(self, since):
         """Reset this ledger only. Never touch worker runs, source logs or Fleet."""
@@ -349,6 +378,7 @@ class Ledger:
                 resolved[reset] = self.resolve(reset)
             account = resolved[reset]
             quota_events[(event["worker"], event["job"])].append((event["at"], account))
+        quota_times = {key: [q[0] for q in rows] for key, rows in quota_events.items()}
         messages = defaultdict(list)
         unknown_messages = 0
         for e in self.db.execute("SELECT * FROM events WHERE event_type='message' AND at BETWEEN ? AND ?", (cutoff, now)):
@@ -357,8 +387,10 @@ class Ledger:
                 continue
             job["sampled_messages"] += 1
             job["tokens"] += e["input_tokens"] + e["output_tokens"] + e["cache_create"] + e["cache_read"]
-            nearby = [q for q in quota_events[(e["worker"], e["job"])] if q[0] is not None and abs(q[0] - e["at"]) <= 1800]
-            nearest = min(nearby, key=lambda q: abs(q[0] - e["at"])) if nearby else None
+            key = (e["worker"], e["job"])
+            rows = quota_events[key]
+            times = quota_times.get(key, [])
+            nearest = nearest_observation(rows, times, e["at"])
             if not nearest or not nearest[1]:
                 unknown_messages += 1
                 continue
@@ -549,12 +581,20 @@ class Ledger:
             account = next((a for a in report['accounts'] if a['worker'] == setting['worker']), None)
             if account:
                 setting['values']['mac_name'] = account['name']
-        # Final task records are compressed once; raw events are a bounded repair
-        # buffer, not a forever-growing copy of Claude conversations.
+        # Keep full raw rows in a verified, compressed archive before pruning
+        # the hot repair buffer. Compression never substitutes a summary.
         cutoff = now - 48 * 3600
         with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
             old_jobs = [r[0] for r in self.db.execute("SELECT job FROM compact_jobs WHERE finished<?", (now - 1800,))
                         if jobs[r[0]]["closed"] and (jobs[r[0]]["check"] == "complete" or stamp(jobs[r[0]]["finished"]) < cutoff)]
+            archived_rows = {"events": [], "runs": []}
+            for job in old_jobs:
+                for table in ("events", "runs"):
+                    archived_rows[table].extend(dict(r) for r in self.db.execute("SELECT * FROM " + table + " WHERE job=?", (job,)))
+            archived_rows["samples"] = [dict(r) for r in self.db.execute("SELECT * FROM samples WHERE at<?", (cutoff - 1800,))]
+            archived_rows["account_resets"] = [dict(r) for r in self.db.execute('SELECT * FROM account_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))]
+            self.archive_rows(archived_rows, now)
             for job in old_jobs:
                 self.db.execute("DELETE FROM events WHERE job=?", (job,))
                 self.db.execute("DELETE FROM runs WHERE job=?", (job,))
@@ -633,6 +673,7 @@ def main():
                     write_json(args.public, ledger.dashboard())
                     os.chmod(Path(args.public).parent, 0o755)
                     os.chmod(args.public, 0o644)
+                    ledger.db.execute("PRAGMA wal_checkpoint(PASSIVE)")
                     last_report = time.time()
                 result = {"ok": True, "sampled_at": iso()}
                 if args.command == "collect":

@@ -22,6 +22,7 @@ WorkingDirectory=/opt/max-monitor-quota
 ExecStart=/usr/bin/python3 /opt/max-monitor-quota/quota_ledger.py serve --interval 15 --output /var/lib/max-monitor-quota/reports
 Restart=on-failure
 RestartSec=10
+TimeoutStopSec=15
 StateDirectory=max-monitor-quota
 StateDirectoryMode=0755
 UMask=0077
@@ -35,6 +36,43 @@ ReadWritePaths=/var/lib/max-monitor-quota
 [Install]
 WantedBy=multi-user.target
 """
+
+WATCHDOG_UNIT = """[Unit]
+Description=Recover stale passive Max Monitor quota output
+After=max-monitor-quota.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/max-monitor-quota/quota_watchdog.py
+TimeoutStartSec=60
+StateDirectory=max-monitor-quota-watchdog
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/max-monitor-quota/public
+ReadWritePaths=/var/lib/max-monitor-quota-watchdog
+"""
+
+WATCHDOG_TIMER = """[Unit]
+Description=Check actual Max Monitor quota freshness every 30 seconds
+
+[Timer]
+OnBootSec=45
+OnUnitActiveSec=30
+AccuracySec=5
+Unit=max-monitor-quota-watchdog.service
+
+[Install]
+WantedBy=timers.target
+"""
+
+
+def units():
+    return {SERVICE: unit_text(), "max-monitor-quota-watchdog.service": WATCHDOG_UNIT,
+            "max-monitor-quota-watchdog.timer": WATCHDOG_TIMER}
 
 
 def unit_text():
@@ -55,6 +93,8 @@ def plan(source):
     return [(source / "quota_ledger.py", Path("/opt/max-monitor-quota/quota_ledger.py")),
             (source / "quota_routing.py", Path("/opt/max-monitor-quota/quota_routing.py")),
             (source / "quota_worker.py", Path("/opt/max-monitor-quota/quota_worker.py")),
+            (source / "quota_watchdog.py", Path("/opt/max-monitor-quota/quota_watchdog.py")),
+            (source / "quota_archive.py", Path("/opt/max-monitor-quota/quota_archive.py")),
             (source / "install_quota_tracker.py", Path("/opt/max-monitor-quota/install_quota_tracker.py"))]
 
 
@@ -75,7 +115,8 @@ def main():
     if args.generate_only:
         output = Path(args.generate_only)
         output.mkdir(parents=True, exist_ok=False, mode=0o700)
-        (output / SERVICE).write_text(unit_text())
+        for name, text in units().items():
+            (output / name).write_text(text)
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     else:
         if os.geteuid() != 0:
@@ -84,8 +125,8 @@ def main():
             parser.error("Existing Max Monitor Fleet source is missing")
         backup = Path("/var/backups/max-monitor-quota") / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         backup.mkdir(parents=True, exist_ok=False, mode=0o700)
-        unit = Path("/etc/systemd/system") / SERVICE
-        for target in [t for _, t in files] + [unit]:
+        unit_paths = [Path("/etc/systemd/system") / name for name in units()]
+        for target in [t for _, t in files] + unit_paths:
             if target.exists():
                 saved = backup / target.name
                 shutil.copy2(target, saved)
@@ -101,14 +142,17 @@ def main():
         public = state / 'public'
         public.mkdir(exist_ok=True)
         os.chmod(public, 0o755)
-        unit.write_text(unit_text())
-        os.chmod(unit, 0o644)
-        subprocess.run(["/usr/bin/systemd-analyze", "verify", str(unit)], check=True)
+        for name, text in units().items():
+            unit = Path("/etc/systemd/system") / name
+            unit.write_text(text)
+            os.chmod(unit, 0o644)
+        subprocess.run(["/usr/bin/systemd-analyze", "verify", *map(str, unit_paths)], check=True)
         subprocess.run(["/usr/bin/python3", "/opt/max-monitor-quota/quota_ledger.py", "collect"], check=True, capture_output=True)
         subprocess.run(["/usr/bin/systemctl", "daemon-reload"], check=True)
         subprocess.run(["/usr/bin/systemctl", "enable", "--now", SERVICE], check=True, capture_output=True)
         subprocess.run(["/usr/bin/systemctl", "restart", SERVICE], check=True)
         subprocess.run(["/usr/bin/systemctl", "is-active", "--quiet", SERVICE], check=True)
+        subprocess.run(["/usr/bin/systemctl", "enable", "--now", "max-monitor-quota-watchdog.timer"], check=True, capture_output=True)
         manifest["backup_directory"] = str(backup)
     print(json.dumps(manifest, indent=2))
 
