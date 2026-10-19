@@ -426,6 +426,7 @@ export async function workerArtifactManifest(manifestPath = path.join(ROOT,'rele
   try { manifest = JSON.parse(await fs.readFile(manifestPath,'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return null; throw new Error('App-Version: Monitor-Release ist ungültig.'); }
   if (manifest.schema !== 1 || !/^\d+\.\d+(?:\.\d+)?$/.test(manifest.version || '') ||
+      (manifest.paused !== undefined && typeof manifest.paused !== 'boolean') ||
       !/^[a-f0-9]{40}$/.test(manifest.sourceRevision || '') ||
       !/^[a-f0-9]{64}$/.test(manifest.sha256 || '') ||
       manifest.tag !== 'worker-native-' + manifest.sourceRevision.slice(0,12) ||
@@ -445,6 +446,7 @@ export async function workerArtifactBundle(revision, runner = run, {
 } = {}) {
   const manifest = await workerArtifactManifest(manifestPath);
   if (!manifest) return null;
+  if (manifest.paused === true) throw Object.assign(new Error('Automatisches Max-Monitor-Update angehalten; installierte App bleibt erhalten.'), {code:'MONITOR_RELEASE_PAUSED'});
   if (!await artifactMatchesSource(manifest,revision,runner)) return null;
   await fs.mkdir(cacheRoot,{recursive:true});
   const cache = path.join(cacheRoot,manifest.sha256);
@@ -673,6 +675,13 @@ async function setupSteps(options, { runner = run, workerReader = readWorker,
     steps:['App installieren','Eigenen Mitglieds-Token über Hub beziehen','Team und Worker-ID speichern','Autostart aktivieren','App öffnen']};
   const revision = await sourceRevision(runner);
   const release = options.updateOnly && !options.appBundle ? await manifestReader() : null;
+  // Stop the automatic path before any artifact/source comparison, fallback
+  // build, preference/credential read or app action. Explicit local canary
+  // bundles still go through their normal identity and installation guards.
+  if (release?.paused === true) {
+    log('Automatisches Max-Monitor-Update angehalten; installierte App bleibt erhalten.');
+    return {schema:1,mode:'deferred',deferred:true,reason:'release_paused'};
+  }
   const releaseCurrent = release ? await artifactMatchesSource(release,revision,runner) : false;
   let receipt;
   try { receipt = JSON.parse(await fs.readFile(receiptPath, 'utf8')); } catch {}

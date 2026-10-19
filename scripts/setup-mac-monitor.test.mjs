@@ -1264,6 +1264,30 @@ test('failed child stdout and stderr never leak their token into the runner erro
   });
 });
 
+test('a paused automatic release preserves the running app before source fallback, preferences or artifact work', async t => {
+  const f = await fixture(t,{previous:true,configured:true});
+  const old = f.runningApp();
+  f.dependencies.manifestReader = async () => ({schema:1,version:'2.15.1',sourceRevision:'a'.repeat(40),paused:true});
+  f.dependencies.artifactReader = async () => assert.fail('paused release must not download or build');
+  f.dependencies.appReader = async () => assert.fail('paused release must not inspect or replace the app');
+  const result = await setup({...f.options,appBundle:undefined,updateOnly:true},f.dependencies);
+  assert.deepEqual(result,{schema:1,mode:'deferred',deferred:true,reason:'release_paused'});
+  assert.equal(await f.marker(),'previous app');
+  assert.deepEqual(f.state.runningApps,[old]);
+  assert.equal(f.calls.length,1); // source revision only; no source diff/fallback or native action
+  assert.equal(f.calls[0].command,'git');
+});
+
+test('a directly requested paused artifact cannot fall back to a native build', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(),'monitor-artifact-hold-'));
+  t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  const manifestPath=path.join(dir,'manifest.json');
+  await fs.writeFile(manifestPath,JSON.stringify({schema:1,version:'2.15.1',sourceRevision:'a'.repeat(40),
+    sha256:'b'.repeat(64),tag:'worker-native-'+'a'.repeat(12),asset:'Max-Monitor-worker.zip',paused:true}));
+  await assert.rejects(workerArtifactBundle(REVISION,async()=>assert.fail('no artifact action while paused'),{manifestPath}),
+    {code:'MONITOR_RELEASE_PAUSED'});
+});
+
 test('argument parsing and enrollment validation reject unsafe options; loopback requires explicit opt-in', () => {
   for (const args of [['--token', MEMBER_TOKEN], ['--check', '--dry-run'], ['--worker-root'],
     ['--hub-helper', '/opt/helper; echo secret']]) assert.throws(() => optionsFrom(args));

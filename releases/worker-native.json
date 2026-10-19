@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "paused": true,
   "version": "2.15.1",
   "sourceRevision": "8755ef2722b29473bca5c1f8fef464b3bfe5560b",
   "sha256": "ca6fe3a8e962db8edb7d05b29030bb38c1fa227968272c4f1d9cd96a9b8ef90c",
