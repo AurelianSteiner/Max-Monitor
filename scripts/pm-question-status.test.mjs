@@ -57,6 +57,26 @@ test('accepted current answers show queued continuation while capacity is occupi
   }
 });
 
+test('a partial answer keeps every workflow in PM clarification until the remaining question is answered', () => {
+  for (const [workflow,stage] of [['newsletter','newsletter'],['correction','korrektur'],['upload','klaviyo'],['translation','translation']]) {
+    const current=row(workflow,workflow==='translation'?{id:'clickup:translation-de:t1'}:{});
+    const partial=set(stage,{language:'DE',questions:[
+      {id:'Q1',title:'Produkt behalten?',status:'accepted',revision:1},
+      {id:'Q2',title:'Herkunftsangabe?',status:'open',revision:1},
+    ]});
+    const jobs=[{setId:'s1',questionId:'Q1',sourceVersion:'v1',revision:1,state:'queued'}];
+    applyPmQuestions([current],{sets:[partial],jobs});
+    assert.equal(current.phase,'Wartet · PM-Rückfrage',workflow);
+    assert.equal(current.status,'queued');assert.equal(current.reasonCode,'pm_decision_pending');
+    assert.equal(current.responsibleRole,'PM');assert.equal(current.blockedReason,'Q2: Herkunftsangabe?');
+    assert.match(current.nextStep,/Q2: Herkunftsangabe/);
+    partial.questions[1].status='accepted';jobs.push({...jobs[0],questionId:'Q2'});
+    const ready=row(workflow,workflow==='translation'?{id:'clickup:translation-de:t1'}:{});
+    applyPmQuestions([ready],{sets:[partial],jobs});
+    assert.equal(ready.phase,'Wartet auf Fortsetzung');assert.equal(ready.reasonCode,'continuation_pending');
+  }
+});
+
 test('a retired historical question set cannot hide the active replacement on the same source run', () => {
   const current=row();applyPmQuestions([current],{sets:[set('klaviyo',{id:'retired',questions:[{id:'Q3',status:'replaced'}]}),set()]});
   assert.equal(current.status,'queued');assert.equal(current.blockedReason,'Q3: Gutscheincode?');

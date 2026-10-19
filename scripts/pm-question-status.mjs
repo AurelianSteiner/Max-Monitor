@@ -34,7 +34,7 @@ export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}, bindings =
     row.updatedAt = new Date(Math.max(Date.parse(row.updatedAt) || 0, set.createdAt || 0)).toISOString();
     row.blockedReason = open.map(q => `${q.id}: ${q.title}`).join(' · ').slice(0, 500) || undefined;
     row.status = 'queued';
-    row.phase = pending ? 'Wartet auf Fortsetzung' : 'Wartet · PM-Rückfrage';
+    row.phase = open.length ? 'Wartet · PM-Rückfrage' : 'Wartet auf Fortsetzung';
     // The fresh journal replaces a historical technical checkpoint diagnosis.
     // A PM decision and an answered continuation need different next actions.
     row.blockerReason = row.blockedReason;
