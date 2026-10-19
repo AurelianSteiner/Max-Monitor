@@ -1,9 +1,12 @@
 {
   "schema": 1,
   "paused": true,
-  "version": "2.15.2",
-  "sourceRevision": "e9663390c4101d5615fdea3dd8f36e6c282ee7bb",
-  "sha256": "428f9fa01578f0aaffd82242feb8723be3f82048c54b6c5c606cb7cfbf3dbb64",
-  "tag": "worker-native-e9663390c410",
-  "asset": "Max-Monitor-worker.zip"
+  "version": "2.15.3",
+  "sourceRevision": "a5c821ac7f9c0534f15599918d030d855ebabe79",
+  "sha256": "c8fd8bb3d928d2409193f78207cf35a8cdb65fa202aaeafe9b3b3a4f754e44b8",
+  "tag": "worker-native-a5c821ac7f9c",
+  "asset": "Max-Monitor-worker.zip",
+  "canaryWorkerIds": [
+    "newsletter-mac-141b2976"
+  ]
 }
