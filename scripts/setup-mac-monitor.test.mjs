@@ -302,6 +302,46 @@ test('automatic artifact preparation receives the actual installed bundle path',
   assert.equal(selected,f.options.appPath);
 });
 
+test('an already matching signed artifact needs no local private key but a foreign signer is still rejected', async t => {
+  for (const matching of [true,false]) {
+    const dir=await fs.mkdtemp(path.join(os.tmpdir(),'monitor-presigned-artifact-'));
+    t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+    const content=Buffer.from('pinned centrally signed archive'),leaf='A'.repeat(40);
+    const installedAppPath=path.join(dir,'Installed.app'),manifestPath=path.join(dir,'manifest.json');
+    const requirement=`identifier "xyz.fi5h.Usage4Claude" and certificate leaf = H"${leaf}"`;
+    await appBundle(installedAppPath,'original app');
+    await fs.writeFile(manifestPath,JSON.stringify({schema:1,version:'2.15.3',sourceRevision:'a'.repeat(40),
+      sha256:createHash('sha256').update(content).digest('hex'),tag:'worker-native-'+'a'.repeat(12),asset:'Max-Monitor-worker.zip'}));
+    let signingAttempts=0,verifiedRequirement=false;
+    const runner=async(command,args)=>{
+      if(command==='git')return '';
+      if(command==='gh'){await fs.writeFile(path.join(args[args.indexOf('--dir')+1],'Max-Monitor-worker.zip'),content);return '';}
+      if(command==='/usr/bin/ditto'){await appBundle(path.join(args.at(-1),'Max Monitor.app'),'published artifact');return '';}
+      if(command==='/usr/bin/security')assert.fail('a matching artifact requires no identity enumeration');
+      if(command==='/usr/bin/codesign'){
+        if(args.includes('-r-'))return `designated => ${args.at(-1)===installedAppPath||matching?requirement:'identifier "xyz.fi5h.Usage4Claude" and certificate leaf = H"'+'B'.repeat(40)+'"'}\n`;
+        if(args.includes('-R')){
+          assert.equal(args[args.indexOf('-R')+1],'='+requirement);
+          if(!matching)throw new Error('foreign signer');
+          verifiedRequirement=true;
+        }
+        if(args.includes('--sign')){
+          signingAttempts++;
+          assert.equal(args[args.indexOf('--sign')+1],leaf);
+          assert.notEqual(args.at(-1),installedAppPath);
+          throw new Error('private key not available on this Mac');
+        }
+        return '';
+      }
+      assert.fail(command);
+    };
+    const action=workerArtifactBundle(REVISION,runner,{manifestPath,installedAppPath,cacheRoot:path.join(dir,'cache')});
+    if(matching){assert.ok(await action);assert.equal(verifiedRequirement,true);assert.equal(signingAttempts,0);}
+    else {await assert.rejects(action,{code:'MONITOR_SIGNING_IDENTITY_UNAVAILABLE'});assert.equal(signingAttempts,1);}
+    assert.equal(await fs.readFile(path.join(installedAppPath,'Contents','marker'),'utf8'),'original app');
+  }
+});
+
 test('helper, relay, Node tests and documentation changes can reuse a verified native app', async () => {
   const before = 'a'.repeat(40), after = 'b'.repeat(40);
   const diff = files => async () => files.join('\n');

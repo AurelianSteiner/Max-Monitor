@@ -500,6 +500,14 @@ export async function workerArtifactBundle(revision, runner = run, {
       // codesign itself must resolve its private key without exporting it.
       localIdentity = requirement.match(/\bcertificate leaf\s*=\s*H"([A-F0-9]{40})"/i)?.[1];
       if (!localIdentity) throw new Error('App-Signatur: Vorhandenes Zertifikat nicht eindeutig lesbar; installierte App bleibt erhalten.');
+      // A centrally signed, pinned artifact may already satisfy the installed
+      // requirement. Verify it before asking this Mac for the same private key.
+      try {
+        await preserveExistingSigningIdentity(installedAppPath,bundle,runner);
+        return bundle;
+      } catch {
+        // Only the existing exact identity below may repair a mismatch.
+      }
     }
     // An existing ad-hoc app keeps the pinned artifact's ad-hoc signature.
     // An unrelated local certificate must not change its access identity.
