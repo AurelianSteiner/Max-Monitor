@@ -5,6 +5,7 @@ Account deltas are observations; their allocation to jobs is always an estimate.
 No Claude calls, admission decisions, credentials or production task writes.
 """
 import argparse
+import fcntl
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -29,6 +30,7 @@ WINDOWS = {"session": "five_hour", "weekly": "seven_day"}
 KINDS = {"newsletter", "correction", "translation", "upload", "sales", "other"}
 DEFAULT_DB = "/var/lib/max-monitor-quota/ledger.sqlite"
 DEFAULT_FLEET = "/var/lib/max-monitor/RSMACS01/fleet.json"
+AVERAGE_SNAPSHOT_SECONDS = 12 * 3600
 
 
 def stamp(value):
@@ -109,6 +111,9 @@ class Ledger:
         CREATE TABLE IF NOT EXISTS tool_usage(id TEXT PRIMARY KEY,job TEXT,name TEXT,at REAL,
           input_bytes INTEGER,result_bytes INTEGER,error INTEGER,completed REAL);
         CREATE INDEX IF NOT EXISTS tool_usage_job ON tool_usage(job);
+        CREATE TABLE IF NOT EXISTS average_snapshots(id TEXT PRIMARY KEY,at REAL NOT NULL,slot INTEGER);
+        CREATE INDEX IF NOT EXISTS average_snapshots_time ON average_snapshots(at);
+        CREATE UNIQUE INDEX IF NOT EXISTS average_snapshots_slot ON average_snapshots(slot) WHERE slot IS NOT NULL;
         """)
         self.meta("schema", SCHEMA)
         self.db.commit()
@@ -133,6 +138,13 @@ class Ledger:
             raise ValueError("Raw archive verification failed")
         self.db.execute("INSERT OR IGNORE INTO raw_archives VALUES(?,?,?,?)",
                         (digest, now, len(raw), packed))
+        return digest
+
+    def averages_changed(self, reason):
+        """A durable invalidation; ingestion never performs expensive reporting."""
+        pending = self.setting('average_pending', {'revision': 0, 'reasons': []})
+        self.meta('average_pending', {'revision': pending['revision'] + 1,
+                  'reasons': sorted(set(pending['reasons']) | {reason})})
 
     def reset(self, since):
         """Reset this ledger only. Never touch worker runs, source logs or Fleet."""
@@ -140,7 +152,7 @@ class Ledger:
         if since is None or since > time.time() + 60:
             raise ValueError("Invalid tracking start")
         with self.db:
-            for table in ("samples", "events", "usage_features", "tool_usage", "runs", "compact_jobs", "collectors", "worker_settings", "bindings", "account_resets", "accounts", "metadata"):
+            for table in ("samples", "events", "usage_features", "tool_usage", "average_snapshots", "runs", "compact_jobs", "collectors", "worker_settings", "bindings", "account_resets", "accounts", "metadata"):
                 self.db.execute("DELETE FROM " + table)
             self.meta("schema", SCHEMA)
             self.meta("tracking_since", since)
@@ -155,8 +167,10 @@ class Ledger:
             return
         if reset is not None and (reset <= at or reset - at > 8 * 86400):
             return  # Old or impossible cycle, never a fresh post-reset baseline.
-        self.db.execute("INSERT OR IGNORE INTO samples VALUES(?,?,?,?,?,?,?,?,?)",
-                        (key, account, worker, window, reset, at, percent, quality, source))
+        inserted = self.db.execute("INSERT OR IGNORE INTO samples VALUES(?,?,?,?,?,?,?,?,?)",
+                                  (key, account, worker, window, reset, at, percent, quality, source)).rowcount
+        if inserted:
+            self.averages_changed('quota_evidence')
 
     def fleet(self, data, now=None):
         now = time.time() if now is None else now
@@ -190,6 +204,7 @@ class Ledger:
             if not current or current[0] != account:
                 self.db.execute("UPDATE bindings SET until=? WHERE worker=? AND until IS NULL", (now, worker))
                 self.db.execute("INSERT INTO bindings VALUES(?,?,?,NULL)", (worker, account, now))
+                self.averages_changed('account_binding')
             for limit in machine.get("limits", []):
                 if limit.get("accountId") != bound.get("accountId") or limit.get("kind") not in WINDOWS:
                     continue
@@ -206,7 +221,9 @@ class Ledger:
                 key = identifier([account, window, reset, at, limit.get("percent"), "fleet"])
                 self.sample(key, account, worker, window, reset, at, limit.get("percent"), "monitor_bound", "fleet")
         context = {}
+        queue_keys = []
         for task in (data.get("queue") or {}).get("tasks", []):
+            queue_keys.append([clean(task.get(k), 300) for k in ('id','workflow','attemptId','status','completedAt')])
             customer = clean(task.get("company"))
             if task.get("workflow") == "sales" and not customer:
                 try:
@@ -220,6 +237,10 @@ class Ledger:
                 context["run:" + clean(task["attemptId"], 240)] = facts
             if task.get("workflow") == "sales" and task.get("id"):
                 context["task:" + clean(task["id"])] = facts
+        signature = identifier(sorted(queue_keys))
+        if signature != self.setting('average_queue_signature'):
+            self.averages_changed('queue_changed')
+            self.meta('average_queue_signature', signature)
         self.meta("task_context", context)
         self.meta("last_fleet_sample", iso(now))
         self.db.commit()
@@ -237,6 +258,7 @@ class Ledger:
         since = self.setting("tracking_since", 0)
         packet = decode_packet(payload['usage_packet'], worker) if payload.get('usage_packet') else None
         with self.db:
+            reasons = set()
             probe = payload.get('probe')
             if isinstance(probe, dict) and isinstance(probe.get('windows'), dict):
                 at = stamp(probe.get('at'))
@@ -272,6 +294,9 @@ class Ledger:
                 compact = self.db.execute("SELECT finished FROM compact_jobs WHERE job=?", (job,)).fetchone()
                 if compact and finished is not None and finished <= compact[0] and now - compact[0] > 48 * 3600:
                     continue
+                fields = 'job,title,customer,started,finished,state,evidence_errors,pending_scan'
+                prior = self.db.execute('SELECT ' + fields + ' FROM runs WHERE worker=? AND run_id=?', (worker, run_id)).fetchone()
+                known_job = compact or self.db.execute('SELECT 1 FROM runs WHERE job=? LIMIT 1', (job,)).fetchone()
                 self.db.execute("""INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(worker,run_id)
                   DO UPDATE SET title=excluded.title,customer=COALESCE(NULLIF(excluded.customer,''),runs.customer),
                   started=COALESCE(runs.started,excluded.started),
@@ -284,6 +309,11 @@ class Ledger:
                                  stamp(run.get("started")), stamp(known.get("finished") or run.get("finished")),
                                  clean(known.get("state") or run.get("state"), 80), now,
                                  max(0, int(run.get("evidence_errors", 0))), run.get("pending_scan")))
+                current = self.db.execute('SELECT ' + fields + ' FROM runs WHERE worker=? AND run_id=?', (worker, run_id)).fetchone()
+                if prior is None:
+                    reasons.add('task_changed' if known_job else 'new_task')
+                elif tuple(prior) != tuple(current):
+                    reasons.add('task_changed')
             for event in events:
                 event_id = clean(event.get("id"), 240)
                 kind = event.get("event_type")
@@ -314,8 +344,12 @@ class Ledger:
                   cache_read=MAX(events.cache_read,excluded.cache_read)""",
                                 (event_id, kind, run[0], worker, run_id, at, clean(event.get("time_quality"), 40),
                                  json.dumps(windows), clean(event.get("model"), 100), *values))
+                reasons.add('usage_evidence')
             if packet:
                 self.ingest_usage(packet, now, since)
+                reasons.add('usage_evidence')
+            for reason in sorted(reasons):
+                self.averages_changed(reason)
             self.db.execute("INSERT OR REPLACE INTO collectors VALUES(?,?,?,?,?)",
                             (worker, now, len(events), int(payload.get("backfill_hours", 72)), int(payload.get("errors", 0))))
         policy_file = Path(os.environ.get("MAX_MONITOR_EFFORT_POLICY", "/var/lib/max-monitor/RSMACS01/effort-policy.json"))
@@ -743,6 +777,81 @@ class Ledger:
                     COALESCE(SUM(raw_bytes),0) AS raw_bytes,COALESCE(SUM(LENGTH(payload)),0) AS compressed_bytes
                     FROM raw_archives''').fetchone())}
 
+    def publish_averages(self, public, now=None):
+        """Refresh all kinds on input changes; retain a fixed 12-hour history.
+
+        The existing service polls at 15 seconds. Bursts share one calculation,
+        and ingestors only invalidate it. A lock prevents competing publishers.
+        """
+        now = time.time() if now is None else now
+        public = Path(public)
+        public.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        lock_path = public.parent / '.average-refresh.lock'
+        with os.fdopen(os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600), 'a') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return None
+            pending = self.setting('average_pending', {'revision': 0, 'reasons': []})
+            previous = self.setting('average_refresh', {})
+            anchor = self.setting('average_snapshot_anchor', now)
+            slot = max(0, int((now - anchor) // AVERAGE_SNAPSHOT_SECONDS))
+            saved_slot = self.db.execute('SELECT MAX(slot) FROM average_snapshots').fetchone()[0]
+            periodic = saved_slot is None or slot > saved_slot
+            changed = pending['revision'] > previous.get('revision', -1)
+            if not periodic and not changed and now - previous.get('at', 0) < 60:
+                return None
+            summary = self.dashboard(now)
+            signature = identifier(summary['by_kind'])
+            reasons = sorted(set(pending['reasons']) | ({'scheduled_12h'} if periodic else set())) or ['heartbeat']
+            record = periodic or signature != previous.get('signature') or bool(
+                {'new_task', 'queue_changed', 'task_changed'} & set(reasons))
+            refresh = {'at': now, 'revision': pending['revision'], 'signature': signature,
+                       'last_snapshot_id': previous.get('last_snapshot_id'),
+                       'last_snapshot_at': previous.get('last_snapshot_at'), 'reasons': reasons,
+                       'next_scheduled_at': anchor + (slot + 1) * AVERAGE_SNAPSHOT_SECONDS}
+            # Commit the archive/index and acknowledgement only after publishing
+            # succeeds. A failure leaves the event and periodic deadline pending.
+            with self.db:
+                self.db.execute('BEGIN IMMEDIATE')
+                if record:
+                    snapshot = {'schema': 1, 'captured_at': iso(now), 'tracking_since': summary['tracking_since'],
+                                'scheduled_for': iso(anchor + slot * AVERAGE_SNAPSHOT_SECONDS) if periodic else None,
+                                'revision': pending['revision'], 'reasons': reasons, 'method': summary['method'],
+                                'estimator_version': summary['precision']['version'], 'by_kind': summary['by_kind']}
+                    digest = self.archive_rows({'average_snapshots': [snapshot]}, now)
+                    self.db.execute('INSERT INTO average_snapshots VALUES(?,?,?)', (digest, now, slot if periodic else None))
+                    refresh.update(last_snapshot_id=digest, last_snapshot_at=now)
+                current = self.setting('average_pending', {'revision': 0, 'reasons': []})
+                if current['revision'] == pending['revision']:
+                    self.meta('average_pending', {'revision': current['revision'], 'reasons': []})
+                self.meta('average_snapshot_anchor', anchor)
+                self.meta('average_refresh', refresh)
+                summary['average_updates'] = {
+                    'recalculated_at': iso(now), 'reasons': reasons, 'on_new_task': True,
+                    'on_task_evidence': True, 'scheduled_interval_seconds': AVERAGE_SNAPSHOT_SECONDS,
+                    'next_scheduled_at': iso(refresh['next_scheduled_at']),
+                    'last_snapshot_at': iso(refresh['last_snapshot_at']), 'last_snapshot_id': refresh['last_snapshot_id'],
+                    'saved_snapshots': self.db.execute('SELECT COUNT(*) FROM average_snapshots').fetchone()[0]}
+                write_json(public, summary)
+                os.chmod(public.parent, 0o755)
+                os.chmod(public, 0o644)
+            self.db.execute('PRAGMA wal_checkpoint(PASSIVE)')
+            return summary
+
+    def average_history(self, limit=20):
+        if not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError('Average history limit must be between 1 and 100')
+        result = []
+        for row in self.db.execute('''SELECT h.id,a.raw_bytes,a.payload FROM average_snapshots h
+                JOIN raw_archives a ON a.id=h.id ORDER BY h.at DESC,h.id DESC LIMIT ?''', (limit,)):
+            raw = zlib.decompress(row['payload'])
+            if len(raw) != row['raw_bytes'] or hashlib.sha256(raw).hexdigest() != row['id']:
+                raise ValueError('Average snapshot checksum mismatch')
+            snapshot = json.loads(raw)['tables']['average_snapshots'][0]
+            result.append({'id': row['id'], **snapshot})
+        return result
+
     def scheduling(self, groups, now):
         """Small read-only scheduling evidence, one shared budget per account.
 
@@ -777,7 +886,7 @@ def write_json(path, value):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("ingest", "collect", "serve", "report", "forecast", "status", "reset", "dashboard"))
+    parser.add_argument("command", choices=("ingest", "collect", "serve", "report", "forecast", "status", "reset", "dashboard", "average-history"))
     parser.add_argument("--db", default=DEFAULT_DB)
     parser.add_argument("--fleet", default=DEFAULT_FLEET)
     parser.add_argument("--hours", type=int, default=72)
@@ -786,6 +895,7 @@ def main():
     parser.add_argument("--accounts", default="")
     parser.add_argument("--mix", default="newsletter=1")
     parser.add_argument("--since")
+    parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--public", default="/var/lib/max-monitor-quota/public/RSMACS01.json")
     args = parser.parse_args()
     ledger = Ledger(args.db)
@@ -795,16 +905,11 @@ def main():
             raise ValueError("Quota batch too large")
         result = ledger.ingest(json.loads(raw))
     elif args.command in ("collect", "serve"):
-        last_report = 0
         while True:
             try:
                 ledger.fleet(json.loads(Path(args.fleet).read_text()))
-                if args.output and time.time() - last_report >= 60:
-                    write_json(args.public, ledger.dashboard())
-                    os.chmod(Path(args.public).parent, 0o755)
-                    os.chmod(args.public, 0o644)
-                    ledger.db.execute("PRAGMA wal_checkpoint(PASSIVE)")
-                    last_report = time.time()
+                if args.output:
+                    ledger.publish_averages(args.public)
                 result = {"ok": True, "sampled_at": iso()}
                 if args.command == "collect":
                     break
@@ -822,6 +927,8 @@ def main():
         result = ledger.report(args.hours)
     elif args.command == "dashboard":
         result = ledger.dashboard()
+    elif args.command == 'average-history':
+        result = {'schema': 1, 'snapshots': ledger.average_history(args.limit)}
     elif args.command == "reset":
         result = ledger.reset(args.since)
     elif args.command == "forecast":

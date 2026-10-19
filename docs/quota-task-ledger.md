@@ -1,5 +1,50 @@
 # Verbrauch & Aufwand
 
+## Durchschnittswerte bei neuen Aufgaben und alle zwölf Stunden
+
+Der bestehende Hub-Beobachter berechnet sämtliche Aufgabenarten neu, sobald neue
+Aufgaben in der zentralen Queue oder in Worker-Meldungen erscheinen. Auch geänderte
+Abschlüsse, nachgelieferte Token-/Werkzeugbelege und neue Kontingentmessungen lösen
+die Neuberechnung aus. Eingang und Bestätigung liegen transaktional im Ledger;
+gleichzeitige Meldungen gehen nicht durch eine laufende Berechnung verloren.
+Identische Aufgabenmeldungen und reine Fortschrittsänderungen lösen keine zusätzliche
+Berechnung aus. Der bestehende 15-Sekunden-Zyklus bündelt Eingangsspitzen. Die
+Mac-Beobachter liefern ihre Streams weiterhin minütlich. Ohne Änderungen bleibt die
+minütliche Veröffentlichung als Frischeprüfung erhalten.
+
+Zusätzlich wird ab dem ersten gespeicherten Stand **alle zwölf Stunden** ein
+vollständiger Durchschnittsstand aller Aufgabenarten festgehalten – auch bei
+unveränderten Werten. Aufgabenereignisse verschieben diesen festen Termin nicht.
+Der Anker und die letzten Termine bleiben über Dienstneustarts erhalten. Nach einer
+Unterbrechung wird der aktuelle Stand beim nächsten Zyklus erfasst; nicht beobachtete
+historische Zeitpunkte werden nicht nachträglich mit erfundenen Werten aufgefüllt.
+
+Die Durchschnittswerte bleiben kumulativ seit Tracking-Start. Das Zwölf-Stunden-
+Intervall setzt die Stichprobe nicht zurück. Neue/laufende Aufgaben zählen weiterhin
+erst mit einem abgeschlossenen, ausreichend belegten Lauf in den jeweiligen
+Fensterdurchschnitt. Fünfstunden- und Wochenmittel speichern ihre auswertbaren
+Aufgabenzahlen getrennt. Alle sechs Arten werden auch ohne auswertbaren Abschluss
+aufgeführt, dann mit `n: 0` und `mean: null`.
+
+Zusätzliche Ereignisstände werden bei veränderten Aggregaten oder neuen/geänderten
+Aufgaben gespeichert. Unveränderte periodische Frischeprüfungen erzeugen keinen
+doppelten Verlauf. Die vollständigen kleinen Aggregate liegen SHA-256-geprüft mit
+zlib 9 in `raw_archives`; `average_snapshots` enthält lediglich einen kleinen
+Zeit-/Hash-Index. Rohbelege oder einzelne Aufgaben werden dafür nicht dupliziert.
+Der bisherige Archiv-Export erfasst den Verlauf vollständig. Ein Publikationsfehler
+bestätigt weder Eingang noch Zwölf-Stunden-Termin; die nächste Runde versucht erneut.
+
+Die bestehende Verbrauchs-API liefert unter `summary.average_updates` den Zeitpunkt
+der Neuberechnung, Auslöser, nächsten Zwölf-Stunden-Termin und den letzten
+gespeicherten Stand. Der geschützte Hub kann die letzten Stände direkt lesen:
+
+```sh
+python3 /opt/max-monitor-quota/quota_ledger.py average-history --limit 20
+```
+
+Es sind keine zusätzlichen LLM-Aufrufe, Mac-Dienste oder Desktop-Weckaufträge nötig.
+Newsletter-Aufträge und Freigaben werden dabei nicht verändert.
+
 ## Frische, Wiederherstellung und verlustfreie Ablage
 
 `max-monitor-quota-watchdog.timer` prüft alle 30 Sekunden den Inhalt von

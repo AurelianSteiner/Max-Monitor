@@ -27,7 +27,9 @@ test('consumption requires team auth; only admins change allowlisted effort with
   assert.deepEqual((await call('/consumption')).body.policy.phases,update.phases);
   assert.equal(fs.statSync(path.join(dir,'QUOTATEST/effort-policy.json')).mode&0o777,0o600);
   fs.mkdirSync(process.env.QUOTA_PUBLIC_DIR);
-  fs.writeFileSync(path.join(process.env.QUOTA_PUBLIC_DIR,'QUOTATEST.json'),JSON.stringify({schema:2,generated_at:new Date().toISOString(),by_kind:[]}));
+  const averageUpdates={on_new_task:true,on_task_evidence:true,scheduled_interval_seconds:43200,next_scheduled_at:'2026-10-20T04:00:00Z',saved_snapshots:2};
+  fs.writeFileSync(path.join(process.env.QUOTA_PUBLIC_DIR,'QUOTATEST.json'),JSON.stringify({schema:2,generated_at:new Date().toISOString(),by_kind:[],average_updates:averageUpdates}));
   result=await call('/consumption');assert.equal(result.body.stale,false);assert.deepEqual(result.body.summary.by_kind,[]);
+  assert.deepEqual(result.body.summary.average_updates,averageUpdates);
   assert.equal((await fetch(`http://127.0.0.1:${server.address().port}/fleet-assets/consumption.js`)).status,200);
 });
