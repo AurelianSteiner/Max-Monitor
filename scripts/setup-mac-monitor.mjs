@@ -560,7 +560,11 @@ export async function requireUnlockedLoginKeychain(runner = run) {
   try {
     state = parseJson(await runner('/usr/bin/python3',['-c',
       '# monitor-keychain-state: metadata only; no credential, ACL, create or unlock API\n' +
-      'import ctypes,json,pathlib\n' +
+      'import ctypes,json,pathlib,stat\n' +
+      'base=pathlib.Path.home()/"Library/Application Support/xyz.fi5h.Usage4Claude"\n' +
+      'key=base/"credentials.key"; ready=base/"credentials.ready"\n' +
+      'if key.is_file() and not key.is_symlink() and ready.is_file() and key.stat().st_size==32 and stat.S_IMODE(key.stat().st_mode)==0o600 and stat.S_IMODE(base.stat().st_mode)==0o700:\n' +
+      ' print(json.dumps({"available":True,"unlocked":True,"localStorage":True})); raise SystemExit(0)\n' +
       'p=pathlib.Path.home()/"Library/Keychains/login.keychain-db"\n' +
       'if not p.exists(): p=pathlib.Path.home()/"Library/Keychains/login.keychain"\n' +
       'lib=ctypes.CDLL("/System/Library/Frameworks/Security.framework/Security")\n' +

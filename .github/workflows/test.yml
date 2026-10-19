@@ -31,6 +31,9 @@ jobs:
       - name: Run swift test
         run: swift test
 
+      - name: Credential lifecycle across signed builds
+        run: bash scripts/test-credential-persistence.sh
+
   build-app:
     name: Build App (compile check)
     runs-on: macos-26
