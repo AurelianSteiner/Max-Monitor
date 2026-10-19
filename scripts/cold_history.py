@@ -111,6 +111,7 @@ def main():
     parser.add_argument('--metadata', required=True)
     parser.add_argument('--mounted')
     parser.add_argument('--receipt')
+    parser.add_argument('--image', type=Path)
     args = parser.parse_args()
     os.umask(0o077)
     root, metadata = Path(args.source), Path(args.metadata)
@@ -121,6 +122,10 @@ def main():
             parser.error('verify requires --mounted')
         result = verify(root, Path(args.mounted), metadata,
                         lambda value: print(json.dumps(value), flush=True))
+    result['source_root'] = str(root.resolve())
+    if args.image:
+        result['image_sha256'] = digest(args.image)
+        result['image_bytes'] = args.image.stat().st_size
     if args.receipt:
         with Path(args.receipt).open('x') as stream:
             json.dump(result, stream, sort_keys=True)

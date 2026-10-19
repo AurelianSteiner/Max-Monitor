@@ -40,6 +40,21 @@ werden per SHA-256 verglichen; Hardlinks werden nur einmal gelesen. Originale
 werden erst nach erfolgreicher Prüfung und bestätigter Einhängung freigegeben.
 Aktive Datenbanken oder laufende Auftragsdateien werden nicht umgepackt.
 
+`scripts/mount_cold_history.py` bindet nur eine zuvor vollständig geprüfte,
+unveränderliche Historie ein. Der Beleg ist an Quellpfad, Image-Hash und den
+Metadatenkatalog gebunden. Vor der Einhängung wird der Quellstand erneut geprüft.
+Ein privater Bind-Mount hält den alten Bestand während der atomaren Überdeckung
+zugänglich; dadurch bleiben bestehende Leser und sämtliche ursprünglichen Pfade
+erhalten. Die Einhängung wird dauerhaft in `/etc/fstab` hinterlegt. Erst danach
+werden die nachweislich identischen unkomprimierten Kopien freigegeben.
+
+Der Linux-Abnahmetest `scripts/test_cold_history_linux.py` führt diesen gesamten
+Weg mit isolierten Testdateien, Hardlinks, erweiterten Attributen und einer echten
+SQLite-Datei durch. Er verändert keine produktive fstab und läuft nur mit
+Linux-Mount-Berechtigung. Vollständige Original-Metadaten bleiben als komprimierter
+Katalog neben dem Image verfügbar, auch die im Dateisystem auf Sekunden gerundeten
+Zeitstempel in ihrer ursprünglichen Nanosekundenauflösung.
+
 Max Monitor zeigt einen eigenen Reiter zwischen Queue & Macs und Account Limits.
 Der separate Beobachter läuft auf dem RS Hub und auf allen acht Worker-Macs.
 Er entscheidet nicht über Aufträge und verändert keine Kundenobjekte.
