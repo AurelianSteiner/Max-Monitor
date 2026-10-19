@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged, nativeSourceKey, readWorker, workerArtifactBundle, main, buildCause, storedMonitorPreferences } from './setup-mac-monitor.mjs';
+import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged, nativeSourceKey, readWorker, workerArtifactBundle, workerArtifactManifest, main, buildCause, storedMonitorPreferences } from './setup-mac-monitor.mjs';
 import { createHash } from 'node:crypto';
 
 const DEVICE_ID = '610be10e-8a00-4e00-b000-000000000051';
@@ -1336,6 +1336,91 @@ test('a directly requested paused artifact cannot fall back to a native build', 
     sha256:'b'.repeat(64),tag:'worker-native-'+'a'.repeat(12),asset:'Max-Monitor-worker.zip',paused:true}));
   await assert.rejects(workerArtifactBundle(REVISION,async()=>assert.fail('no artifact action while paused'),{manifestPath}),
     {code:'MONITOR_RELEASE_PAUSED'});
+});
+
+test('a paused canary admits only the registered worker and preserves the existing binding', async t => {
+  for (const selected of [false,true]) {
+    const f=await fixture(t,{previous:true,configured:true});
+    const old=f.runningApp(), binding={...f.state.status};
+    f.dependencies.manifestReader=async()=>({schema:1,version:'2.14.1',sourceRevision:REVISION,
+      paused:true,canaryWorkerIds:['mac-5']});
+    if (!selected) f.worker.workerId='mac-50';
+    let artifactOptions;
+    f.dependencies.artifactReader=async(revision,runner,options)=>{artifactOptions=options;return f.source;};
+    const result=await setup({...f.options,appBundle:undefined,updateOnly:true},f.dependencies);
+    if (selected) {
+      assert.equal(result.mode,'installed');
+      assert.equal(await f.marker(),'new app');
+      assert.deepEqual(artifactOptions,{installedAppPath:f.options.appPath,workerId:'mac-5'});
+      assert.deepEqual(f.state.status,binding);
+      assert.ok(!f.calls.some(c=>c.command==='ssh'||c.args[0]==='--enroll'));
+    } else {
+      assert.equal(result.reason,'release_paused');
+      assert.equal(artifactOptions,undefined);
+      assert.equal(await f.marker(),'previous app');
+      assert.deepEqual(f.state.runningApps,[old]);
+      assert.equal(f.calls.length,1);
+    }
+  }
+});
+
+test('a paused canary cannot inspect the app or build after a native source mismatch', async t => {
+  const f=await fixture(t,{previous:true,configured:true}),old=f.runningApp();
+  f.dependencies.manifestReader=async()=>({schema:1,version:'2.14.1',sourceRevision:'a'.repeat(40),
+    paused:true,canaryWorkerIds:[f.worker.workerId]});
+  const runner=f.dependencies.runner;
+  f.dependencies.runner=(command,args,options)=>command==='git'&&args.includes('diff')
+    ? Promise.resolve('Usage4Claude/Services/CredentialVault.swift\n') : runner(command,args,options);
+  f.dependencies.appReader=async()=>assert.fail('native mismatch must preserve the running app before inspection');
+  f.dependencies.artifactReader=async()=>assert.fail('native mismatch cannot download or build');
+  const result=await setup({...f.options,appBundle:undefined,updateOnly:true},f.dependencies);
+  assert.equal(result.reason,'release_canary_source_mismatch');
+  assert.equal(await f.marker(),'previous app');
+  assert.deepEqual(f.state.runningApps,[old]);
+  assert.ok(f.calls.every(c=>c.command==='git'));
+});
+
+test('a vanished canary artifact cannot fall through to a source build or stop the installed app', async t => {
+  const f=await fixture(t,{previous:true,configured:true}),old=f.runningApp();
+  f.dependencies.manifestReader=async()=>({schema:1,version:'2.14.1',sourceRevision:REVISION,
+    paused:true,canaryWorkerIds:[f.worker.workerId]});
+  f.dependencies.artifactReader=async()=>null;
+  await assert.rejects(setup({...f.options,appBundle:undefined,updateOnly:true},f.dependencies),{code:'MONITOR_RELEASE_PAUSED'});
+  assert.equal(await f.marker(),'previous app');
+  assert.deepEqual(f.state.runningApps,[old]);
+  assert.ok(!f.calls.some(c=>c.args.includes('terminate')||c.command==='/bin/bash'||c.command==='/usr/bin/open'));
+});
+
+test('paused artifact admission requires the exact canary identity, pinned content and matching native source', async t => {
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'monitor-canary-artifact-'));
+  t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  const content=Buffer.from('pinned canary archive'),manifestPath=path.join(dir,'manifest.json');
+  const manifest={schema:1,version:'2.15.2',sourceRevision:'a'.repeat(40),
+    sha256:createHash('sha256').update(content).digest('hex'),tag:'worker-native-'+'a'.repeat(12),
+    asset:'Max-Monitor-worker.zip',paused:true,canaryWorkerIds:['mac-5']};
+  await fs.writeFile(manifestPath,JSON.stringify(manifest));
+  for (const workerId of [undefined,'mac-50','MAC-5']) {
+    await assert.rejects(workerArtifactBundle(REVISION,async()=>assert.fail('unlisted worker cannot perform artifact actions'),
+      {manifestPath,workerId}),{code:'MONITOR_RELEASE_PAUSED'});
+  }
+  let changed=false,downloads=0;
+  const runner=async(command,args)=>{
+    if(command==='git')return changed&&args.includes('diff')?'Usage4Claude/Services/CredentialVault.swift\n':'';
+    if(command==='gh'){downloads++;await fs.writeFile(path.join(args[args.indexOf('--dir')+1],manifest.asset),content);return '';}
+    if(command==='/usr/bin/ditto'){await appBundle(path.join(args.at(-1),'Max Monitor.app'),'verified canary');return '';}
+    if(command==='/usr/bin/codesign'||command==='/usr/bin/security')return '';
+    assert.fail(command);
+  };
+  const options={manifestPath,workerId:'mac-5',cacheRoot:path.join(dir,'cache')};
+  const bundle=await workerArtifactBundle(REVISION,runner,options);
+  assert.equal(await fs.readFile(path.join(bundle,'Contents','marker'),'utf8'),'verified canary');
+  changed=true;
+  await assert.rejects(workerArtifactBundle(REVISION,runner,options),{code:'MONITOR_RELEASE_PAUSED'});
+  assert.equal(downloads,1);
+  for (const canaryWorkerIds of ['mac-5',['mac-5','mac-6'],['mac-5;open'],[5]]) {
+    await fs.writeFile(manifestPath,JSON.stringify({...manifest,canaryWorkerIds}));
+    await assert.rejects(workerArtifactManifest(manifestPath),/ungültig/);
+  }
 });
 
 test('argument parsing and enrollment validation reject unsafe options; loopback requires explicit opt-in', () => {
