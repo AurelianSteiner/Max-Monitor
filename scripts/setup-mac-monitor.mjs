@@ -443,6 +443,7 @@ async function artifactMatchesSource(manifest, revision, runner) {
 export async function workerArtifactBundle(revision, runner = run, {
   manifestPath = path.join(ROOT,'releases','worker-native.json'),
   cacheRoot = path.join(ROOT,'build','worker-artifacts'),
+  installedAppPath,
 } = {}) {
   const manifest = await workerArtifactManifest(manifestPath);
   if (!manifest) return null;
@@ -472,25 +473,46 @@ export async function workerArtifactBundle(revision, runner = run, {
   await runner('/usr/bin/codesign',['--verify','--deep','--strict',bundle],{label:'App-Signatur prüfen'});
   // Reuse the Mac's existing local app signing identity, as the source build does.
   // The publisher's archive has already passed its pinned hash and signature checks.
-  const identities = await runner('/usr/bin/security',['find-identity','-v','-p','codesigning'],{label:'Lokale App-Signatur lesen'});
-  const local = identities.match(/\b([A-F0-9]{40}) "Claude Max Monitor Signing"/i);
-  if (local) {
-    await runner('/usr/bin/codesign',['--force','--deep','--sign',local[1],'--timestamp=none',
-      '--preserve-metadata=entitlements,flags,runtime',bundle],{label:'App-Signatur mit vorhandener Mac-Identität versehen'});
+  let localIdentity;
+  if (installedAppPath) {
+    const requirement = await signingRequirement(installedAppPath,runner);
+    if (/\bcertificate\b/.test(requirement)) {
+      // Resolve only the certificate already trusted by the installed app.
+      // `find-identity -v` can omit a usable existing self-signed identity;
+      // codesign itself must resolve its private key without exporting it.
+      localIdentity = requirement.match(/\bcertificate leaf\s*=\s*H"([A-F0-9]{40})"/i)?.[1];
+      if (!localIdentity) throw new Error('App-Signatur: Vorhandenes Zertifikat nicht eindeutig lesbar; installierte App bleibt erhalten.');
+    }
+    // An existing ad-hoc app keeps the pinned artifact's ad-hoc signature.
+    // An unrelated local certificate must not change its access identity.
+  } else {
+    const identities = await runner('/usr/bin/security',['find-identity','-v','-p','codesigning'],{label:'Lokale App-Signatur lesen'});
+    localIdentity = identities.match(/\b([A-F0-9]{40}) "Claude Max Monitor Signing"/i)?.[1];
+  }
+  if (localIdentity) {
+    try {
+      await runner('/usr/bin/codesign',['--force','--deep','--sign',localIdentity,'--timestamp=none',
+        '--preserve-metadata=entitlements,flags,runtime',bundle],{label:'App-Signatur mit vorhandener Mac-Identität versehen'});
+    } catch {
+      throw Object.assign(new Error('App-Signatur: Vorhandene private Signieridentität nicht verfügbar; installierte App bleibt erhalten.'),
+        {code:'MONITOR_SIGNING_IDENTITY_UNAVAILABLE'});
+    }
     await runner('/usr/bin/codesign',['--verify','--deep','--strict',bundle],{label:'App-Signatur prüfen'});
+    if (installedAppPath) await preserveExistingSigningIdentity(installedAppPath,bundle,runner);
   }
   return bundle;
 }
 
-export async function preserveExistingSigningIdentity(installed, candidate, runner = run) {
-  const read = async bundle => {
+async function signingRequirement(bundle,runner) {
     const output = await runner('/usr/bin/codesign',['-d','-r-',bundle],
       {label:'Vorhandene App-Signieridentität prüfen'});
     const requirement = output.trim().match(/^(?:# )?designated => (.+)$/m)?.[1];
     if (!requirement) throw new Error('App-Signatur: Vorhandene Signieridentität nicht lesbar; installierte App bleibt erhalten.');
     return requirement;
-  };
-  const before = await read(installed), after = await read(candidate);
+}
+
+export async function preserveExistingSigningIdentity(installed, candidate, runner = run) {
+  const before = await signingRequirement(installed,runner), after = await signingRequirement(candidate,runner);
   if (!/\bcertificate\b/.test(before)) {
     if (/\bcertificate\b/.test(after))
       throw new Error('App-Signatur: Wechsel der vorhandenen Signieridentität nicht erlaubt; installierte App bleibt erhalten.');
@@ -585,7 +607,7 @@ async function updateExistingMonitor(options, {worker, app, revision, release, r
   // CPU on a native build/download that cannot be installed; recheck at swap.
   await requireUnlockedLoginKeychain(runner);
   let bundle = options.appBundle;
-  const artifact = !bundle ? await artifactReader(revision,runner) : null;
+  const artifact = !bundle ? await artifactReader(revision,runner,{installedAppPath:options.appPath}) : null;
   bundle ||= artifact;
   if (!bundle) {
     // Back-off: the same native code with the same compiler failed recently.
@@ -748,7 +770,7 @@ async function setupSteps(options, { runner = run, workerReader = readWorker,
   if (preflight.ok !== true || preflight.schema !== 1) throw new Error('Max Monitor ist auf dem Hub noch nicht bereitgestellt.');
   }
   let bundle = options.appBundle;
-  const artifact = !bundle && options.updateOnly ? await artifactReader(revision,runner) : null;
+  const artifact = !bundle && options.updateOnly ? await artifactReader(revision,runner,{installedAppPath:options.appPath}) : null;
   bundle ||= artifact;
   if (!bundle) {
     log('Max Monitor: aktuelle App aus dem Repo bauen.');
