@@ -23,13 +23,17 @@ export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}, bindings =
       && set.taskId === run.taskId && set.workerId === (run.workerId || row.workerId)
       && (set.headRunId || set.runId) === run.id && set.threadTs
       && (stage !== 'translation' || row.id === `clickup:translation-${String(set.language).toLowerCase()}:${set.taskId}`));
-    // Never guess between two journals for one source attempt.
-    if (matches.length !== 1) continue;
-    const set = matches[0];
-    const pending = jobs.some(job => job.setId === set.id && job.sourceVersion === set.sourceVersion
-      && job.state === 'queued' && set.questions.some(q => q.id === job.questionId && q.status === 'accepted' && q.revision === job.revision));
-    const open = set.questions.filter(q => ['open', 'waiting'].includes(q.status));
-    if (!pending && !open.length) continue;
+    // An answered predecessor keeps its accepted questions and moves its head to
+    // the continuation. A new follow-up may bind to that same head repeatedly.
+    // Only journals still waiting for an answer or a queued continuation compete.
+    const waiting = matches.map(set => ({ set,
+      pending: jobs.some(job => job.setId === set.id && job.sourceVersion === set.sourceVersion
+        && job.state === 'queued' && set.questions.some(q => q.id === job.questionId && q.status === 'accepted' && q.revision === job.revision)),
+      open: set.questions.filter(q => ['open', 'waiting'].includes(q.status)),
+    })).filter(({ pending, open }) => pending || open.length);
+    // Never guess between genuinely competing open journals for one attempt.
+    if (waiting.length !== 1) continue;
+    const { set, open } = waiting[0];
     row.attemptId = run.id;
     row.updatedAt = new Date(Math.max(Date.parse(row.updatedAt) || 0, set.createdAt || 0)).toISOString();
     row.blockedReason = open.map(q => `${q.id}: ${q.title}`).join(' · ').slice(0, 500) || undefined;

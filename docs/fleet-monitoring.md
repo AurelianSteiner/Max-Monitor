@@ -430,6 +430,12 @@ unter **Läuft** mit „Paket läuft“. Die Zuordnung nutzt dieselbe ClickUp-Au
 oder einen eindeutigen Briefing-Link zur DE-Aufgabe desselben Kunden. Status und
 Worker-Plätze der einzelnen Fassung bleiben erhalten; Blockaden, Pausen und
 PM-Rückfragen bleiben in ihrer bisherigen Ansicht.
+Mehrere PM-Rückfragen nacheinander gehören weiterhin zum selben Auftrag.
+Ein beantworteter Fragensatz mit bereits gestarteter Fortsetzung bleibt als
+Verlauf erhalten, konkurriert aber nicht mit der offenen Folgefrage am aktuellen
+Lauf. Nur Fragensätze mit offenen Fragen oder einer gültigen, noch wartenden
+Antwortfortsetzung bestimmen die Anzeige. Mehrere tatsächlich konkurrierende
+Fragensätze werden weiterhin nicht anhand ihres Alters erraten.
 Ist eine EN-Mail unter derselben ClickUp-ID bereits im Review, blendet die Ansicht
 ihren unreservierten alten Übersetzungs-Tag-Eintrag aus. Die abgeschlossene Mail
 bleibt erhalten; aktive oder blockierte Übersetzungen werden nicht ausgeblendet.

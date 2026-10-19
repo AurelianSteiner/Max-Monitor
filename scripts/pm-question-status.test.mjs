@@ -82,6 +82,48 @@ test('a retired historical question set cannot hide the active replacement on th
   assert.equal(current.status,'queued');assert.equal(current.blockedReason,'Q3: Gutscheincode?');
 });
 
+test('successive PM follow-ups ignore answered journals already dispatched to the same head run', () => {
+  for (const [workflow, stage] of [['newsletter','newsletter'], ['correction','korrektur'], ['upload','klaviyo'], ['translation','translation']]) {
+    for (const round of [2, 3, 4]) {
+      const old = Array.from({ length: round - 1 }, (_, i) => set(stage, { id: `old${i}`, runId: `previous${i}`,
+        headRunId: 'run1', language: 'DE', questions: [{ id: `Q${i + 1}`, title: 'Ersatz verwenden', status: 'accepted', revision: 1 }] }));
+      const followup = set(stage, { id: 'followup', language: 'DE',
+        questions: [{ id: `Q${round}`, title: 'Welches Ersatzprodukt?', status: 'open', revision: 1 }] });
+      const jobs = old.map(s => ({ setId: s.id, questionId: s.questions[0].id, sourceVersion: s.sourceVersion,
+        revision: 1, state: 'dispatched', dispatchRunId: 'run1' }));
+      for (const sets of [[...old, followup], [followup, ...old].reverse(), [followup, ...old]]) {
+        const snapshot = JSON.stringify({ sets, jobs });
+        const current = row(workflow, workflow === 'translation' ? { id: 'clickup:translation-de:t1' } : {});
+        applyPmQuestions([current], { sets, jobs });
+        assert.equal(current.phase, 'Wartet · PM-Rückfrage', `${workflow}, round ${round}`);
+        assert.equal(current.reasonCode, 'pm_decision_pending');
+        assert.equal(current.blockedReason, `Q${round}: Welches Ersatzprodukt?`);
+        assert.equal(current.responsibleRole, 'PM');
+        assert.equal(JSON.stringify({ sets, jobs }), snapshot, 'history and answers remain unchanged');
+      }
+    }
+  }
+});
+
+test('an answered follow-up queues its continuation despite its dispatched predecessor', () => {
+  const previous = set('newsletter', { id: 'previous', runId: 'before', headRunId: 'run1',
+    questions: [{ id: 'Q1', title: 'Ersatz verwenden?', status: 'accepted', revision: 1 }] });
+  const followup = set('newsletter', { id: 'followup', questions: [{ id: 'Q2', title: 'Welches Produkt?', status: 'accepted', revision: 2 }] });
+  const jobs = [
+    { setId: 'previous', questionId: 'Q1', sourceVersion: 'v1', revision: 1, state: 'dispatched', dispatchRunId: 'run1' },
+    { setId: 'followup', questionId: 'Q2', sourceVersion: 'v1', revision: 2, state: 'queued' },
+  ];
+  const current = row('newsletter');
+  applyPmQuestions([current], { sets: [previous, followup], jobs });
+  assert.equal(current.phase, 'Wartet auf Fortsetzung');
+  assert.equal(current.reasonCode, 'continuation_pending');
+  for (const overrides of [{ revision: 1 }, { sourceVersion: 'obsolete' }, { state: 'dispatched' }]) {
+    const blocked = row('newsletter');
+    applyPmQuestions([blocked], { sets: [previous, followup], jobs: [jobs[0], { ...jobs[1], ...overrides }] });
+    assert.equal(blocked.status, 'blocked', 'obsolete or dispatched answers cannot disguise a technical failure');
+  }
+});
+
 test('archived journals cannot replace an active decision or revive a retired question', () => {
   const old=set('klaviyo',{id:'archived',archivedAt:1234});
   const only=row();applyPmQuestions([only],{sets:[old]});assert.equal(only.status,'blocked');
