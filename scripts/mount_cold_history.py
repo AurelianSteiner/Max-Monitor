@@ -13,13 +13,13 @@ import time
 from cold_history import digest, attributes
 
 
-def activate(source, image, metadata, verification, work, fstab=Path('/etc/fstab')):
+def activate(source, image, metadata, verification, work, fstab=Path('/etc/fstab'), guard=None):
     with Path('/run/lock/max-monitor-cold-history.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        return _activate(source, image, metadata, verification, work, fstab)
+        return _activate(source, image, metadata, verification, work, fstab, guard)
 
 
-def _activate(source, image, metadata, verification, work, fstab):
+def _activate(source, image, metadata, verification, work, fstab, guard=None):
     if source.is_symlink() or image.is_symlink():
         raise ValueError('Symlink mount sources are not allowed')
     source, image, work = source.resolve(), image.resolve(), work.resolve()
@@ -35,9 +35,16 @@ def _activate(source, image, metadata, verification, work, fstab):
     old_fstab = fstab.read_bytes()
     if any(line.split()[1:2] == [str(source)] for line in old_fstab.decode().splitlines() if not line.lstrip().startswith('#')):
         raise ValueError('An existing fstab entry owns this mount')
+    def image_identity():
+        s = image.stat()
+        return (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+
+    identity = image_identity()
     image_sha = digest(image)
     if proof.get('image_sha256') != image_sha:
         raise ValueError('The image differs from its full verification receipt')
+    if image_identity() != identity:
+        raise ValueError('Image changed during verification')
     # Recheck the entire immutable source immediately before covering it.
     with gzip.open(metadata, 'rt') as stream:
         for line in stream:
@@ -56,6 +63,8 @@ def _activate(source, image, metadata, verification, work, fstab):
         os.fsync(directory)
     finally:
         os.close(directory)
+    if guard:
+        guard(source, None)
     work.mkdir(mode=0o700, parents=True, exist_ok=False)
     old = work/'original'
     old.mkdir(mode=0o700)
@@ -83,9 +92,7 @@ def _activate(source, image, metadata, verification, work, fstab):
         subprocess.run(['mount', '-t', 'squashfs', '-o', 'loop,ro,nodev,nosuid,noexec', str(image), str(lower)], check=True)
         lower_mounted = True
         overlay_options = 'lowerdir='+str(lower)+',upperdir='+str(upper)+',workdir='+str(overlay_work)+',nodev,nosuid,noexec'
-        subprocess.run(['mount', '-t', 'overlay', 'overlay', '-o', overlay_options, str(source)], check=True)
-        mounted = True
-        if fstab.read_bytes() != old_fstab or digest(image) != image_sha:
+        if fstab.read_bytes() != old_fstab or image_identity() != identity:
             raise ValueError('Activation source drift')
         line = ('\n# Lossless cold history; full metadata and proof: '+str(work)+'\n'
                 +str(image)+' '+str(lower)+' squashfs loop,ro,nodev,nosuid,noexec 0 0\n'
@@ -94,13 +101,17 @@ def _activate(source, image, metadata, verification, work, fstab):
         with temporary.open('wb') as stream:
             stream.write(old_fstab+line.encode());stream.flush();os.fsync(stream.fileno())
         temporary.chmod(0o644);temporary.replace(fstab)
+        configured = True
         directory = os.open(str(fstab.parent), os.O_RDONLY)
         try:
             os.fsync(directory)
         finally:
             os.close(directory)
-        configured = True
         subprocess.run(['systemctl', 'daemon-reload'], check=True)
+        # Persist BEFORE publishing. A crash after the atomic mount must keep
+        # subsequent overlay writes visible after reboot as well.
+        subprocess.run(['mount', '-t', 'overlay', 'overlay', '-o', overlay_options, str(source)], check=True)
+        mounted = True
         filesystem = subprocess.check_output(['findmnt', '-n', '-o', 'FSTYPE', '--target', str(source)], text=True).strip()
         if filesystem != 'overlay':
             raise ValueError('Compressed history is not mounted')
@@ -118,7 +129,9 @@ def _activate(source, image, metadata, verification, work, fstab):
         (work/'receipt.json').write_text(json.dumps(receipt, sort_keys=True))
     except BaseException:
         if mounted:
-            subprocess.run(['umount', str(source)], check=True)
+            # New opens may already have written into upper. Keep both layers,
+            # the persistent configuration and the private original bind.
+            raise
         if lower_mounted:
             subprocess.run(['umount', str(lower)], check=True)
         if configured:
@@ -128,6 +141,10 @@ def _activate(source, image, metadata, verification, work, fstab):
         raise
     # Bytes are fully verified, durable and mounted at the original paths.
     # Remove only the duplicate backing entries through our private bind alias.
+    # A failed final guard deliberately retains BOTH the mounted image and the
+    # original bind alias. Rolling back here could hide new overlay writes.
+    if guard:
+        guard(source, old)
     for child in old.iterdir():
         if child.is_dir() and not child.is_symlink():
             shutil.rmtree(child)
