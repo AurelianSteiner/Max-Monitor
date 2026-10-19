@@ -1,5 +1,65 @@
 # Verbrauch & Aufwand
 
+## Frische, Wiederherstellung und verlustfreie Ablage
+
+`max-monitor-quota-watchdog.timer` prüft alle 30 Sekunden den Inhalt von
+`generated_at`, nicht nur Prozessstatus oder Dateidatum. Nach zwei getrennten
+Prüfungen mit mehr als drei Minuten alten/ungültigen Daten startet er ausschließlich
+`max-monitor-quota.service` neu. Bewusst gestoppte Dienste bleiben gestoppt;
+Anlaufzeit und zehn Minuten Abstand zwischen Wiederherstellungsversuchen schützen
+vor Neustartschleifen. Der private Zustandsbeleg liegt unter
+`/var/lib/max-monitor-quota-watchdog/state.json`. Newsletter-Worker, Hub, Queue
+und Relay werden nicht neu gestartet.
+
+Die Zuordnung eines Antwortzugs zu seiner zeitlich nächsten Quotenmessung nutzt
+eine binäre Suche. Gleiche Zeitpunkte, gleich große Abstände und unbekannte
+Account-Zuordnungen behalten das bisherige Ergebnis.
+
+Jede Ledger-Verbindung begrenzt das nach einem sicheren WAL-Recycling aufbewahrte
+Journal auf 1 MiB. Passive Checkpoints und ein kleinerer Auto-Checkpoint erhalten
+aktive Leser und sämtliche bestätigten Transaktionen; eine gerade aktive WAL kann
+vorübergehend größer sein.
+
+Vor der bisherigen Bereinigung des heißen Datenbestands werden alle betroffenen
+Zeilen einschließlich sämtlicher Spalten in `raw_archives` verlustfrei mit zlib 9
+komprimiert und per SHA-256 geprüft. Archiv und Entfernung werden gemeinsam
+bestätigt; bei einem Fehler bleiben die Rohzeilen erhalten. Bereits vor Einführung
+entfernte Rohdaten werden dadurch nicht rekonstruiert. Die vorhandenen komprimierten
+Aufgabensummen bleiben zusätzlich erhalten.
+
+```sh
+python3 /opt/max-monitor-quota/quota_archive.py verify
+python3 /opt/max-monitor-quota/quota_archive.py export --output /private/new-export.jsonl.xz
+```
+
+Für unveränderliche Wiederherstellungshistorie kann ein komprimiertes SquashFS
+unter den bisherigen Pfaden eingehängt werden. `scripts/cold_history.py` sichert
+vorher die vollständigen Dateimetadaten einschließlich Nanosekunden und prüft
+danach jede Datei, Verknüpfung, Berechtigung und jedes erweiterte Attribut. Inhalte
+werden per SHA-256 verglichen; Hardlinks werden nur einmal gelesen. Originale
+werden erst nach erfolgreicher Prüfung und bestätigter Einhängung freigegeben.
+Aktive Datenbanken oder laufende Auftragsdateien werden nicht umgepackt.
+
+`scripts/mount_cold_history.py` bindet nur eine zuvor vollständig geprüfte,
+unveränderliche Historie ein. Der Beleg ist an Quellpfad, Image-Hash und den
+Metadatenkatalog gebunden. Vor der Einhängung wird der Quellstand erneut geprüft.
+Ein privater Bind-Mount hält den alten Bestand während der atomaren Überdeckung
+zugänglich; dadurch bleiben bestehende Leser und sämtliche ursprünglichen Pfade
+erhalten. Über dem unveränderlichen SquashFS liegt eine kleine schreibbare
+Overlay-Schicht: vorhandene SQLite-Leser dürfen dort ihre Journaldateien anlegen,
+und spätere Belege bleiben schreibbar. Normale Lesezugriffe kopieren die großen
+Dateien nicht aus dem komprimierten Bestand. Auch die Mount-Namespaces der
+laufenden Hub-, Queue- und Relay-Dienste werden vor der Freigabe geprüft.
+Die beiden Einhängungen und ihre Reihenfolge werden dauerhaft in `/etc/fstab` hinterlegt. Erst danach
+werden die nachweislich identischen unkomprimierten Kopien freigegeben.
+
+Der Linux-Abnahmetest `scripts/test_cold_history_linux.py` führt diesen gesamten
+Weg mit isolierten Testdateien, Hardlinks, erweiterten Attributen und einer echten
+SQLite-Datei durch. Er verändert keine produktive fstab und läuft nur mit
+Linux-Mount-Berechtigung. Vollständige Original-Metadaten bleiben als komprimierter
+Katalog neben dem Image verfügbar, auch die im Dateisystem auf Sekunden gerundeten
+Zeitstempel in ihrer ursprünglichen Nanosekundenauflösung.
+
 Max Monitor zeigt einen eigenen Reiter zwischen Queue & Macs und Account Limits.
 Der separate Beobachter läuft auf dem RS Hub und auf allen acht Worker-Macs.
 Er entscheidet nicht über Aufträge und verändert keine Kundenobjekte.

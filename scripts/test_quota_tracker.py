@@ -6,6 +6,9 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+import hashlib
+import zlib
+import random
 from unittest.mock import patch
 
 
@@ -40,6 +43,62 @@ def payload(messages=True):
 class LedgerTests(unittest.TestCase):
     def setUp(self):
         self.ledger = ledger_module.Ledger(":memory:")
+
+    def test_binary_lookup_preserves_linear_results_including_ambiguous_ties(self):
+        rng = random.Random(11)
+        for _ in range(200):
+            rows = sorted([(rng.randrange(8000), rng.choice(['a','b',None])) for _ in range(50)], key=lambda q:q[0])
+            rows += [(rows[-1][0], None)]
+            at = rng.randrange(12000)
+            nearby = [q for q in rows if abs(q[0]-at) <= 1800]
+            expected = min(nearby, key=lambda q: abs(q[0]-at)) if nearby else None
+            self.assertEqual(ledger_module.nearest_observation(rows, [q[0] for q in rows], at), expected)
+        rows = [(0,None),(0,'a'),(100,'b')]
+        self.assertEqual(ledger_module.nearest_observation(rows,[0,0,100],50),(0,None))
+
+    def test_archive_export_verifies_the_complete_original_record(self):
+        archive = module('quota_archive')
+        expected = {'events': [{'id': 'original', 'windows': '{"full":"ä"}', 'output_tokens': 17}]}
+        self.ledger.archive_rows(expected, NOW)
+        self.ledger.db.commit()
+        raw = list(archive.records(self.ledger.db))
+        self.assertEqual(json.loads(raw[0])['tables'], expected)
+        self.ledger.db.execute("UPDATE raw_archives SET payload=?", (zlib.compress(b'corrupted'),))
+        with self.assertRaises(ValueError):
+            list(archive.records(self.ledger.db))
+
+    def test_pruned_raw_data_remains_complete_and_losslessly_exportable(self):
+        self.ledger.reset(NOW-1)
+        self.ledger.fleet(fleet(NOW, 10), NOW)
+        self.ledger.ingest(payload(), NOW+600)
+        self.ledger.fleet(fleet(NOW+600, 14), NOW+600)
+        self.ledger.dashboard(NOW+700)
+        expected = {table: [dict(r) for r in self.ledger.db.execute('SELECT * FROM '+table)]
+                    for table in ('events','runs','samples')}
+        self.ledger.dashboard(NOW+3*86400)
+        archived = {table: [] for table in expected}
+        for row in self.ledger.db.execute('SELECT * FROM raw_archives'):
+            raw = zlib.decompress(row['payload'])
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), row['id'])
+            self.assertEqual(len(raw), row['raw_bytes'])
+            for table, values in json.loads(raw)['tables'].items():
+                if table in archived:
+                    archived[table].extend(values)
+        for table, values in expected.items():
+            remaining = [dict(r) for r in self.ledger.db.execute('SELECT * FROM '+table)]
+            for value in values:
+                self.assertIn(value, archived[table]+remaining)
+        self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM events').fetchone()[0], 0)
+
+    def test_archive_failure_never_removes_raw_evidence(self):
+        self.ledger.reset(NOW-1)
+        self.ledger.ingest(payload(), NOW+600)
+        expected = [dict(r) for r in self.ledger.db.execute('SELECT * FROM events')]
+        with patch.object(self.ledger, 'archive_rows', side_effect=ValueError('archive failed')):
+            with self.assertRaises(ValueError):
+                self.ledger.dashboard(NOW+3*86400)
+        self.assertEqual([dict(r) for r in self.ledger.db.execute('SELECT * FROM events')], expected)
+        self.assertFalse(self.ledger.db.in_transaction)
 
     def test_materialization_serializes_concurrent_observer_writes(self):
         with tempfile.TemporaryDirectory() as directory:
