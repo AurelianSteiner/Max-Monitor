@@ -52,6 +52,9 @@ Dateien nicht aus dem komprimierten Bestand. Auch die Mount-Namespaces der
 laufenden Hub-, Queue- und Relay-Dienste werden vor der Freigabe geprüft.
 Die beiden Einhängungen und ihre Reihenfolge werden dauerhaft in `/etc/fstab` hinterlegt. Erst danach
 werden die nachweislich identischen unkomprimierten Kopien freigegeben.
+Die Konfiguration wird vor dem atomaren Überdecken dauerhaft gespeichert.
+Nach dem Überdecken bleiben bei Fehlern beide Ebenen und die Originale erhalten;
+ein automatischer Rollback könnte sonst neue Overlay-Schreibdaten verdecken.
 
 Der Linux-Abnahmetest `scripts/test_cold_history_linux.py` führt diesen gesamten
 Weg mit isolierten Testdateien, Hardlinks, erweiterten Attributen und einer echten
@@ -59,6 +62,74 @@ SQLite-Datei durch. Er verändert keine produktive fstab und läuft nur mit
 Linux-Mount-Berechtigung. Vollständige Original-Metadaten bleiben als komprimierter
 Katalog neben dem Image verfügbar, auch die im Dateisystem auf Sekunden gerundeten
 Zeitstempel in ihrer ursprünglichen Nanosekundenauflösung.
+
+## Automatische Komprimierung neuer Archivbestände
+
+`max-monitor-cold-storage.timer` läuft alle sechs Stunden (00:35, 06:35,
+12:35 und 18:35 UTC, bis fünf Minuten zufällig versetzt). Verpasste Läufe
+werden nach einem Neustart nachgeholt. Pro Lauf wird höchstens ein neuer
+Bestand komprimiert. Der eigene Dienst nutzt zwei CPU-Kerne, höchstens 8 GiB
+RAM und die niedrigste CPU-/I/O-Priorität. Hub, Queue, Relay und Worker werden
+nicht angehalten oder neu gestartet.
+Der Image-Ersteller begrenzt seinen eigenen Cache zusätzlich auf 1 GiB.
+
+Automatisch erkannt werden ausschließlich datierte historische Wurzeln
+`/var/lib/rs-hub-recovery-history-YYYYMMDD`, abgeschlossene Filestage-Audits,
+datierte Feedback-Reconciliation-Bestände und datierte Source-Original-Pakete.
+Recovery-Snapshots brauchen vollständige Manifeste; Filestage-Audits brauchen
+ihren `collectionComplete`-Beleg. Undatierte aktive Ablagen, aktuelle
+Datenbanken, Aufträge und die vom Backup-Pruner verwalteten Sicherungen auf
+dem Backup-Volume gehören nicht zu dieser Auswahl. Ihre vorhandenen
+Kompressionsformate und Aufbewahrungsregeln bleiben bestehen.
+
+Jeder Bestand muss mindestens 72 Stunden ohne Änderung sein und mindestens
+24 Stunden mit demselben Metadaten-Fingerabdruck beobachtet worden sein.
+Inhalt, Größe, Modus, Eigentümer, mtime, ctime, Inode, Hardlinks und xattrs
+gehen in die Prüfungen ein; ctime erkennt auch Änderungen mit nachträglich
+zurückgesetzter mtime. Ein offener Schreiber, ein Arbeits-/Root-Verzeichnis,
+ein Verzeichnis-Handle oder eine gemeinsam schreibbar gemappte Datei
+verhindert die Aktivierung. Zusätzliche Mounts, Spezialdateien und Hardlinks
+außerhalb des Bestands werden ausgeschlossen.
+
+Vorher müssen die unkomprimierten Originale, das neue Image und eine Reserve
+von mindestens 10 GiB bzw. 5 % des Dateisystems gleichzeitig Platz haben.
+Unterhalb der Reserve meldet der Dienst einen Fehler und bewahrt alle Daten.
+Ein Image ohne mindestens 10 % Ersparnis wird verworfen; derselbe unveränderte
+Bestand wird danach nicht wiederholt komprimiert.
+
+Nach vollständiger Inhaltsprüfung wird unmittelbar vor dem Überdecken noch
+einmal auf Schreiber und Änderungen geprüft. Vor der Speicherfreigabe erfolgt
+dies erneut über den privaten Original-Bind-Mount; zusätzlich müssen alle
+erreichbaren Prozess-Mount-Namespaces den neuen Bestand sehen. Bei einem
+Konflikt in dieser letzten Phase bleiben Image, Schreibschicht und Originale
+erhalten. Es gibt dann keinen automatischen Rollback, der neue Schreibdaten
+verdecken könnte. Der nächste Lauf meldet den aufbewahrten Vorgang zur sicheren
+Wiederherstellung, statt Daten zu entfernen. Unveröffentlichte, unterbrochene
+Image-Erstellungen dürfen automatisch neu begonnen werden.
+
+Zustand und Beobachtungen liegen privat unter
+`/var/lib/max-monitor-cold-storage/`; automatisch erzeugte Images,
+vollständige Metadaten und Prüfbelege unter
+`/var/lib/rs-hub-compressed-history/automatic/`. Bereits komprimierte Archive
+werden nicht erneut überdeckt. Die kleine Overlay-Schreibschicht erhält
+spätere Belege und SQLite-Koordinationsdateien. Verlustfreie Komprimierung
+reduziert den Zuwachs, ersetzt aber keine Kapazitätsplanung für unbegrenzt
+wachsende oder bereits komprimierte aktive Daten.
+
+```sh
+python3 scripts/install_cold_storage.py --generate-only /tmp/cold-storage-preview
+python3 scripts/install_cold_storage.py --install
+python3 /opt/max-monitor-cold-storage/auto_cold_storage.py --check
+systemctl start max-monitor-cold-storage.service
+systemctl list-timers max-monitor-cold-storage.timer
+cat /var/lib/max-monitor-cold-storage/status.json
+```
+
+`--check` verändert weder die Beobachtungsfrist noch Dateien und komprimiert
+nichts. Die Installation aktiviert nur den eigenen neuen Timer. Der Dienst
+braucht den Host-Mount-Namespace; `PrivateTmp`, `ProtectSystem`, `ProtectHome`
+und andere Einstellungen, die einen privaten Mount-Namespace erzeugen,
+dürfen hier nicht eingeschaltet werden.
 
 Max Monitor zeigt einen eigenen Reiter zwischen Queue & Macs und Account Limits.
 Der separate Beobachter läuft auf dem RS Hub und auf allen acht Worker-Macs.

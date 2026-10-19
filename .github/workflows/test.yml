@@ -141,3 +141,21 @@ jobs:
 
       - name: Check installer shell wrappers
         run: bash -n scripts/install-newsletter-monitor.sh scripts/setup-mac-monitor.sh scripts/install-monitor-hub.sh
+
+  cold-storage-tests:
+    name: Lossless cold storage (Linux mounts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install filesystem tools
+        run: sudo apt-get update -qq && sudo apt-get install -y squashfs-tools
+      - name: Verify compression, writers, mounts and safe failure recovery
+        run: |
+          sudo env PYTHONPATH=scripts python3 - <<'PY'
+          import unittest
+          suite = unittest.defaultTestLoader.discover('scripts', pattern='test_*cold*.py')
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          raise SystemExit(not result.wasSuccessful() or bool(result.skipped))
+          PY
