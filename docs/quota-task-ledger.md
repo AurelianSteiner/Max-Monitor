@@ -45,7 +45,12 @@ unveränderliche Historie ein. Der Beleg ist an Quellpfad, Image-Hash und den
 Metadatenkatalog gebunden. Vor der Einhängung wird der Quellstand erneut geprüft.
 Ein privater Bind-Mount hält den alten Bestand während der atomaren Überdeckung
 zugänglich; dadurch bleiben bestehende Leser und sämtliche ursprünglichen Pfade
-erhalten. Die Einhängung wird dauerhaft in `/etc/fstab` hinterlegt. Erst danach
+erhalten. Über dem unveränderlichen SquashFS liegt eine kleine schreibbare
+Overlay-Schicht: vorhandene SQLite-Leser dürfen dort ihre Journaldateien anlegen,
+und spätere Belege bleiben schreibbar. Normale Lesezugriffe kopieren die großen
+Dateien nicht aus dem komprimierten Bestand. Auch die Mount-Namespaces der
+laufenden Hub-, Queue- und Relay-Dienste werden vor der Freigabe geprüft.
+Die beiden Einhängungen und ihre Reihenfolge werden dauerhaft in `/etc/fstab` hinterlegt. Erst danach
 werden die nachweislich identischen unkomprimierten Kopien freigegeben.
 
 Der Linux-Abnahmetest `scripts/test_cold_history_linux.py` führt diesen gesamten

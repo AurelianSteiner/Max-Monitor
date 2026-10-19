@@ -13,6 +13,12 @@ from cold_history import digest
 
 
 def activate(source, image, metadata, verification, work, fstab=Path('/etc/fstab')):
+    with Path('/run/lock/max-monitor-cold-history.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _activate(source, image, metadata, verification, work, fstab)
+
+
+def _activate(source, image, metadata, verification, work, fstab):
     if source.is_symlink() or image.is_symlink():
         raise ValueError('Symlink mount sources are not allowed')
     source, image, work = source.resolve(), image.resolve(), work.resolve()
@@ -52,37 +58,66 @@ def activate(source, image, metadata, verification, work, fstab=Path('/etc/fstab
     work.mkdir(mode=0o700, parents=True, exist_ok=False)
     old = work/'original'
     old.mkdir(mode=0o700)
+    lower, upper, overlay_work = work/'lower', work/'upper', work/'overlay-work'
+    lower.mkdir(mode=0o700)
+    original_stat = source.stat()
+    upper.mkdir(mode=original_stat.st_mode & 0o7777)
+    os.chown(upper, original_stat.st_uid, original_stat.st_gid)
+    os.chmod(upper, original_stat.st_mode & 0o7777)
+    os.utime(upper, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+    overlay_work.mkdir(mode=0o700)
     (work/'fstab-before').write_bytes(old_fstab)
     subprocess.run(['mount', '--bind', str(source), str(old)], check=True)
     # Ubuntu's root mount is shared. Without a private bind, the image overlay
     # can propagate into the backing alias and hide the originals there too.
     subprocess.run(['mount', '--make-private', str(old)], check=True)
     mounted = False
+    lower_mounted = False
     configured = False
     try:
         # Mounting covers the old directory atomically. Existing readers keep
         # their old descriptors; new opens use the verified image immediately.
-        subprocess.run(['mount', '-t', 'squashfs', '-o', 'loop,ro,nodev,nosuid,noexec', str(image), str(source)], check=True)
+        subprocess.run(['mount', '-t', 'squashfs', '-o', 'loop,ro,nodev,nosuid,noexec', str(image), str(lower)], check=True)
+        lower_mounted = True
+        overlay_options = 'lowerdir='+str(lower)+',upperdir='+str(upper)+',workdir='+str(overlay_work)+',nodev,nosuid,noexec'
+        subprocess.run(['mount', '-t', 'overlay', 'overlay', '-o', overlay_options, str(source)], check=True)
         mounted = True
         if fstab.read_bytes() != old_fstab or digest(image) != image_sha:
             raise ValueError('Activation source drift')
-        line = '\n# Lossless cold history; full metadata and proof: '+str(work)+'\n'+str(image)+' '+str(source)+' squashfs loop,ro,nodev,nosuid,noexec 0 0\n'
+        line = ('\n# Lossless cold history; full metadata and proof: '+str(work)+'\n'
+                +str(image)+' '+str(lower)+' squashfs loop,ro,nodev,nosuid,noexec 0 0\n'
+                +'overlay '+str(source)+' overlay '+overlay_options+',x-systemd.requires-mounts-for='+str(lower)+' 0 0\n')
         temporary = fstab.with_name(fstab.name+'.cold-history.tmp')
         with temporary.open('wb') as stream:
             stream.write(old_fstab+line.encode());stream.flush();os.fsync(stream.fileno())
         temporary.chmod(0o644);temporary.replace(fstab)
+        directory = os.open(str(fstab.parent), os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
         configured = True
         subprocess.run(['systemctl', 'daemon-reload'], check=True)
         filesystem = subprocess.check_output(['findmnt', '-n', '-o', 'FSTYPE', '--target', str(source)], text=True).strip()
-        if filesystem != 'squashfs':
+        if filesystem != 'overlay':
             raise ValueError('Compressed history is not mounted')
+        if str(source).startswith(('/opt/rs-hub/', '/var/lib/rs-hub-recovery-')):
+            for service in ('rs-hub.service', 'max-monitor-queue.service', 'max-monitor-relay.service'):
+                pid = subprocess.check_output(['systemctl','show',service,'-p','MainPID','--value'],text=True).strip()
+                if pid and pid != '0':
+                    view = subprocess.check_output(['nsenter','--target',pid,'--mount','--','findmnt','-n','-o','FSTYPE','--target',str(source)],text=True).strip()
+                    if view != 'overlay':
+                        raise ValueError('Existing service cannot see the compressed history: '+service)
         receipt = {**proof, 'source': str(source), 'image': str(image), 'image_sha256': image_sha,
                    'image_bytes': image.stat().st_size, 'mounted_at': time.time(),
-                   'complete_metadata': str(metadata), 'uncompressed_released': False}
+                   'complete_metadata': str(metadata), 'uncompressed_released': False,
+                   'lower': str(lower), 'upper': str(upper), 'writable_sidecars_preserved': True}
         (work/'receipt.json').write_text(json.dumps(receipt, sort_keys=True))
     except BaseException:
         if mounted:
             subprocess.run(['umount', str(source)], check=True)
+        if lower_mounted:
+            subprocess.run(['umount', str(lower)], check=True)
         if configured:
             fstab.write_bytes(old_fstab)
             subprocess.run(['systemctl', 'daemon-reload'], check=True)
@@ -109,10 +144,8 @@ def main():
         parser.add_argument('--'+name, required=True, type=Path)
     args = parser.parse_args()
     os.umask(0o077)
-    with Path('/run/lock/max-monitor-cold-history.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        result = activate(args.source, args.image, args.metadata, args.verification, args.work)
-        print(json.dumps(result), flush=True)
+    result = activate(args.source, args.image, args.metadata, args.verification, args.work)
+    print(json.dumps(result), flush=True)
 
 
 if __name__ == '__main__':

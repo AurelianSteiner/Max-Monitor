@@ -22,6 +22,11 @@ def can_mount():
 @unittest.skipUnless(can_mount(), 'requires Linux CAP_SYS_ADMIN and squashfs-tools')
 class MountedHistoryTests(unittest.TestCase):
     def test_verified_overlay_releases_backing_files_without_changing_visible_data(self):
+        for with_xattrs in (False, True):
+            with self.subTest(with_xattrs=with_xattrs):
+                self.check_overlay(with_xattrs)
+
+    def check_overlay(self, with_xattrs):
         with tempfile.TemporaryDirectory(prefix='cold-mount-proof-') as folder:
             root = Path(folder)
             source, mounted = root/'source', root/'mounted'
@@ -32,8 +37,10 @@ class MountedHistoryTests(unittest.TestCase):
             os.link(source/'binary',source/'hardlink')
             (source/'link').symlink_to('binary')
             (source/'empty').touch()
-            os.setxattr(source/'binary','user.proof',b'full metadata')
+            if with_xattrs:
+                os.setxattr(source/'binary','user.proof',b'full metadata')
             db = sqlite3.connect(str(source/'proof.sqlite'))
+            db.execute('PRAGMA journal_mode=WAL')
             db.execute('create table proof(value text)')
             db.execute('insert into proof values(?)',('full original text ä',))
             db.commit()
@@ -53,13 +60,16 @@ class MountedHistoryTests(unittest.TestCase):
                 self.assertTrue(receipt['uncompressed_released'])
                 self.assertEqual((source/'binary').read_bytes(),original)
                 self.assertEqual((source/'binary').stat().st_ino,(source/'hardlink').stat().st_ino)
-                self.assertEqual(os.getxattr(source/'binary','user.proof'),b'full metadata')
+                if with_xattrs:
+                    self.assertEqual(os.getxattr(source/'binary','user.proof'),b'full metadata')
                 db = sqlite3.connect((source/'proof.sqlite').as_uri()+'?mode=ro',uri=True)
                 self.assertEqual(db.execute('select value from proof').fetchone()[0],'full original text ä')
                 db.close()
-                self.assertEqual(subprocess.check_output(['findmnt','-n','-o','FSTYPE','--target',str(source)],text=True).strip(),'squashfs')
+                self.assertEqual(subprocess.check_output(['findmnt','-n','-o','FSTYPE','--target',str(source)],text=True).strip(),'overlay')
+                (source/'new-reader-receipt').write_text('normal writes still work')
+                self.assertTrue((root/'activation'/'upper'/'new-reader-receipt').is_file())
             finally:
-                for path in (source,mounted,root/'activation'/'original'):
+                for path in (source,mounted,root/'activation'/'original',root/'activation'/'lower'):
                     while subprocess.run(['mountpoint','-q',str(path)]).returncode == 0:
                         subprocess.run(['umount',str(path)],check=True)
 

@@ -2,6 +2,7 @@
 """Capture full file metadata and verify a mounted lossless cold-history image."""
 import argparse
 import base64
+import errno
 import gzip
 import hashlib
 import json
@@ -34,8 +35,15 @@ def attributes(path):
     # not. Local fixture tests have no extended attributes to preserve.
     if not hasattr(os, 'listxattr'):
         return {}
-    return {key: base64.b64encode(os.getxattr(path, key, follow_symlinks=False)).decode()
-            for key in os.listxattr(path, follow_symlinks=False)}
+    try:
+        keys = os.listxattr(path, follow_symlinks=False)
+    except OSError as error:
+        if error.errno in (errno.ENOTSUP, errno.EOPNOTSUPP):
+            # A SquashFS with no xattr table reports ENOTSUP, not an empty list.
+            # A source with attributes will still fail the equality check.
+            return {}
+        raise
+    return {key: base64.b64encode(os.getxattr(path, key, follow_symlinks=False)).decode() for key in keys}
 
 
 def capture(root, output):
