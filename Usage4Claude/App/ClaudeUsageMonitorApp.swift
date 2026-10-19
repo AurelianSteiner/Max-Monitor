@@ -59,7 +59,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarManager: MenuBarManager!
 
     /// 用户设置实例
-    private let settings = UserSettings.shared
+    // UserSettings opens the protected credential store. Do not do that while
+    // SwiftUI is still constructing its app delegate, before AppKit can run.
+    private lazy var settings = UserSettings.shared
+    private var credentialStartupWindow: NSWindow?
 
     /// Sparkle 更新控制器
     /// - `startingUpdater: true` 让 Sparkle 按 Info.plist 中的
@@ -92,6 +95,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// 应用启动完成时调用
     /// 初始化菜单栏管理器，根据是否首次启动显示欢迎窗口或开始刷新数据
     func applicationDidFinishLaunching(_ notification: Notification) {
+        showCredentialStartup()
+        // Give AppKit its first run-loop turn before a protected read can ask
+        // macOS for access. A stalled SecurityServer must never freeze the UI.
+        DispatchQueue.main.async { [weak self] in
+            CredentialStartup.prepare(load: { _ = KeychainManager.shared }) { [weak self] in
+                self?.finishLaunchingAfterCredentials()
+            }
+        }
+    }
+
+    private func finishLaunchingAfterCredentials() {
+        credentialStartupWindow?.close()
+        credentialStartupWindow = nil
         NSApp.setActivationPolicy(.accessory)
 
         menuBarManager = MenuBarManager()
@@ -119,6 +135,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
     }
+
+    private func showCredentialStartup() {
+        NSApp.setActivationPolicy(.regular)
+        let title = NSTextField(labelWithString: "Gespeicherte Verbindung wird geladen …")
+        title.font = .systemFont(ofSize: 15, weight: .semibold)
+        let detail = NSTextField(wrappingLabelWithString:
+            "Bitte bestätige eine gegebenenfalls angezeigte macOS-Schlüsselbundabfrage.")
+        detail.textColor = .secondaryLabelColor
+        let progress = NSProgressIndicator()
+        progress.style = .spinning
+        progress.startAnimation(nil)
+        let quit = NSButton(title: "Beenden", target: NSApp, action: #selector(NSApplication.terminate(_:)))
+        let content = NSStackView(views: [title, detail, progress, quit])
+        content.orientation = .vertical
+        content.alignment = .centerX
+        content.spacing = 16
+        content.edgeInsets = NSEdgeInsets(top: 28, left: 28, bottom: 28, right: 28)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 210),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.title = "Max Monitor"
+        window.contentView = content
+        window.isReleasedWhenClosed = false
+        window.center()
+        credentialStartupWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
     
     /// Klick auf das App-Symbol (Dock / Finder / Spotlight) bei bereits
     /// laufender App.
@@ -127,6 +170,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// öffnen.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         NSApp.activate(ignoringOtherApps: true)
+        if let credentialStartupWindow {
+            credentialStartupWindow.makeKeyAndOrderFront(nil)
+            return true
+        }
 
         // menuBarManager ist erst nach applicationDidFinishLaunching gesetzt —
         // im Zweifel direkt über den Fenster-Manager öffnen, statt zu crashen.
