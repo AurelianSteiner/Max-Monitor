@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { prepareBridgeToken, bridgeTokenFile } from './monitor-bridge-credentials.mjs';
+import { prepareBridgeToken, bridgeTokenFile, readBridgeToken } from './monitor-bridge-credentials.mjs';
 
 function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-token-'));
@@ -19,6 +19,7 @@ test('one-time import persists privately and repeated installs/checks never quer
     assert.equal(teamId, 'DEMO1234'); calls++; return 'synthetic-token\n';
   } });
   assert.equal(fs.readFileSync(file, 'utf8'), 'synthetic-token');
+  assert.equal(readBridgeToken(file), 'synthetic-token');
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   assert.equal(fs.statSync(directory).mode & 0o777, 0o700);
   for (let i = 0; i < 3; i++) prepareBridgeToken(directory, {
@@ -76,7 +77,7 @@ test('generated scheduled runner reads local token and fails closed if it is rem
   const service = path.join(output, 'service');
   const runnerFile = path.join(service, 'run.sh');
   const stub = path.join(directory, 'bridge-stub.mjs');
-  fs.writeFileSync(stub, "if (process.env.MONITOR_BRIDGE_TOKEN !== 'test-token') process.exit(2); console.log('local token verified');");
+  fs.writeFileSync(stub, "import fs from 'node:fs'; if (fs.readFileSync(process.env.MONITOR_BRIDGE_TOKEN_FILE, 'utf8') !== 'test-token') process.exit(2); console.log('local token verified');");
   const runner = fs.readFileSync(runnerFile, 'utf8');
   assert.doesNotMatch(runner, /security|find-generic-password/);
   fs.writeFileSync(runnerFile, runner.replace(path.resolve('scripts/newsletter-monitor-bridge.mjs'), stub));

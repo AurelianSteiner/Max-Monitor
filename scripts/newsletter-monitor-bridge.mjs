@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { readBridgeToken } from './monitor-bridge-credentials.mjs';
 import { cleanupErrorCopies, createErrorCleanupWriter } from './error-copy-cleanup.mjs';
 import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
 import { applyPmOwners, createPmRoutingReader } from './pm-owner.mjs';
@@ -1593,7 +1594,8 @@ export async function syncOnce({ collect, publish, cachedSource, save }) {
 
 export function argumentsFrom(argv, env) {
   const values = { workerRoot: env.NEWSLETTER_WORKER_ROOT, relayUrl: env.MONITOR_RELAY_URL, teamId: env.MONITOR_TEAM_ID,
-    token: env.MONITOR_BRIDGE_TOKEN, workflowsFile: env.MONITOR_WORKFLOWS_FILE, fleetDirectory: env.MONITOR_HUB_FLEET_DIRECTORY,
+    token: env.MONITOR_BRIDGE_TOKEN, tokenFile: env.MONITOR_BRIDGE_TOKEN_FILE,
+    workflowsFile: env.MONITOR_WORKFLOWS_FILE, fleetDirectory: env.MONITOR_HUB_FLEET_DIRECTORY,
     interval: Number(env.MONITOR_BRIDGE_INTERVAL_SECONDS || 60), localHub: env.MONITOR_LOCAL_HUB, enrollmentConfig: env.MONITOR_ENROLLMENT_CONFIG,
     cacheFile: env.MONITOR_BRIDGE_CACHE || path.join(os.homedir(), '.cache', 'max-monitor', 'newsletter-bridge.json') };
   const keys = { '--worker-root': 'workerRoot', '--relay-url': 'relayUrl', '--team-id': 'teamId', '--workflows': 'workflowsFile', '--fleet-directory': 'fleetDirectory', '--interval': 'interval', '--cache': 'cacheFile', '--local-hub': 'localHub', '--enrollment-config': 'enrollmentConfig' };
@@ -1641,6 +1643,7 @@ export async function runSyncLoop(sync, { intervalMs, signal, once = false, now 
 
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const options = await applyEnrollmentConfiguration(argumentsFrom(argv, env));
+  if (!options.token && options.tokenFile && !options.help) options.token = readBridgeToken(options.tokenFile);
   if (options.help) {
     console.log('node scripts/newsletter-monitor-bridge.mjs --worker-root <repo> [--once|--dry-run] [--workflows <json>] [--interval 60]\nHub-Dienst: --local-hub /opt/rs-hub --enrollment-config /etc/max-monitor/enrollment.json\nRelay: MONITOR_RELAY_URL, MONITOR_TEAM_ID, MONITOR_BRIDGE_TOKEN (admin/super; nur Umgebung).');
     return;

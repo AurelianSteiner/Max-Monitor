@@ -646,7 +646,7 @@ test('installer generates a valid launchd template without including a supplied 
     const plist = await fs.readFile(plistFile, 'utf8'); const runner = await fs.readFile(path.join(output, 'service/run.sh'), 'utf8');
     assert.match(plist, /<key>StartInterval<\/key><integer>60<\/integer>/); assert.match(plist, /<key>RunAtLoad<\/key><true\/>/);
     assert.doesNotMatch(plist + runner, new RegExp(secret)); assert.doesNotMatch(plist, /MONITOR_BRIDGE_TOKEN/);
-    assert.doesNotMatch(runner, /security|find-generic-password/); assert.match(runner, /\/bin\/cat .*bridge-token/); assert.match(runner, /--once/);
+    assert.doesNotMatch(runner, /security|find-generic-password/); assert.match(runner, /MONITOR_BRIDGE_TOKEN_FILE=.*bridge-token/); assert.match(runner, /--once/);
     execFileSync('/bin/bash', ['-n', path.join(output, 'service/run.sh')]);
     if (process.platform === 'darwin') execFileSync('/usr/bin/plutil', ['-lint', plistFile]);
   } finally { await fs.rm(directory, { recursive: true, force: true }); }

@@ -84,13 +84,12 @@ const tokenFile = bridgeTokenFile(serviceDir);
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 const xml = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
 const settings = { NEWSLETTER_WORKER_ROOT: workerRoot, MONITOR_RELAY_URL: env.MONITOR_RELAY_URL, MONITOR_TEAM_ID: env.MONITOR_TEAM_ID,
+  MONITOR_BRIDGE_TOKEN_FILE: tokenFile,
   ...(env.MONITOR_WORKFLOWS_FILE ? { MONITOR_WORKFLOWS_FILE: path.resolve(env.MONITOR_WORKFLOWS_FILE) } : {}),
   ...(env.MONITOR_HUB_FLEET_DIRECTORY ? { MONITOR_HUB_FLEET_DIRECTORY: env.MONITOR_HUB_FLEET_DIRECTORY } : {}),
   ...(env.MONITOR_BRIDGE_CACHE ? { MONITOR_BRIDGE_CACHE: path.resolve(env.MONITOR_BRIDGE_CACHE) } : {}),
 };
 const runner = `#!/bin/zsh\nset -eu\n${Object.entries(settings).map(([key, value]) => `export ${key}=${quote(value)}`).join('\n')}\n` +
-  `MONITOR_BRIDGE_TOKEN="$(/bin/cat ${quote(tokenFile)})"\n` +
-  `[ -n "$MONITOR_BRIDGE_TOKEN" ] || exit 1\nexport MONITOR_BRIDGE_TOKEN\n` +
   `exec ${quote(nodePath)} ${quote(env.MONITOR_INSTALL_BRIDGE)} --once\n`;
 const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

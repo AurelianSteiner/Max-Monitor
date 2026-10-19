@@ -5,6 +5,17 @@ import { execFileSync } from 'node:child_process';
 
 export function bridgeTokenFile(directory) { return path.join(directory, 'bridge-token'); }
 
+export function readBridgeToken(file) {
+  const info = fs.lstatSync(file);
+  if (!info.isFile() || info.uid !== process.getuid() || (info.mode & 0o777) !== 0o600
+      || (fs.statSync(path.dirname(file)).mode & 0o777) !== 0o700) {
+    throw new Error('Monitor-Token benötigt eine eigene reguläre Datei und private Dateirechte.');
+  }
+  const token = fs.readFileSync(file, 'utf8').trim();
+  if (!token || /[\s\0]/.test(token)) throw new Error('Gespeicherter Monitor-Token ist leer oder ungültig.');
+  return token;
+}
+
 // Called by installation only. Scheduled runs read the private file directly.
 export function prepareBridgeToken(directory, { importLegacy = false, readLegacy = teamId =>
   execFileSync('/usr/bin/security', ['find-generic-password', '-w', '-s', 'MaxMonitor Newsletter Bridge', '-a', teamId],
