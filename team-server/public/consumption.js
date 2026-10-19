@@ -68,10 +68,12 @@
   }
   function draw(){
     const summary=data?.summary;
-    $('consumption-error').hidden=!data?.error && !data?.stale;
-    $('consumption-error').textContent=data?.error||'Die Verbrauchsmeldung ist veraltet. Prüfe die Erfassung auf dem RS Hub und aktualisiere erneut.';
+    $('consumption-error').hidden=!data?.error;
+    $('consumption-error').textContent=data?.error||'';
     $('consumption-since').textContent=summary?`Tracking seit ${date.format(new Date(summary.tracking_since))} · Berlin`:'Tracking-Start wird geladen…';
-    $('consumption-updated').textContent=summary?`Stand ${date.format(new Date(summary.generated_at))}`:'Noch keine Meldung';
+    const generated=Date.parse(summary?.generated_at);
+    $('consumption-updated').textContent=Number.isFinite(generated)
+      ?`Stand ${date.format(new Date(generated))}${data?.stale?' · wird automatisch aktualisiert':''}`:'Noch keine Meldung';
     const settings=summary?.settings||[];
     const fresh=settings.filter(s=>Date.now()-Date.parse(s.at)<180000);
     const ready=fresh.filter(s=>s.values.policy_supported==='True' && Number(s.values.policy_revision)===data.policy.revision);

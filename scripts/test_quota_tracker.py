@@ -1,6 +1,9 @@
 import importlib.util
+import io
 import json
 from pathlib import Path
+import sqlite3
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -37,6 +40,70 @@ def payload(messages=True):
 class LedgerTests(unittest.TestCase):
     def setUp(self):
         self.ledger = ledger_module.Ledger(":memory:")
+
+    def test_materialization_serializes_concurrent_observer_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            filename = Path(directory) / 'ledger.sqlite'
+            ledger = ledger_module.Ledger(filename)
+            try:
+                ledger.fleet(fleet(NOW, 10), NOW)
+                batch = payload()
+                batch['events'].append({**batch['events'][0], 'id': 'quota-second'})
+                ledger.ingest(batch, NOW + 600)
+                original = ledger.sample
+                attempted = []
+
+                def concurrent_sample(*args):
+                    if not attempted:
+                        observer = sqlite3.connect(filename, timeout=.01)
+                        try:
+                            with self.assertRaises(sqlite3.OperationalError):
+                                observer.execute("INSERT INTO metadata VALUES('concurrent','true')")
+                            attempted.append(True)
+                        finally:
+                            observer.close()
+                    return original(*args)
+
+                with patch.object(ledger, 'sample', side_effect=concurrent_sample):
+                    ledger.materialize()
+                self.assertEqual(attempted, [True])
+                self.assertFalse(ledger.db.in_transaction)
+                observer = sqlite3.connect(filename, timeout=.01)
+                with observer:
+                    observer.execute("INSERT INTO metadata VALUES('concurrent','true')")
+                observer.close()
+                ledger.fleet(fleet(NOW + 600, 14), NOW + 600)
+                self.assertEqual(ledger.dashboard(NOW + 700)['schema'], 2)
+            finally:
+                ledger.db.close()
+
+    def test_collector_rolls_back_failed_cycle_and_publishes_on_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'fleet.json'
+            public = Path(directory) / 'public' / 'TEST.json'
+            source.write_text(json.dumps(fleet(NOW, 10)))
+            original = self.ledger.fleet
+            attempts = []
+
+            def transient_failure(data):
+                if not attempts:
+                    attempts.append(True)
+                    self.ledger.meta('uncommitted', True)
+                    raise sqlite3.OperationalError('transient database lock')
+                self.assertFalse(self.ledger.db.in_transaction)
+                self.assertIsNone(self.ledger.setting('uncommitted'))
+                original(data)
+
+            output = io.StringIO()
+            argv = ['quota_ledger.py', 'serve', '--fleet', str(source), '--output', directory, '--public', str(public)]
+            with patch.object(ledger_module, 'Ledger', return_value=self.ledger), \
+                    patch.object(self.ledger, 'fleet', side_effect=transient_failure), \
+                    patch.object(sys, 'argv', argv), patch.object(sys, 'stdout', output), \
+                    patch.object(ledger_module.time, 'sleep', side_effect=[None, StopIteration]):
+                with self.assertRaises(StopIteration):
+                    ledger_module.main()
+            self.assertEqual(json.loads(public.read_text())['schema'], 2)
+            self.assertEqual(json.loads(output.getvalue())['type'], 'OperationalError')
 
     def test_parallel_jobs_partition_instead_of_double_counting(self):
         self.ledger.fleet(fleet(NOW, 10), NOW)
