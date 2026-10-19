@@ -129,31 +129,37 @@
       </section>
 
       <section id="usage-section" class="content-section consumption-section" hidden aria-label="Verbrauch und Aufwand">
-        <div class="section-heading"><h2>Verbrauch &amp; Aufwand</h2><span id="consumption-updated" class="interval">Wird geladen…</span></div>
+        <div class="consumption-heading">
+          <div class="consumption-tabs" role="tablist" aria-label="Verbrauch und Aufwand">
+            <button id="usage-next-tab" type="button" role="tab" aria-selected="true" aria-controls="usage-next" data-usage-tab="next">Nächste Aufgabe</button>
+            <button id="usage-effort-tab" type="button" role="tab" aria-selected="false" aria-controls="effort-form" tabindex="-1" data-usage-tab="effort">Aufwand je Phase</button>
+            <button id="usage-consumption-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-consumption" tabindex="-1" data-usage-tab="consumption">Verbrauch</button>
+          </div>
+          <div class="consumption-refresh"><span id="consumption-updated" class="interval">Wird geladen…</span><button id="consumption-retry" class="text-button" type="button">Verbrauchswerte aktualisieren</button></div>
+        </div>
         <div id="consumption-error" class="notice" role="status" hidden></div>
-        <article class="panel distribution-panel" aria-labelledby="distribution-heading">
-          <header class="panel-head"><h2 id="distribution-heading">Nächste Aufgabe · Mac-Präferenz</h2><label class="distribution-filter">Aufgabenart <select id="distribution-kind" name="distribution-kind" aria-label="Aufgabenart"><option value="newsletter">Pre-Gen</option><option value="correction">Korrektur</option><option value="translation">Übersetzung</option><option value="upload">Klaviyo-Upload</option></select></label></header>
-          <div class="distribution-lead"><strong id="distribution-preferred" role="status">Priorisierung wird geladen…</strong><p id="distribution-explanation"></p></div>
-          <div class="consumption-table-wrap"><table class="consumption-table distribution-table"><thead><tr><th scope="col">Mac / Einordnung</th><th scope="col">5 h frei / Reset</th><th scope="col">Woche frei / Reset</th><th scope="col">Auslastung</th><th scope="col">Warum?</th></tr></thead><tbody id="distribution-body"></tbody></table></div>
-          <details class="consumption-details"><summary>So entsteht die Präferenz</summary><p>55 % Wochenbudget bis zum Reset, 20 % freies 5-Stunden-Budget und 25 % freie Plätze nach dem nächsten Start. Das Wochenbudget wird auf die Zeit bis 18 Stunden vor dem Reset verteilt, mit mindestens 6 Stunden Planungshorizont. Macs mit sehr ähnlicher Bewertung sind gleichrangig. Fehlen überall aktuelle Kontingente, gilt die bisherige Verteilung nach belegten Plätzen.</p><p>„Frei“ zeigt das zuletzt gemeldete Account-Restkontingent. Verfügbar für neue Aufgaben ist es abzüglich des geschätzten Bedarfs laufender Aufgaben desselben Accounts. Ab 3 auswertbaren Messungen je Account und Aufgabenart prüft der Verteiler zusätzlich den Aufgabenbedarf mit Streuungs- und Rundungspuffer. Meldungen älter als 15 Minuten und abgelaufene Reset-Fenster zählen nicht als aktuelles Budget.</p><p>Vorschau für den nächsten Auftrag der gewählten Art, ohne Reservierung. Aufgabenzugang, Freigaben und die kurze Wartefrist des Workers können die tatsächliche Annahme beeinflussen. Laufende Aufgaben bleiben auf ihrem Mac. Sales folgt seiner eigenen Annahmeregel.</p><p id="distribution-updated"></p></details>
-        </article>
-        <form id="effort-form" class="panel effort-panel">
-          <header class="panel-head"><h2>Aufwand je Phase</h2><span id="effort-adoption" class="panel-meta">Mac-Meldungen werden geladen…</span></header>
-          <p class="consumption-copy">Zentrale Werte gelten auf allen Macs bei neuen Phasenstarts. Laufende Phasen und ihre Fortsetzungen behalten ihren Aufwand.</p>
+        <div id="usage-next" class="usage-panel distribution-panel" role="tabpanel" aria-labelledby="usage-next-tab" tabindex="0">
+          <div class="distribution-tabs" role="tablist" aria-label="Aufgabenart">
+            <button id="distribution-newsletter" type="button" role="tab" aria-selected="true" aria-controls="distribution-content" data-distribution-kind="newsletter">Pre-Gen</button>
+            <button id="distribution-correction" type="button" role="tab" aria-selected="false" aria-controls="distribution-content" tabindex="-1" data-distribution-kind="correction">Korrekturen</button>
+            <button id="distribution-translation" type="button" role="tab" aria-selected="false" aria-controls="distribution-content" tabindex="-1" data-distribution-kind="translation">Übersetzung</button>
+            <button id="distribution-upload" type="button" role="tab" aria-selected="false" aria-controls="distribution-content" tabindex="-1" data-distribution-kind="upload">Klaviyo-Upload</button>
+          </div>
+          <div id="distribution-content" role="tabpanel" aria-labelledby="distribution-newsletter" tabindex="0">
+            <div class="distribution-lead"><strong id="distribution-preferred" role="status">Priorisierung wird geladen…</strong></div>
+            <div class="consumption-table-wrap"><table class="consumption-table distribution-table"><thead><tr><th scope="col">Mac</th><th scope="col">5 h frei</th><th scope="col">Woche frei</th><th scope="col">Auslastung</th></tr></thead><tbody id="distribution-body"></tbody></table></div>
+          </div>
+        </div>
+        <form id="effort-form" class="usage-panel effort-panel" role="tabpanel" aria-labelledby="usage-effort-tab" tabindex="0" hidden>
           <div class="consumption-table-wrap"><table class="consumption-table effort-table"><thead><tr><th scope="col">Phase</th><th scope="col">Auf den Macs bereit</th><th scope="col">Zentraler Sollwert</th></tr></thead><tbody id="effort-body"></tbody></table></div>
-          <button id="effort-more" class="text-button panel-foot" type="button" aria-expanded="false">Sales &amp; Kundenablage anzeigen</button>
           <div class="effort-actions"><button id="effort-save" class="primary" type="submit" hidden>Aufwand zentral speichern</button><button id="effort-discard" class="text-button" type="button" hidden>Änderungen verwerfen</button><span id="effort-status" role="status"></span></div>
-          <details class="consumption-details"><summary>Übernahme je Mac</summary><ul id="effort-macs"></ul></details>
         </form>
-        <article class="panel consumption-panel">
+        <div id="usage-consumption" class="usage-panel consumption-panel" role="tabpanel" aria-labelledby="usage-consumption-tab" tabindex="0" hidden>
           <header class="panel-head"><h2>Durchschnitt je Aufgabenart</h2><span id="consumption-totals" class="panel-meta">Erfassung wird geladen…</span></header>
-          <div class="consumption-toolbar"><span id="consumption-since">Tracking-Start wird geladen…</span><label><span class="sr-only">Account für Verbrauchswerte</span><select id="consumption-account" name="consumption-account"><option value="">Alle Accounts</option></select></label></div>
-          <div class="consumption-table-wrap"><table class="consumption-table"><thead><tr><th scope="col">Aufgabenart</th><th scope="col" class="num">Abgeschlossen</th><th scope="col" class="num">Ø 5 h</th><th scope="col" class="num">Ø Woche</th><th scope="col" class="num">Auswertbar<br>5 h / Woche</th><th scope="col" class="num">Messung offen</th></tr></thead><tbody id="consumption-body"></tbody></table></div>
-          <p id="consumption-empty" class="consumption-copy">Ab dem Tracking-Start zählt jede abgeschlossene Aufgabe mit. Die ersten Durchschnitte erscheinen, sobald vollständige Kontingentmessungen vorliegen.</p>
-          <p class="consumption-copy">PP = Prozentpunkte des jeweiligen Account-Kontingents. ≈ kennzeichnet eine geschätzte Zuordnung: Kontingente werden in ganzen Punkten gemeldet; bei parallelen Aufgaben teilen wir die beobachtete Änderung nach den erfassten Antwortzügen auf. Rundungsreste bleiben bis zum nächsten messbaren Anstieg offen. Fehlende Messwerte zählen niemals als 0.</p>
-          <details class="consumption-details"><summary>Messung und Aufbewahrung</summary><p>Alle Aufwandsstände seit Tracking-Start gehen in den beschreibenden Durchschnitt ein. Accounts können unterschiedliche Pläne haben; gleiche Prozentwerte bedeuten keine gleiche Tokenmenge. Privatnutzung desselben Accounts kann mit enthalten sein. Vor dem Start begonnene Aufgaben werden getrennt erfasst und bilden keinen vollständigen Aufgabenverbrauch ab. Reset-Grenzen und Messlücken werden nicht überbrückt. Wochenprognosen sind bis zur Kalibrierung deaktiviert.</p><p id="consumption-health"></p></details>
-          <button id="consumption-retry" class="text-button panel-foot" type="button">Verbrauchswerte aktualisieren</button>
-        </article>
+          <div class="consumption-toolbar"><label><span class="sr-only">Account für Verbrauchswerte</span><select id="consumption-account" name="consumption-account"><option value="">Alle Accounts</option></select></label></div>
+          <div class="consumption-table-wrap"><table class="consumption-table"><thead><tr><th scope="col">Aufgabenart</th><th scope="col" class="num">Abgeschlossen</th><th scope="col" class="num">Ø 5 h (Punkte)</th><th scope="col" class="num">Ø Woche (Punkte)</th><th scope="col" class="num">Auswertbar<br>5 h / Woche</th><th scope="col" class="num">Messung offen</th></tr></thead><tbody id="consumption-body"></tbody></table></div>
+          <p id="consumption-empty" class="consumption-copy">Noch keine abgeschlossenen Aufgaben erfasst.</p>
+        </div>
       </section>
 
       <section id="machines-section" class="content-section" hidden>

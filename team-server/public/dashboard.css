@@ -54,60 +54,67 @@ button:disabled { cursor: wait; opacity: .6; }
 a { color: inherit; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
 .consumption-section { max-width: 1200px; margin-inline: auto; }
-.consumption-section > .panel + .panel { margin-top: 24px; }
-.consumption-copy { padding: 12px 20px; max-width: 1040px; color: var(--ink-2); line-height: 1.6; }
+.consumption-heading { display: grid; gap: 16px; margin-bottom: 20px; }
+.consumption-tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--line-strong); }
+.consumption-tabs button { min-height: 48px; padding: 8px 2px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: 14px; font-weight: 500; white-space: nowrap; }
+.consumption-tabs button:hover { color: var(--ink); border-bottom-color: var(--line-strong); }
+.consumption-tabs button[aria-selected="true"] { border-bottom-color: var(--primary); color: var(--ink); font-weight: 600; }
+.consumption-refresh { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.consumption-refresh .text-button { min-height: 36px; padding: 6px 0 6px 12px; }
+.usage-panel { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.usage-panel > .panel-head { justify-content: space-between; padding: 24px 24px 0; margin-bottom: 16px; }
+.consumption-copy { padding: 20px 24px; color: var(--ink-2); line-height: 1.5; }
 .consumption-table-wrap { overflow-x: auto; }
 .consumption-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.consumption-table th, .consumption-table td { padding: 6px 16px; text-align: left; border-bottom: 1px solid var(--line); }
+.consumption-table th, .consumption-table td { padding: 14px 24px; text-align: left; border-bottom: 1px solid var(--line); }
 .consumption-table thead th { color: var(--muted); font-size: 12px; font-weight: 500; background: var(--surface); }
 .consumption-table tbody th { font-weight: 500; }
+.consumption-table tbody tr:last-child > * { border-bottom: 0; }
 .consumption-table .num { text-align: right; white-space: nowrap; }
 .consumption-table tbody tr:hover { background: var(--hover); }
 .effort-table th:first-child { width: 38%; }
-.effort-select, #consumption-account { min-height: 32px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); max-width: 100%; }
+.effort-select, #consumption-account { min-height: 36px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); max-width: 100%; }
 .effort-select { width: 100%; min-width: 170px; }
 .effort-observed { font-family: var(--mono); font-size: 12px; }
-.effort-actions { display: flex; align-items: center; gap: 16px; padding: 16px 20px 8px; flex-wrap: wrap; }
-#effort-save { border: 0; padding: 10px 14px; border-radius: var(--radius-sm); background: var(--primary); color: var(--primary-ink); font-weight: 500; }
+.effort-actions { display: flex; align-items: center; gap: 16px; padding: 20px 24px; flex-wrap: wrap; border-top: 1px solid var(--line); }
+#effort-save { border: 0; min-height: 40px; padding: 10px 14px; border-radius: var(--radius-sm); background: var(--primary); color: var(--primary-ink); font-weight: 500; }
 #effort-save:hover { background: var(--primary-hover); }
 #effort-status { color: var(--ink-2); }
 #effort-status[data-error="true"] { color: var(--bad); }
-.consumption-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 20px; color: var(--ink-2); }
-.consumption-details { padding: 12px 20px; color: var(--ink-2); }
-.consumption-details summary { cursor: pointer; padding-block: 4px; font-weight: 500; }
-.consumption-details p { padding-top: 8px; color: var(--ink-2); line-height: 1.6; max-width: 1000px; }
-.consumption-details ul { list-style: none; padding: 8px 0; margin: 0; line-height: 1.8; overflow-wrap: anywhere; }
-.effort-panel:not(.all-phases) .effort-secondary { display: none; }
-.distribution-filter { display: flex; align-items: center; gap: 12px; color: var(--ink-2); font-size: 13px; }
-.distribution-filter select { min-height: 36px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); }
-.distribution-lead { padding: 16px 20px; background: var(--hover); }
-.distribution-lead strong { font-size: 18px; font-weight: 600; }
-.distribution-lead p { color: var(--ink-2); line-height: 1.5; margin-top: 4px; }
+.consumption-toolbar { display: flex; align-items: center; gap: 16px; padding: 0 24px 16px; color: var(--ink-2); }
+.effort-table tbody tr.effort-secondary { display: none; }
+.distribution-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.distribution-tabs button { min-height: 36px; padding: 8px 14px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink-2); font-weight: 500; }
+.distribution-tabs button:hover { background: var(--hover); color: var(--ink); }
+.distribution-tabs button[aria-selected="true"] { background: var(--primary); color: var(--primary-ink); }
+.distribution-lead { padding: 24px; }
+.distribution-lead strong { font-size: 20px; font-weight: 600; letter-spacing: -.02em; }
 .distribution-table { table-layout: fixed; }
-.distribution-table th:first-child { width: 16%; }
-.distribution-table th:last-child { width: 28%; }
-.distribution-table td,.distribution-table th { vertical-align: top; padding: 12px 16px; }
+.distribution-table th:first-child { width: 30%; }
+.distribution-table th:last-child { width: 22%; }
+.distribution-table td, .distribution-table th { vertical-align: top; }
 .distribution-table .distribution-preferred { background: var(--hover); box-shadow: inset 3px 0 var(--primary); }
 .distribution-detail { display: block; font-size: 12px; color: var(--ink-2); line-height: 1.5; margin-top: 4px; overflow-wrap: anywhere; }
 .distribution-number { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .distribution-warning { display: block; font-size: 12px; color: var(--warn); line-height: 1.5; margin-top: 4px; }
 .distribution-meter { display: block; width: 100%; max-width: 100px; height: 8px; margin-top: 8px; accent-color: var(--primary); }
-.distribution-filter select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 @media (max-width: 640px) {
-  .distribution-filter { width: 100%; justify-content: space-between; }
-  .distribution-filter select { min-height: 44px; }
+  .consumption-heading { gap: 12px; margin-bottom: 16px; }
+  .consumption-tabs { justify-content: space-between; gap: 8px; }
+  .consumption-tabs button { font-size: 12px; min-height: 48px; }
+  .consumption-refresh { flex-wrap: wrap; gap: 4px 12px; }
+  .consumption-refresh .text-button { min-height: 44px; padding-inline: 0; }
+  .consumption-refresh .interval { font-size: 11px; }
+  .consumption-panel .panel-head { flex-wrap: wrap; gap: 8px; padding: 20px 16px 0; }
+  .distribution-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px; }
+  .distribution-tabs button { min-height: 44px; padding-inline: 8px; }
   .distribution-table { table-layout: auto; }
-  .distribution-table th:first-child { width: 100%; }
-  .distribution-table td > div { text-align: right; }
-  .distribution-table .distribution-reason { display: block; text-align: left; padding-top: 8px; }
-  .distribution-reason::before { display: none; }
-  .distribution-lead { padding-inline: 16px; }
+  .distribution-lead { padding: 20px 16px; }
+  .distribution-lead strong { font-size: 18px; }
   .distribution-meter { margin-left: auto; }
-}
-@media(max-width:600px) {
-  .consumption-section .panel-head { flex-wrap: wrap; gap: 8px; }
-  .consumption-toolbar { flex-direction: column; align-items: stretch; }
-  .consumption-table th,.consumption-table td { padding: 10px 12px; }
+  .consumption-toolbar { padding: 0 16px 16px; }
+  .consumption-toolbar label { width: 100%; }
+  .consumption-table th, .consumption-table td { padding: 10px 16px; }
   .consumption-table { min-width: 0; display: block; }
   .consumption-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .consumption-table tbody { display: block; }
@@ -115,14 +122,13 @@ a { color: inherit; }
   .consumption-table tbody th { display: block; width: 100%; border: 0; }
   .effort-table tbody th:first-child { width: 100%; }
   .consumption-table td { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; text-align: right; padding-block: 4px; }
-  .consumption-table td::before { content: attr(data-label); font: 12px/1.4 -apple-system, sans-serif; color: var(--muted); text-align: left; white-space: normal; }
+  .usage-panel:not([hidden]) .consumption-table tr:not(.effort-secondary) td::before { content: attr(data-label); font: 12px/1.4 -apple-system, sans-serif; color: var(--muted); text-align: left; white-space: normal; }
   .effort-table td:last-child { display: block; }
   .effort-table td:last-child::before { display: block; margin-bottom: 6px; }
-  .effort-select,#consumption-account { min-height: 44px; }
-  .consumption-copy,.consumption-details { padding-inline: 16px; }
-  .effort-actions { align-items: stretch; padding-inline: 16px; }
+  .effort-select, #consumption-account { min-height: 44px; }
+  .consumption-copy { padding-inline: 16px; }
+  .effort-actions { align-items: stretch; padding: 16px; }
   #effort-save { min-height: 44px; }
-  #effort-more { min-height: 44px; }
 }
 h1, h2, h3, p { margin: 0; }
 h2 { font-size: 13px; font-weight: 600; letter-spacing: -.005em; line-height: 1.3; }
