@@ -122,7 +122,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.finishLaunchingAfterCredentials()
             } else {
                 self.credentialStartupProgress?.stopAnimation(nil)
-                self.credentialStartupMessage?.stringValue = "macOS hat den Zugriff noch nicht freigegeben. Gespeicherte Konten bleiben erhalten. Bitte versuche es erneut."
+                self.credentialStartupMessage?.stringValue = KeychainManager.shared.startupReadinessMessage
                 self.credentialStartupRetry?.isEnabled = true
             }
         }
@@ -171,6 +171,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let detail = NSTextField(wrappingLabelWithString:
             "Bitte bestätige eine gegebenenfalls angezeigte macOS-Schlüsselbundabfrage.")
         detail.textColor = .secondaryLabelColor
+        detail.preferredMaxLayoutWidth = 384
+        detail.widthAnchor.constraint(equalToConstant: 384).isActive = true
         let progress = NSProgressIndicator()
         progress.style = .spinning
         progress.startAnimation(nil)
@@ -184,7 +186,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         content.alignment = .centerX
         content.spacing = 16
         content.edgeInsets = NSEdgeInsets(top: 28, left: 28, bottom: 28, right: 28)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 210),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 260),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.title = "Max Monitor"
         window.contentView = content

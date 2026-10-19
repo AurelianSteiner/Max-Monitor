@@ -82,14 +82,15 @@ private struct KeychainCredentialStorage: CredentialStorage {
         }
     }
 
-    func addIfAbsent(key: String, value: String) -> Bool {
+    func addIfAbsent(key: String, value: String, allowInteraction: Bool = true) -> Bool {
         guard let data = value.data(using: .utf8) else { return false }
-        let query: [String: Any] = [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
             kSecValueData as String: data
         ]
+        if !allowInteraction { query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail }
         let status = SecItemAdd(query as CFDictionary, nil)
         guard status == errSecSuccess else {
             Logger.keychain.error("Keychain Erstanlage fehlgeschlagen: \(key), Status: \(status)")
@@ -103,8 +104,8 @@ private struct KeychainCredentialStorage: CredentialStorage {
         return nil
     }
 
-    func read(key: String) -> VaultKeyReadResult {
-        let query: [String: Any] = [
+    func read(key: String, allowInteraction: Bool = true) -> VaultKeyReadResult {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
@@ -112,6 +113,7 @@ private struct KeychainCredentialStorage: CredentialStorage {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
 
+        if !allowInteraction { query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail }
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return .notFound }
@@ -126,13 +128,16 @@ private struct KeychainCredentialStorage: CredentialStorage {
         return .value(value)
     }
 
-    func delete(key: String) -> Bool {
-        let query: [String: Any] = [
+    func delete(key: String) -> Bool { delete(key: key, allowInteraction: true) }
+
+    func delete(key: String, allowInteraction: Bool) -> Bool {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key
         ]
 
+        if !allowInteraction { query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail }
         let status = SecItemDelete(query as CFDictionary)
 
         if status == errSecSuccess || status == errSecItemNotFound {
@@ -159,29 +164,110 @@ private struct KeychainCredentialStorage: CredentialStorage {
 /// nicht zu (Eintrag eines anderen Builds), bleibt der alte Eintrag stehen,
 /// wird aber nicht mehr gelesen, sobald der Tresor ihn hat.
 ///
-/// Ist der Schlüssel weder lesbar (Frage verneint) noch anlegbar (fremder
-/// Eintrag blockiert), bleibt es beim reinen Schlüsselbund wie bis 2.8.
+/// Die GUI wartet bei nicht lesbarem Bestand vor der Konteninitialisierung.
+/// Der CLI-Zugriff behält seinen bisherigen Schlüsselbund-Fallback.
 private final class VaultCredentialStorage: CredentialStorage {
 
     /// Name des Schlüssel-Eintrags im Schlüsselbund
     static let vaultKeyAccount = "vault-key"
     /// Einträge, die aus dem Schlüsselbund in den Tresor wandern
-    static let migratedKeys = ["accounts", "accounts_codex", "teamServerToken", "sessionKey", "organizationId"]
+    static let migratedKeys = ["accounts", "accounts_codex", "teamServerToken", "sessionKey", "organizationId", "fleetMonitoringAccount"]
 
     private let keychain: KeychainCredentialStorage
     private let vault: CredentialVault?
+    private let keyReadStatus: String
+    private let keyOSStatus: Int32?
+    private let keyBytes: Int?
+    private let vaultFileWasPresent: Bool?
+    private let allowInteraction: Bool
+    private var legacyReadsReady = false
+    private var unavailableLegacyEntries: [String: Int32] = [:]
+    private var migrationSaveFailed = false
+    private var invalidSavedRecords: [String] = []
+    private var providerAccountCounts: [String: Int] = [:]
 
-    /// A denied vault-key read must not initialize consumers with empty legacy
-    /// fallbacks. A valid key must also decrypt every retained encrypted entry.
-    var isReady: Bool {
+    private var vaultIsReadable: Bool {
         guard let vault else { return false }
         return vault.keys.allSatisfy { vault.load(key: $0) != nil }
     }
 
-    init(service: String) {
+    /// A denied vault-key read must not initialize consumers with empty legacy
+    /// fallbacks. A valid key must also decrypt every retained encrypted entry.
+    var isReady: Bool {
+        vaultIsReadable && legacyReadsReady && !migrationSaveFailed && invalidSavedRecords.isEmpty
+    }
+
+    /// Metadata only. Never includes a key, ciphertext or credential value.
+    var startupDiagnostics: [String: Any] {
+        let names = vault?.keys.sorted() ?? []
+        let readable = names.filter { vault?.load(key: $0) != nil }
+        return ["keyReadStatus": keyReadStatus,
+                "keyOSStatus": keyOSStatus as Any? ?? NSNull(),
+                "decodedKeyBytes": keyBytes as Any? ?? NSNull(),
+                "vaultFileWasPresent": vaultFileWasPresent as Any? ?? NSNull(),
+                "vaultOpened": vault != nil,
+                "savedEntryCount": names.count,
+                "decryptableEntryCount": readable.count,
+                "entryReadiness": Dictionary(uniqueKeysWithValues: names.map { ($0, readable.contains($0)) }),
+                "allowsAuthenticationUI": allowInteraction,
+                "legacyReadsReady": legacyReadsReady,
+                "unavailableLegacyEntries": unavailableLegacyEntries,
+                "migrationSaveFailed": migrationSaveFailed,
+                "invalidSavedRecords": invalidSavedRecords,
+                "providerAccountCounts": providerAccountCounts,
+                "ready": isReady]
+    }
+
+    var startupMessage: String {
+        if !invalidSavedRecords.isEmpty {
+            return "Gespeicherte Kontodaten haben ein ungültiges Format. Vorhandene Daten bleiben erhalten; es werden keine leeren Konten gespeichert."
+        }
+        if let first = unavailableLegacyEntries.sorted(by: { $0.key < $1.key }).first {
+            return "macOS hat den Zugriff auf einen gespeicherten Altbestand noch nicht freigegeben (Status \(first.value)). Gespeicherte Konten bleiben erhalten."
+        }
+        if migrationSaveFailed {
+            return "Gespeicherte Daten konnten nicht sicher übernommen werden. Der ursprüngliche Bestand bleibt erhalten."
+        }
+        if let vault {
+            let total = vault.keys.count
+            let readable = vault.keys.filter { vault.load(key: $0) != nil }.count
+            return "Der gespeicherte Tresor lässt sich nicht vollständig öffnen (\(readable) von \(total) Einträgen lesbar). Vorhandene Daten bleiben erhalten."
+        }
+        if keyReadStatus == "value" && keyBytes == CredentialVault.keyLength {
+            return "Der vorhandene Schlüssel wurde gelesen, der gespeicherte Tresor lässt sich jedoch nicht öffnen. Vorhandene Daten bleiben erhalten."
+        }
+        if keyReadStatus == "value" {
+            return "Der vorhandene Tresorschlüssel hat ein ungültiges Format. Schlüssel und gespeicherte Daten bleiben erhalten."
+        }
+        if keyReadStatus == "notFound" && vaultFileWasPresent == true {
+            return "Der gespeicherte Tresor ist vorhanden, sein Schlüssel wurde jedoch nicht gefunden. Es wird kein Ersatzschlüssel angelegt."
+        }
+        return "macOS hat den Zugriff noch nicht freigegeben (Status \(keyOSStatus.map(String.init) ?? "unbekannt")). Gespeicherte Konten bleiben erhalten."
+    }
+
+    init(service: String, allowInteraction: Bool = true) {
+        self.allowInteraction = allowInteraction
         keychain = KeychainCredentialStorage(service: service)
-        vault = Self.openVault(service: service, keychain: keychain)
-        if isReady { migrateLegacyEntries() }
+        let read = keychain.read(key: Self.vaultKeyAccount, allowInteraction: allowInteraction)
+        switch read {
+        case .value(let value):
+            keyReadStatus = "value"; keyOSStatus = 0
+            keyBytes = Data(base64Encoded: value)?.count
+        case .notFound:
+            keyReadStatus = "notFound"; keyOSStatus = errSecItemNotFound; keyBytes = nil
+        case .unavailable(let status):
+            keyReadStatus = "unavailable"; keyOSStatus = status; keyBytes = nil
+        }
+        if let file = Self.vaultFileURL(service: service) {
+            do {
+                _ = try FileManager.default.attributesOfItem(atPath: file.path)
+                vaultFileWasPresent = true
+            } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+                vaultFileWasPresent = false
+            } catch { vaultFileWasPresent = nil }
+        } else { vaultFileWasPresent = nil }
+        vault = Self.openVault(service: service, keychain: keychain, read: read, allowInteraction: allowInteraction)
+        if vaultIsReadable { migrateLegacyEntries() }
     }
 
     // MARK: - CredentialStorage
@@ -199,6 +285,9 @@ private final class VaultCredentialStorage: CredentialStorage {
         if let vault, let value = vault.load(key: key) {
             return value
         }
+        // Readiness already proved each missing startup entry is notFound.
+        // Never prompt again or resurrect an older copy on the UI thread.
+        if legacyReadsReady && Self.migratedKeys.contains(key) { return nil }
         // Noch nicht übernommener Altbestand — oder gar kein Tresor
         return keychain.load(key: key)
     }
@@ -211,20 +300,20 @@ private final class VaultCredentialStorage: CredentialStorage {
 
     // MARK: - Tresor öffnen
 
-    private static func openVault(service: String, keychain: KeychainCredentialStorage) -> CredentialVault? {
+    private static func openVault(service: String, keychain: KeychainCredentialStorage, read: VaultKeyReadResult, allowInteraction: Bool) -> CredentialVault? {
         guard let fileURL = vaultFileURL(service: service) else {
             Logger.keychain.error("Tresor: Application-Support-Ordner nicht erreichbar")
             return nil
         }
 
-        guard let keyData = VaultKeyAccess.resolve(keychain.read(key: vaultKeyAccount), existingVault: {
+        guard let keyData = VaultKeyAccess.resolve(read, existingVault: {
             do {
                 _ = try FileManager.default.attributesOfItem(atPath: fileURL.path)
                 return true
             } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
                 return false
             }
-        }, createKey: { keychain.addIfAbsent(key: vaultKeyAccount, value: $0) }) else {
+        }, createKey: { keychain.addIfAbsent(key: vaultKeyAccount, value: $0, allowInteraction: allowInteraction) }) else {
             Logger.keychain.error("Tresor-Schlüssel nicht sicher verfügbar – bestehender Schlüssel und Tresor bleiben erhalten")
             return nil
         }
@@ -254,15 +343,51 @@ private final class VaultCredentialStorage: CredentialStorage {
     /// wird kopiert und — wenn der Schlüsselbund es zulässt — dort gelöscht.
     private func migrateLegacyEntries() {
         guard let vault else { return }
+        var pending: [String: String] = [:]
         for key in Self.migratedKeys where !vault.contains(key: key) {
-            guard let value = keychain.load(key: key) else { continue }
-            guard vault.save(key: key, value: value) else {
-                Logger.keychain.error("Tresor: Übernahme fehlgeschlagen (\(key)) – bleibt im Schlüsselbund")
+            switch keychain.read(key: key, allowInteraction: allowInteraction) {
+            case .value(let value): pending[key] = value
+            case .notFound: continue
+            case .unavailable(let status):
+                unavailableLegacyEntries[key] = status
+                // No migration write/delete until every needed read is known.
+                return
+            }
+        }
+        // Match the real consumer decoders before migrating or initializing
+        // accounts. Decryptable UTF-8 alone is not a valid saved account list.
+        for key in ["accounts", "accounts_codex", "fleetMonitoringAccount"] {
+            guard let value = vault.load(key: key) ?? pending[key] else {
+                providerAccountCounts[key] = 0
                 continue
             }
+            guard let data = value.data(using: .utf8) else {
+                invalidSavedRecords.append(key)
+                continue
+            }
+            if key == "fleetMonitoringAccount" {
+                if let account = try? JSONDecoder().decode(FleetMonitoringAccount.self, from: data),
+                   !account.refreshToken.isEmpty {
+                    providerAccountCounts[key] = 1
+                } else { invalidSavedRecords.append(key) }
+            } else if let accounts = try? JSONDecoder().decode([Account].self, from: data) {
+                providerAccountCounts[key] = accounts.count
+            } else { invalidSavedRecords.append(key) }
+        }
+        guard invalidSavedRecords.isEmpty else { return }
+        for key in Self.migratedKeys {
+            guard let value = pending[key] else { continue }
+            guard vault.save(key: key, value: value) else {
+                migrationSaveFailed = true
+                Logger.keychain.error("Tresor: Übernahme fehlgeschlagen (\(key)) – bleibt im Schlüsselbund")
+                return
+            }
+        }
+        legacyReadsReady = true
+        for key in Self.migratedKeys where pending[key] != nil {
             // Löschen gelingt nur dem Build, der den Eintrag angelegt hat. Sonst
             // bleibt eine (ab jetzt ungelesene) Kopie liegen — `delete` loggt das.
-            _ = keychain.delete(key: key)
+            _ = keychain.delete(key: key, allowInteraction: allowInteraction)
             Logger.keychain.notice("Tresor: \(key) übernommen")
         }
     }
@@ -275,33 +400,59 @@ private final class VaultCredentialStorage: CredentialStorage {
 class KeychainManager {
     static let shared = KeychainManager()
 
-    private var storage: CredentialStorage
-
-    private init() {
+    // Merely constructing the singleton must not make a protected read before
+    // AppKit can show the startup window. CLI first use keeps normal OS auth.
+    private var preparedStorage: CredentialStorage?
+    private var storage: CredentialStorage {
+        if let preparedStorage { return preparedStorage }
         #if DEBUG
-        storage = UserDefaultsCredentialStorage()
+        let created: CredentialStorage = UserDefaultsCredentialStorage()
         #else
-        // 动态获取 Bundle ID，如果获取失败则使用默认值
-        // Seit 2.8.1: Tresor-Datei plus Schlüssel im Schlüsselbund statt Einträge im
-        // Schlüsselbund — siehe VaultCredentialStorage / CredentialVault.swift.
-        storage = VaultCredentialStorage(service: Bundle.main.bundleIdentifier ?? "xyz.fi5h.Usage4Claude")
+        let created: CredentialStorage = VaultCredentialStorage(service: Bundle.main.bundleIdentifier ?? "xyz.fi5h.Usage4Claude")
         #endif
+        preparedStorage = created
+        return created
     }
+    private(set) var startupReadinessMessage = "Gespeicherte Verbindung wird geladen …"
 
-    /// Used only before normal GUI account/team consumers are constructed.
-    /// Retrying creates a fresh backend, so a canceled OS prompt is not cached
-    /// forever by the shared singleton. No failed backend replaces a ready one.
+    private init() {}
+
+    /// The first GUI probe cannot display OS auth UI: it returns a precise
+    /// status while keeping AppKit responsive. Explicit Retry uses normal auth
+    /// on this same binary and always constructs a fresh backend.
     func prepareForApplicationStartup(retry: Bool) -> Bool {
         #if DEBUG
         return true
         #else
-        if retry {
-            let candidate = VaultCredentialStorage(service: Bundle.main.bundleIdentifier ?? "xyz.fi5h.Usage4Claude")
-            guard candidate.isReady else { return false }
-            storage = candidate
-        }
-        return (storage as? VaultCredentialStorage)?.isReady == true
+        let candidate = VaultCredentialStorage(
+            service: Bundle.main.bundleIdentifier ?? "xyz.fi5h.Usage4Claude",
+            allowInteraction: retry)
+        recordStartupDiagnostics(candidate)
+        guard candidate.isReady else { return false }
+        preparedStorage = candidate
+        return true
         #endif
+    }
+
+    private func recordStartupDiagnostics(_ backend: VaultCredentialStorage) {
+        startupReadinessMessage = backend.startupMessage
+        var metadata = backend.startupDiagnostics
+        metadata["schema"] = 1
+        metadata["processIdentifier"] = ProcessInfo.processInfo.processIdentifier
+        metadata["recordedAt"] = ISO8601DateFormatter().string(from: Date())
+        metadata["appVersion"] = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        // Existing Worker Setup directory; read-only diagnostics contain counts
+        // and OS statuses only, never credentials or encrypted data.
+        let directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Max Monitor/Worker Setup", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+            let file = directory.appendingPathComponent("startup-diagnostics.json")
+            let data = try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys])
+            try data.write(to: file, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        } catch { /* Diagnostic persistence cannot change credential readiness. */ }
     }
 
     // MARK: - Organization ID / Session Key

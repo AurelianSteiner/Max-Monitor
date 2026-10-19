@@ -75,6 +75,8 @@ nonisolated final class CredentialVault {
     enum VaultError: Error, Equatable {
         /// Der Schlüssel hat nicht die erwartete Länge
         case badKey
+        case unreadableFile
+        case invalidContents
     }
 
     private let fileURL: URL
@@ -84,14 +86,14 @@ nonisolated final class CredentialVault {
     private var entries: [String: String]
 
     /// Öffnet (oder beginnt) den Tresor in `fileURL` mit dem 32-Byte-Schlüssel.
-    /// Eine fehlende Datei ist ein leerer Tresor; eine unlesbare Datei ebenso —
-    /// sie wird beim nächsten Speichern überschrieben, ihr Inhalt war ohnehin
-    /// nicht zu entschlüsseln.
+    /// Nur eine wirklich fehlende Datei beginnt leer. Vorhandene unlesbare,
+    /// beschädigte oder unbekannte Formate bleiben erhalten und werden nie
+    /// durch eine vermeintlich leere Ablage ersetzt.
     init(fileURL: URL, key: Data) throws {
         guard key.count == Self.keyLength else { throw VaultError.badKey }
         self.fileURL = fileURL
         self.key = SymmetricKey(data: key)
-        self.entries = Self.readEntries(at: fileURL)
+        self.entries = try Self.readEntries(at: fileURL)
     }
 
     /// Zufälliger Schlüssel für einen neuen Tresor
@@ -163,13 +165,23 @@ nonisolated final class CredentialVault {
 
     // MARK: - Datei
 
-    private static func readEntries(at url: URL) -> [String: String] {
-        guard let data = try? Data(contentsOf: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let entries = json["entries"] as? [String: String] else {
+    private struct StoredContents: Decodable {
+        let version: Int
+        let entries: [String: String]
+    }
+
+    private static func readEntries(at url: URL) throws -> [String: String] {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             return [:]
+        } catch {
+            throw VaultError.unreadableFile
         }
-        return entries
+        guard let contents = try? JSONDecoder().decode(StoredContents.self, from: data),
+              contents.version == 1 else { throw VaultError.invalidContents }
+        return contents.entries
     }
 
     /// Schreibt die Datei atomar und nur für den Benutzer lesbar. Der Ordner

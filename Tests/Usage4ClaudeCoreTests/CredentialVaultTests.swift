@@ -85,13 +85,34 @@ final class CredentialVaultTests: XCTestCase {
         XCTAssertFalse(text.contains("sk-ant-ort01"))
     }
 
-    func testCorruptFileIsTreatedAsEmpty() throws {
+    func testMalformedExistingFileIsRejectedAndPreserved() throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try Data("not json".utf8).write(to: fileURL)
-        let vault = try CredentialVault(fileURL: fileURL, key: CredentialVault.generateKey())
-        XCTAssertNil(vault.load(key: "accounts"))
-        XCTAssertTrue(vault.save(key: "accounts", value: "[]"))
-        XCTAssertEqual(vault.load(key: "accounts"), "[]")
+        let original = Data("not json".utf8)
+        try original.write(to: fileURL)
+        XCTAssertThrowsError(try CredentialVault(fileURL: fileURL, key: CredentialVault.generateKey()))
+        XCTAssertEqual(try Data(contentsOf: fileURL), original)
+    }
+
+    func testUnsupportedVersionAndInvalidEntryShapesAreRejectedWithoutChangingFile() throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for text in ["{\"version\":2,\"entries\":{}}", "{\"version\":1,\"entries\":[]}",
+                     "{\"version\":1,\"entries\":{\"accounts\":123}}", "{\"entries\":{}}"] {
+            let original = Data(text.utf8)
+            try original.write(to: fileURL)
+            XCTAssertThrowsError(try CredentialVault(fileURL: fileURL, key: CredentialVault.generateKey()))
+            XCTAssertEqual(try Data(contentsOf: fileURL), original)
+        }
+    }
+
+    func testUnreadableExistingFileIsRejectedAndPreserved() throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let original = Data("{\"version\":1,\"entries\":{}}".utf8)
+        try original.write(to: fileURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: fileURL.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path) }
+        XCTAssertThrowsError(try CredentialVault(fileURL: fileURL, key: CredentialVault.generateKey()))
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        XCTAssertEqual(try Data(contentsOf: fileURL), original)
     }
 
     func testRejectsBadKeyLength() {
