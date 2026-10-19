@@ -17,6 +17,21 @@ private var afterRead: ((String) -> Void)?
 enum L { enum Account { static let kindCompany = "company"; static let kindPersonal = "personal"; static let kindUnknown = "unknown" } }
 
 
+private var interactionAllowed = true
+private var getInteractionStatus: OSStatus = errSecSuccess
+private var setInteractionStatuses: [OSStatus] = []
+private var setInteractionValues: [Bool] = []
+func SecKeychainGetUserInteractionAllowed(_ state: UnsafeMutablePointer<DarwinBoolean>) -> OSStatus {
+    if getInteractionStatus == errSecSuccess { state.pointee = DarwinBoolean(interactionAllowed) }
+    return getInteractionStatus
+}
+func SecKeychainSetUserInteractionAllowed(_ state: Bool) -> OSStatus {
+    setInteractionValues.append(state)
+    let status = setInteractionStatuses.isEmpty ? errSecSuccess : setInteractionStatuses.removeFirst()
+    if status == errSecSuccess { interactionAllowed = state }
+    return status
+}
+
 func SecItemCopyMatching(_ query: CFDictionary, _ result: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus {
     readCalls += 1
     let attributes = query as NSDictionary
@@ -238,6 +253,42 @@ private func check(_ condition: @autoclosure () -> Bool, _ name: String) {
         check(!authenticationModes.isEmpty && authenticationModes.allSatisfy { $0 }, "explicit retry preserves regular OS authentication")
         let afterReadyReads = readCalls
         check(manager.loadAccounts() == nil && readCalls == afterReadyReads, "ready missing accounts return legitimate empty without UI thread re-read")
+        // File-based legacy Keychain UI state is process-local and serialized.
+        for prior in [false, true] {
+            interactionAllowed = prior; setInteractionValues = []
+            var calls = 0
+            let probe = LegacyKeychainStartupProbe.perform(allowInteraction: false) {
+                calls += 1
+                check(!interactionAllowed, "legacy optional UI disabled during first probe")
+                return 42
+            }
+            if case .success(let value) = probe { check(value == 42 && calls == 1, "probe executes exactly once") }
+            else { preconditionFailure("valid legacy state probe failed") }
+            check(interactionAllowed == prior, "legacy UI state restored exactly")
+            check(setInteractionValues == [false, prior], "never force enabled when prior state disabled")
+        }
+        getInteractionStatus = errSecNotAvailable; setInteractionValues = []
+        var calls = 0
+        let getFailed = LegacyKeychainStartupProbe.perform(allowInteraction: false) { calls += 1 }
+        if case .failure(let failure) = getFailed { check(failure.stage == "readInteractionState", "state read failure identified") }
+        else { preconditionFailure("failed state read was accepted") }
+        check(calls == 0 && setInteractionValues.isEmpty, "failed state read performs no protected load or switch")
+        getInteractionStatus = errSecSuccess; interactionAllowed = true; setInteractionValues = []
+        setInteractionStatuses = [errSecNotAvailable, errSecSuccess]
+        let disableFailed = LegacyKeychainStartupProbe.perform(allowInteraction: false) { calls += 1 }
+        if case .failure(let failure) = disableFailed { check(failure.stage == "disableInteraction", "disable failure identified") }
+        else { preconditionFailure("failed UI disable was accepted") }
+        check(calls == 0 && interactionAllowed && setInteractionValues == [false, true], "disable failure skips protected load and restores exact prior state")
+        setInteractionValues = []; setInteractionStatuses = [errSecSuccess, errSecNotAvailable]
+        let restoreFailed = LegacyKeychainStartupProbe.perform(allowInteraction: false) { calls += 1; return 42 }
+        if case .failure(let failure) = restoreFailed { check(failure.stage == "restoreInteractionState", "restore failure gates even completed load") }
+        else { preconditionFailure("failed UI restore was accepted") }
+        check(calls == 1 && !interactionAllowed, "failed restoration never force-enables UI")
+        // Normal explicit Retry never toggles the legacy interaction policy.
+        setInteractionValues = []; interactionAllowed = true
+        let normal = LegacyKeychainStartupProbe.perform(allowInteraction: true) { interactionAllowed }
+        if case .success(let allowed) = normal { check(allowed && setInteractionValues.isEmpty, "normal retry keeps existing OS auth semantics") }
+        else { preconditionFailure("normal retry unexpectedly failed") }
         print("Vault key safety: \(checks) checks passed; real Keychain calls: 0; encrypted fixture preserved")
     }
 }

@@ -393,6 +393,39 @@ private final class VaultCredentialStorage: CredentialStorage {
     }
 }
 
+/// The file-based macOS Keychain ignores the SecItem authentication-UI query
+/// flag when it falls through to SecKeychainItemCopyContent. Its documented
+/// process-wide UI switch is used only during the serialized pre-consumer probe.
+private enum LegacyKeychainStartupProbe {
+    struct Failure: Error {
+        let stage: String
+        let status: OSStatus
+        let restoreStatus: OSStatus?
+    }
+    private static let lock = NSLock()
+
+    static func perform<T>(allowInteraction: Bool, load: () -> T) -> Result<T, Failure> {
+        lock.lock(); defer { lock.unlock() }
+        guard !allowInteraction else { return .success(load()) }
+        var previous: DarwinBoolean = false
+        let readStatus = SecKeychainGetUserInteractionAllowed(&previous)
+        guard readStatus == errSecSuccess else {
+            return .failure(Failure(stage: "readInteractionState", status: readStatus, restoreStatus: nil))
+        }
+        let disableStatus = SecKeychainSetUserInteractionAllowed(false)
+        guard disableStatus == errSecSuccess else {
+            let restored = SecKeychainSetUserInteractionAllowed(previous.boolValue)
+            return .failure(Failure(stage: "disableInteraction", status: disableStatus, restoreStatus: restored))
+        }
+        let candidate = load()
+        let restored = SecKeychainSetUserInteractionAllowed(previous.boolValue)
+        guard restored == errSecSuccess else {
+            return .failure(Failure(stage: "restoreInteractionState", status: restored, restoreStatus: restored))
+        }
+        return .success(candidate)
+    }
+}
+
 /// 管理认证凭据存储的类
 /// 用于安全存储敏感信息（如 Organization ID 和 Session Key）
 /// Debug 模式：使用 UserDefaults（便于开发测试，不弹窗）
@@ -424,9 +457,20 @@ class KeychainManager {
         #if DEBUG
         return true
         #else
-        let candidate = VaultCredentialStorage(
-            service: Bundle.main.bundleIdentifier ?? "xyz.fi5h.Usage4Claude",
-            allowInteraction: retry)
+        let result = LegacyKeychainStartupProbe.perform(allowInteraction: retry) {
+            VaultCredentialStorage(
+                service: Bundle.main.bundleIdentifier ?? "xyz.fi5h.Usage4Claude",
+                allowInteraction: retry)
+        }
+        guard case .success(let candidate) = result else {
+            if case .failure(let failure) = result {
+                startupReadinessMessage = "Die sichere Schlüsselbundprüfung konnte nicht abgeschlossen werden (Status \(failure.status)). Gespeicherte Daten bleiben erhalten."
+                persistStartupDiagnostics(["ready": false, "startupProbeSafetyFailure": failure.stage,
+                    "keyOSStatus": failure.status,
+                    "interactionRestoreStatus": failure.restoreStatus as Any? ?? NSNull()])
+            }
+            return false
+        }
         recordStartupDiagnostics(candidate)
         guard candidate.isReady else { return false }
         preparedStorage = candidate
@@ -436,7 +480,11 @@ class KeychainManager {
 
     private func recordStartupDiagnostics(_ backend: VaultCredentialStorage) {
         startupReadinessMessage = backend.startupMessage
-        var metadata = backend.startupDiagnostics
+        persistStartupDiagnostics(backend.startupDiagnostics)
+    }
+
+    private func persistStartupDiagnostics(_ values: [String: Any]) {
+        var metadata = values
         metadata["schema"] = 1
         metadata["processIdentifier"] = ProcessInfo.processInfo.processIdentifier
         metadata["recordedAt"] = ISO8601DateFormatter().string(from: Date())
