@@ -4,10 +4,10 @@ import Foundation
 /// constructing account stores, so an unavailable read cannot look like empty
 /// saved accounts or cause their migration/persistence paths to run early.
 nonisolated enum CredentialStartup {
-    static func prepare(load: @escaping () -> Void, completion: @escaping () -> Void) {
+    static func prepare(load: @escaping () -> Bool, completion: @escaping (Bool) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
-            load()
-            DispatchQueue.main.async(execute: completion)
+            let ready = load()
+            DispatchQueue.main.async { completion(ready) }
         }
     }
 }

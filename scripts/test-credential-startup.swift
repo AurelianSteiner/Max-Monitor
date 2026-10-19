@@ -7,6 +7,8 @@ enum CredentialStartupTest {
         let started = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
         var completed = false
+        var storageReady = true
+        var consumersStarted = false
         var heartbeat = false
         var loadCount = 0
         let beginning = Date()
@@ -15,8 +17,11 @@ enum CredentialStartupTest {
             loadCount += 1
             started.signal()
             release.wait()
-        }, completion: {
+            return false // macOS canceled/denied this first protected read.
+        }, completion: { ready in
             precondition(Thread.isMainThread, "Consumers must initialize on the main thread")
+            storageReady = ready
+            if ready { consumersStarted = true }
             completed = true
         })
         precondition(Date().timeIntervalSince(beginning) < 0.5, "Startup must return while storage is blocked")
@@ -34,6 +39,23 @@ enum CredentialStartupTest {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
         precondition(completed && loadCount == 1, "Load once, then initialize consumers")
-        print("Credential startup: 6 checks passed; blocked read never blocks the main queue")
+        precondition(!storageReady && !consumersStarted, "Denied storage must never initialize empty account consumers")
+        completed = false
+        CredentialStartup.prepare(load: {
+            precondition(!Thread.isMainThread)
+            loadCount += 1
+            return true // A real retry reopens storage; no cached failed result.
+        }, completion: { ready in
+            storageReady = ready
+            if ready { consumersStarted = true }
+            completed = true
+        })
+        let retryDeadline = Date().addingTimeInterval(2)
+        while !completed && Date() < retryDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        precondition(completed && storageReady && consumersStarted && loadCount == 2,
+                     "A successful fresh retry initializes consumers exactly after readiness")
+        print("Credential startup: 8 checks passed; blocked/denied storage never initializes empty consumers; fresh retry works")
     }
 }

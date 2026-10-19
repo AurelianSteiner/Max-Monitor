@@ -171,10 +171,17 @@ private final class VaultCredentialStorage: CredentialStorage {
     private let keychain: KeychainCredentialStorage
     private let vault: CredentialVault?
 
+    /// A denied vault-key read must not initialize consumers with empty legacy
+    /// fallbacks. A valid key must also decrypt every retained encrypted entry.
+    var isReady: Bool {
+        guard let vault else { return false }
+        return vault.keys.allSatisfy { vault.load(key: $0) != nil }
+    }
+
     init(service: String) {
         keychain = KeychainCredentialStorage(service: service)
         vault = Self.openVault(service: service, keychain: keychain)
-        migrateLegacyEntries()
+        if isReady { migrateLegacyEntries() }
     }
 
     // MARK: - CredentialStorage
@@ -268,7 +275,7 @@ private final class VaultCredentialStorage: CredentialStorage {
 class KeychainManager {
     static let shared = KeychainManager()
 
-    private let storage: CredentialStorage
+    private var storage: CredentialStorage
 
     private init() {
         #if DEBUG
@@ -278,6 +285,22 @@ class KeychainManager {
         // Seit 2.8.1: Tresor-Datei plus Schlüssel im Schlüsselbund statt Einträge im
         // Schlüsselbund — siehe VaultCredentialStorage / CredentialVault.swift.
         storage = VaultCredentialStorage(service: Bundle.main.bundleIdentifier ?? "xyz.fi5h.Usage4Claude")
+        #endif
+    }
+
+    /// Used only before normal GUI account/team consumers are constructed.
+    /// Retrying creates a fresh backend, so a canceled OS prompt is not cached
+    /// forever by the shared singleton. No failed backend replaces a ready one.
+    func prepareForApplicationStartup(retry: Bool) -> Bool {
+        #if DEBUG
+        return true
+        #else
+        if retry {
+            let candidate = VaultCredentialStorage(service: Bundle.main.bundleIdentifier ?? "xyz.fi5h.Usage4Claude")
+            guard candidate.isReady else { return false }
+            storage = candidate
+        }
+        return (storage as? VaultCredentialStorage)?.isReady == true
         #endif
     }
 

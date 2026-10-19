@@ -63,6 +63,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // SwiftUI is still constructing its app delegate, before AppKit can run.
     private lazy var settings = UserSettings.shared
     private var credentialStartupWindow: NSWindow?
+    private var credentialStartupMessage: NSTextField?
+    private var credentialStartupProgress: NSProgressIndicator?
+    private var credentialStartupRetry: NSButton?
+    private var credentialStartupInProgress = false
 
     /// Sparkle 更新控制器
     /// - `startingUpdater: true` 让 Sparkle 按 Info.plist 中的
@@ -99,15 +103,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Give AppKit its first run-loop turn before a protected read can ask
         // macOS for access. A stalled SecurityServer must never freeze the UI.
         DispatchQueue.main.async { [weak self] in
-            CredentialStartup.prepare(load: { _ = KeychainManager.shared }) { [weak self] in
-                self?.finishLaunchingAfterCredentials()
+            self?.prepareCredentials(retry: false)
+        }
+    }
+
+    private func prepareCredentials(retry: Bool) {
+        guard !credentialStartupInProgress else { return }
+        credentialStartupInProgress = true
+        credentialStartupRetry?.isEnabled = false
+        credentialStartupMessage?.stringValue = "Bitte bestätige eine gegebenenfalls angezeigte macOS-Schlüsselbundabfrage."
+        credentialStartupProgress?.startAnimation(nil)
+        CredentialStartup.prepare(load: {
+            KeychainManager.shared.prepareForApplicationStartup(retry: retry)
+        }) { [weak self] ready in
+            guard let self else { return }
+            self.credentialStartupInProgress = false
+            if ready {
+                self.finishLaunchingAfterCredentials()
+            } else {
+                self.credentialStartupProgress?.stopAnimation(nil)
+                self.credentialStartupMessage?.stringValue = "macOS hat den Zugriff noch nicht freigegeben. Gespeicherte Konten bleiben erhalten. Bitte versuche es erneut."
+                self.credentialStartupRetry?.isEnabled = true
             }
         }
     }
 
+    @objc private func retryCredentialStartup() { prepareCredentials(retry: true) }
+
     private func finishLaunchingAfterCredentials() {
         credentialStartupWindow?.close()
         credentialStartupWindow = nil
+        credentialStartupMessage = nil
+        credentialStartupProgress = nil
+        credentialStartupRetry = nil
         NSApp.setActivationPolicy(.accessory)
 
         menuBarManager = MenuBarManager()
@@ -146,8 +174,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let progress = NSProgressIndicator()
         progress.style = .spinning
         progress.startAnimation(nil)
+        let retry = NSButton(title: "Erneut versuchen", target: self, action: #selector(retryCredentialStartup))
+        retry.isEnabled = false
         let quit = NSButton(title: "Beenden", target: NSApp, action: #selector(NSApplication.terminate(_:)))
-        let content = NSStackView(views: [title, detail, progress, quit])
+        let actions = NSStackView(views: [retry, quit])
+        actions.spacing = 12
+        let content = NSStackView(views: [title, detail, progress, actions])
         content.orientation = .vertical
         content.alignment = .centerX
         content.spacing = 16
@@ -159,6 +191,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.isReleasedWhenClosed = false
         window.center()
         credentialStartupWindow = window
+        credentialStartupMessage = detail
+        credentialStartupProgress = progress
+        credentialStartupRetry = retry
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
