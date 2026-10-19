@@ -21,6 +21,7 @@ import time
 import zlib
 from urllib.parse import urlsplit
 from quota_routing import routing_inputs
+from quota_usage import decode_packet, usage_metadata, token_weight, validate_intervals, VERSION as USAGE_VERSION, PRICE_SOURCE
 
 SCHEMA = 1
 WEEK = 7 * 86400
@@ -103,6 +104,11 @@ class Ledger:
         CREATE TABLE IF NOT EXISTS compact_jobs(job TEXT PRIMARY KEY,finished REAL,payload BLOB);
         CREATE TABLE IF NOT EXISTS raw_archives(id TEXT PRIMARY KEY,archived_at REAL,
           raw_bytes INTEGER,payload BLOB);
+        CREATE TABLE IF NOT EXISTS usage_features(event_id TEXT PRIMARY KEY,
+          cache_5m INTEGER,cache_1h INTEGER,speed TEXT);
+        CREATE TABLE IF NOT EXISTS tool_usage(id TEXT PRIMARY KEY,job TEXT,name TEXT,at REAL,
+          input_bytes INTEGER,result_bytes INTEGER,error INTEGER,completed REAL);
+        CREATE INDEX IF NOT EXISTS tool_usage_job ON tool_usage(job);
         """)
         self.meta("schema", SCHEMA)
         self.db.commit()
@@ -134,7 +140,7 @@ class Ledger:
         if since is None or since > time.time() + 60:
             raise ValueError("Invalid tracking start")
         with self.db:
-            for table in ("samples", "events", "runs", "compact_jobs", "collectors", "worker_settings", "bindings", "account_resets", "accounts", "metadata"):
+            for table in ("samples", "events", "usage_features", "tool_usage", "runs", "compact_jobs", "collectors", "worker_settings", "bindings", "account_resets", "accounts", "metadata"):
                 self.db.execute("DELETE FROM " + table)
             self.meta("schema", SCHEMA)
             self.meta("tracking_since", since)
@@ -229,6 +235,7 @@ class Ledger:
         saved_context = self.db.execute("SELECT value FROM metadata WHERE key='task_context'").fetchone()
         context = json.loads(saved_context[0]) if saved_context else {}
         since = self.setting("tracking_since", 0)
+        packet = decode_packet(payload['usage_packet'], worker) if payload.get('usage_packet') else None
         with self.db:
             probe = payload.get('probe')
             if isinstance(probe, dict) and isinstance(probe.get('windows'), dict):
@@ -304,6 +311,8 @@ class Ledger:
                   cache_read=MAX(events.cache_read,excluded.cache_read)""",
                                 (event_id, kind, run[0], worker, run_id, at, clean(event.get("time_quality"), 40),
                                  json.dumps(windows), clean(event.get("model"), 100), *values))
+            if packet:
+                self.ingest_usage(packet, now, since)
             self.db.execute("INSERT OR REPLACE INTO collectors VALUES(?,?,?,?,?)",
                             (worker, now, len(events), int(payload.get("backfill_hours", 72)), int(payload.get("errors", 0))))
         policy_file = Path(os.environ.get("MAX_MONITOR_EFFORT_POLICY", "/var/lib/max-monitor/RSMACS01/effort-policy.json"))
@@ -313,6 +322,68 @@ class Ledger:
             policy = {"schema": 1, "revision": 0, "phases": {}}
         return {"ok": True, "runs": len(runs), "events": len(events), "received_at": iso(now),
                 "tracking_since": since, "effort_policy": policy}
+
+    def ingest_usage(self, packet, now, since):
+        """Same transaction as event ingestion/ack; preserve all safe variants."""
+        run_id = clean(packet.get('run_id'), 240)
+        run = self.db.execute('SELECT job FROM runs WHERE worker=? AND run_id=?', (packet['worker'], run_id)).fetchone()
+        if not run:
+            raise ValueError('Usage evidence has no announced run')
+        kept = []
+        def count(value):
+            return int(value) if number(value) and 0 <= value <= 10**10 else 0
+        for observation in packet['observations']:
+            at = stamp(observation.get('at'))
+            if at is None or not max(since, now - 366 * 86400) <= at <= now + 60:
+                continue
+            kind = observation.get('type')
+            safe = {'type': kind, 'at': at}
+            if kind == 'assistant':
+                event_id = clean(observation.get('id'), 240)
+                safe.update(id=event_id, model=clean(observation.get('model'), 100),
+                            usage=usage_metadata(observation.get('usage') or {}), tools=[])
+                event = self.db.execute("SELECT * FROM events WHERE id=? AND event_type='message'", (event_id,)).fetchone()
+                usage = safe['usage']
+                cache = usage.get('cache_creation') or {}
+                if event and event['job'] == run[0] and isinstance(cache, dict) and all(
+                        number(cache.get(k)) and 0 <= cache[k] <= 10**10
+                        for k in ('ephemeral_5m_input_tokens', 'ephemeral_1h_input_tokens')):
+                    self.db.execute('''INSERT INTO usage_features VALUES(?,?,?,?) ON CONFLICT(event_id) DO UPDATE SET
+                        cache_5m=MAX(usage_features.cache_5m,excluded.cache_5m),
+                        cache_1h=MAX(usage_features.cache_1h,excluded.cache_1h),
+                        speed=CASE WHEN usage_features.speed='' THEN excluded.speed WHEN excluded.speed='' THEN usage_features.speed
+                                   WHEN usage_features.speed=excluded.speed THEN excluded.speed ELSE 'unknown' END''',
+                        (event_id, count(cache['ephemeral_5m_input_tokens']), count(cache['ephemeral_1h_input_tokens']), clean(usage.get('speed'), 40)))
+                for tool in observation.get('tools') or []:
+                    name = clean(tool.get('name'), 160)
+                    if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,160}', name):
+                        continue
+                    item = {'id': clean(tool.get('id'), 200), 'name': name, 'input_bytes': count(tool.get('input_bytes'))}
+                    safe['tools'].append(item)
+                    if item['id']:
+                        self.db.execute('''INSERT INTO tool_usage VALUES(?,?,?,?,?,NULL,NULL,NULL) ON CONFLICT(id) DO UPDATE SET
+                            name=excluded.name,at=COALESCE(tool_usage.at,excluded.at),input_bytes=MAX(COALESCE(tool_usage.input_bytes,0),excluded.input_bytes)''',
+                            (item['id'], run[0], name, at, item['input_bytes']))
+            elif kind == 'tool_results':
+                safe['results'] = []
+                for result in observation.get('results') or []:
+                    item = {'id': clean(result.get('id'), 200), 'error': bool(result.get('error')), 'result_bytes': count(result.get('result_bytes'))}
+                    safe['results'].append(item)
+                    if item['id']:
+                        self.db.execute('''INSERT INTO tool_usage VALUES(?,?,NULL,NULL,NULL,?,?,?) ON CONFLICT(id) DO UPDATE SET
+                            result_bytes=MAX(COALESCE(tool_usage.result_bytes,0),excluded.result_bytes),
+                            error=MAX(COALESCE(tool_usage.error,0),excluded.error),completed=COALESCE(tool_usage.completed,excluded.completed)''',
+                            (item['id'], run[0], item['result_bytes'], int(item['error']), at))
+            elif kind == 'result':
+                safe.update(usage=usage_metadata(observation.get('usage') or {}),
+                            model_usage=usage_metadata(observation.get('model_usage') or {}),
+                            metrics=usage_metadata(observation.get('metrics') or {}))
+            else:
+                continue
+            kept.append(safe)
+        if kept:
+            self.archive_rows({'usage_packets': [{'schema': 1, 'worker': packet['worker'], 'run_id': run_id,
+                                                 'observations': kept}]}, now)
 
     def resolve(self, weekly_reset):
         """Historical account identity is an explicitly inferred reset fingerprint.
@@ -359,6 +430,8 @@ class Ledger:
                 "customer": row["customer"] or "unknown", "kind": row["kind"], "attempts": 0,
                 "states": set(), "workers": set(), "started": [], "finished": [], "allocations": {},
                 "tokens": 0, "sampled_messages": 0, "attributed_messages": 0,
+                "token_counts": {k: 0 for k in ('input_tokens','output_tokens','cache_create','cache_read')},
+                "models": {}, "tools": [], "allocation_methods": {},
                 "evidence_errors": 0, "pending_scan": False})
             j["attempts"] += 1
             j["states"].add(row["state"])
@@ -380,6 +453,7 @@ class Ledger:
             quota_events[(event["worker"], event["job"])].append((event["at"], account))
         quota_times = {key: [q[0] for q in rows] for key, rows in quota_events.items()}
         messages = defaultdict(list)
+        features = {r['event_id']: r for r in self.db.execute('SELECT * FROM usage_features')}
         unknown_messages = 0
         for e in self.db.execute("SELECT * FROM events WHERE event_type='message' AND at BETWEEN ? AND ?", (cutoff, now)):
             job = jobs.get(e["job"])
@@ -387,6 +461,9 @@ class Ledger:
                 continue
             job["sampled_messages"] += 1
             job["tokens"] += e["input_tokens"] + e["output_tokens"] + e["cache_create"] + e["cache_read"]
+            for field in job['token_counts']:
+                job['token_counts'][field] += e[field]
+            job['models'][e['model']] = job['models'].get(e['model'], 0) + 1
             key = (e["worker"], e["job"])
             rows = quota_events[key]
             times = quota_times.get(key, [])
@@ -394,9 +471,12 @@ class Ledger:
             if not nearest or not nearest[1]:
                 unknown_messages += 1
                 continue
-            # Equal share per observed assistant turn, explicitly estimated.
-            # No undocumented token pricing is presented as subscription cost.
-            messages[nearest[1]].append((e["at"], e["job"], 1, e["id"]))
+            messages[nearest[1]].append((e["at"], e["job"], token_weight(e, features.get(e['id'])), e["id"]))
+        for row in self.db.execute('''SELECT job,name,COUNT(*) AS calls,SUM(COALESCE(error,0)) AS errors,
+                SUM(COALESCE(input_bytes,0)) AS input_bytes,SUM(COALESCE(result_bytes,0)) AS result_bytes
+                FROM tool_usage GROUP BY job,name'''):
+            if row['job'] in jobs:
+                jobs[row['job']]['tools'].append({k: row[k] for k in ('name','calls','errors','input_bytes','result_bytes')})
         totals = defaultdict(lambda: {"observed_pp": 0.0, "estimated_assigned_pp": 0.0,
             "unattributed_pp": 0.0, "intervals": 0, "gaps": 0, "counter_decreases": 0})
         pairs = defaultdict(list)
@@ -407,6 +487,7 @@ class Ledger:
         for row in self.db.execute("SELECT * FROM samples WHERE at BETWEEN ? AND ? AND reset IS NOT NULL ORDER BY at,source", (cutoff - 900, now)):
             pairs[(row["account"], row["window"], row["reset"])].append(row)
         covered = set()
+        intervals = []
         for (account, window, reset), rows in pairs.items():
             # Native reports round percentages differently from CLI utilization.
             # A native 100 must not swallow the later CLI step from 99 to 100.
@@ -446,25 +527,38 @@ class Ledger:
                     # rounded plateau; a positive delta across a gap stays unknown.
                     before = row
                     continue
-                weights = defaultdict(float)
-                matched = []
                 times = message_times.get(account, [])
                 start = bisect_right(times, charge_begin)
                 end = bisect_right(times, row["at"])
-                for at, job, weight, event_id in messages[account][start:end]:
-                    weights[job] += weight
-                    matched.append((job, event_id))
-                if weights:
-                    denominator = sum(weights.values())
-                    for job_id, weight in weights.items():
-                        alloc = jobs[job_id]["allocations"].setdefault(account, {"five_hour_pp": None, "seven_day_pp": None})
-                        alloc[window + "_pp"] = (alloc[window + "_pp"] or 0) + delta * weight / denominator
-                    totals[key]["estimated_assigned_pp"] += delta
-                    covered.update((job, event_id, window) for job, event_id in matched)
-                else:
-                    totals[key]["unattributed_pp"] += delta
+                matched = messages[account][start:end]
+                proxy = sum(e[2] or 0 for e in matched)
+                intervals.append({'account': account, 'window': window, 'reset': reset, 'begin': charge_begin,
+                                  'end': row['at'], 'delta': delta, 'turns': len(matched), 'proxy': proxy,
+                                  'complete': bool(matched) and proxy > 0 and all(e[2] is not None for e in matched),
+                                  'messages': matched})
                 before = row
                 charge_begin = row['at']
+        validation = validate_intervals(intervals)
+        methods = defaultdict(int)
+        for interval in intervals:
+            account, window = interval['account'], interval['window']
+            use_tokens = interval['complete'] and validation[(account, window)]['method'] == 'token_proxy'
+            method = 'token_proxy' if use_tokens else 'equal_turns'
+            weights = defaultdict(float)
+            for at, job, proxy, event_id in interval['messages']:
+                weights[job] += proxy if use_tokens else 1
+                covered.add((job, event_id, window))
+                counts = jobs[job]['allocation_methods'].setdefault(window, {})
+                counts[method] = counts.get(method, 0) + 1
+            denominator = sum(weights.values())
+            methods[method] += 1
+            if denominator:
+                for job_id, weight in weights.items():
+                    alloc = jobs[job_id]['allocations'].setdefault(account, {'five_hour_pp': None, 'seven_day_pp': None})
+                    alloc[window + '_pp'] = (alloc[window + '_pp'] or 0) + interval['delta'] * weight / denominator
+                totals[(account, window)]['estimated_assigned_pp'] += interval['delta']
+            else:
+                totals[(account, window)]['unattributed_pp'] += interval['delta']
         per_window = defaultdict(lambda: defaultdict(int))
         for job, at, window in covered:
             per_window[job][window] += 1
@@ -509,6 +603,11 @@ class Ledger:
                     "five_hour_pp": metric("estimated_five_hour_pp"), "duration_seconds": metric("duration_seconds"),
                     "measurement": "estimated_allocation", "forecast_ready": len(items) >= 5}
         return {"schema": SCHEMA, "generated_at": iso(now), "hours": hours,
+            "precision": {'version': USAGE_VERSION, 'price_source': PRICE_SOURCE,
+                          'api_prices_are_relative_proxy_only': True, 'per_task_ground_truth_available': False,
+                          'minimum_block_pp': 3, 'minimum_blocks': 8, 'holdout_fraction': .4,
+                          'required_mae_improvement': .1, 'interval_methods': dict(methods),
+                          'validation': [{'account': k[0], 'window': k[1], **v} for k, v in sorted(validation.items())]},
             "quality": {"job_allocations_are_estimates": True, "unknown_account_messages": unknown_messages,
                         "pending_scan_jobs": sum(bool(j["pending_scan"]) for j in jobs.values()),
                         "jobs_with_evidence_errors": sum(bool(j["evidence_errors"]) for j in jobs.values()),
@@ -545,7 +644,8 @@ class Ledger:
             session_ready = checked and j['coverage_by_window']['five_hour'] >= .8
             weekly_ready = checked and j['coverage_by_window']['seven_day'] >= .8
             ready = session_ready and weekly_ready
-            entry = {k: j[k] for k in ("job", "kind", "customer", "title", "started", "finished", "workers", "states", "attempts")}
+            entry = {k: j[k] for k in ("job", "kind", "customer", "title", "started", "finished", "workers", "states", "attempts",
+                                        "token_counts", "models", "tools", "allocation_methods")}
             entry.update(closed=closed, carryover=carryover, coverage=j["coverage"],
                          five_hour_pp=j["estimated_five_hour_pp"] if session_ready else None,
                          weekly_pp=j["estimated_weekly_pp"] if weekly_ready else None,
@@ -599,21 +699,27 @@ class Ledger:
             self.db.execute("BEGIN IMMEDIATE")
             old_jobs = [r[0] for r in self.db.execute("SELECT job FROM compact_jobs WHERE finished<?", (cutoff,))
                         if jobs[r[0]]["closed"]]
-            archived_rows = {"events": [], "runs": []}
+            archived_rows = {"events": [], "runs": [], "usage_features": [], "tool_usage": []}
             for job in old_jobs:
                 for table in ("events", "runs"):
                     archived_rows[table].extend(dict(r) for r in self.db.execute("SELECT * FROM " + table + " WHERE job=?", (job,)))
+                archived_rows['usage_features'].extend(dict(r) for r in self.db.execute(
+                    'SELECT * FROM usage_features WHERE event_id IN (SELECT id FROM events WHERE job=?)', (job,)))
+                archived_rows['tool_usage'].extend(dict(r) for r in self.db.execute('SELECT * FROM tool_usage WHERE job=?', (job,)))
             archived_rows["samples"] = [dict(r) for r in self.db.execute("SELECT * FROM samples WHERE at<?", (cutoff - 1800,))]
             archived_rows["account_resets"] = [dict(r) for r in self.db.execute('SELECT * FROM account_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))]
             self.archive_rows(archived_rows, now)
             for job in old_jobs:
+                self.db.execute('DELETE FROM usage_features WHERE event_id IN (SELECT id FROM events WHERE job=?)', (job,))
+                self.db.execute('DELETE FROM tool_usage WHERE job=?', (job,))
                 self.db.execute("DELETE FROM events WHERE job=?", (job,))
                 self.db.execute("DELETE FROM runs WHERE job=?", (job,))
             self.db.execute("DELETE FROM samples WHERE at<?", (cutoff - 1800,))
             self.db.execute('DELETE FROM account_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))
         account_groups = group(by_account)
         return {"schema": 2, "generated_at": iso(now), "tracking_since": iso(since),
-                "method": "observed_rounded_plateaus_equal_turn_share", "estimated": True,
+                "method": "observed_plateaus_empirically_gated_token_share", "estimated": True,
+                "precision": report['precision'],
                 "raw_resolution_pp": 1, "forecast_enabled": False,
                 "by_kind": group(by_kind), "by_account_kind": account_groups, "by_customer_kind": group(by_customer),
                 "scheduling": self.scheduling(account_groups, now),
@@ -622,7 +728,10 @@ class Ledger:
                 "recent_jobs": sorted(jobs.values(), key=lambda j: j["started"] or "", reverse=True)[:30],
                 "account_deltas": report["account_deltas"], "settings": settings, "accounts": report['accounts'],
                 "collectors": report["collectors"], "raw_retention_days": 2,
-                "compact_bytes": self.db.execute("SELECT COALESCE(SUM(LENGTH(payload)),0) FROM compact_jobs").fetchone()[0]}
+                "compact_bytes": self.db.execute("SELECT COALESCE(SUM(LENGTH(payload)),0) FROM compact_jobs").fetchone()[0],
+                "evidence_storage": dict(self.db.execute('''SELECT COUNT(*) AS packets,
+                    COALESCE(SUM(raw_bytes),0) AS raw_bytes,COALESCE(SUM(LENGTH(payload)),0) AS compressed_bytes
+                    FROM raw_archives''').fetchone())}
 
     def scheduling(self, groups, now):
         """Small read-only scheduling evidence, one shared budget per account.

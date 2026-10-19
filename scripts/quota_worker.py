@@ -24,6 +24,7 @@ MAX_EVENTS = 400
 STAGE = "startup"
 TOKEN_KEYS = {"input_tokens": "input_tokens", "output_tokens": "output_tokens",
               "cache_creation_input_tokens": "cache_create", "cache_read_input_tokens": "cache_read"}
+from quota_usage import canonical, encode_packet, usage_metadata, VERSION as USAGE_VERSION
 
 
 def timestamp(value):
@@ -187,6 +188,29 @@ def run_inventory(config, hours, now):
     return result
 
 
+def measurement(event, at):
+    """Retain every distinct usage/tool measurement, never prompts or tool data."""
+    message = event.get('message') or {}
+    if not isinstance(message, dict):
+        return None
+    kind = event.get('type')
+    content = message.get('content') or []
+    blocks = content if isinstance(content, list) else []
+    if kind == 'assistant':
+        tools = [{'id': text(b.get('id'), 200), 'name': text(b.get('name'), 160),
+                  'input_bytes': len(canonical(b.get('input')))}
+                 for b in blocks if isinstance(b, dict) and b.get('type') == 'tool_use']
+        return {'type': 'assistant', 'id': 'message:' + text(message.get('id') or event.get('uuid'), 200),
+                'at': at, 'model': text(message.get('model'), 100),
+                'usage': usage_metadata(message.get('usage') or {}), 'tools': tools}
+    if kind == 'user':
+        results = [{'id': text(b.get('tool_use_id'), 200), 'error': bool(b.get('is_error')),
+                    'result_bytes': len(canonical(b.get('content')))}
+                   for b in blocks if isinstance(b, dict) and b.get('type') == 'tool_result']
+        return {'type': 'tool_results', 'at': at, 'results': results} if results else None
+    return None
+
+
 def read_chunk(filename, offset=0, last_at=None, limit=MAX_EVENTS):
     """Consume complete lines only; timestamps adjacent to quota events are marked.
 
@@ -195,13 +219,14 @@ def read_chunk(filename, offset=0, last_at=None, limit=MAX_EVENTS):
     """
     output = []
     messages = {}
+    observations = {}
     skipped = 0
     with open(filename, "rb") as stream:
         size = os.fstat(stream.fileno()).st_size
         if offset > size:
             offset, last_at = 0, None
         stream.seek(offset)
-        while len(output) + len(messages) < limit:
+        while len(output) + len(messages) < limit and len(observations) < limit:
             begin = stream.tell()
             line = stream.readline(MAX_LINE + 1)
             if not line:
@@ -223,6 +248,15 @@ def read_chunk(filename, offset=0, last_at=None, limit=MAX_EVENTS):
             if at is not None:
                 last_at = at
             event_type = event.get("type")
+            observed = measurement(event, at or last_at)
+            if event_type == 'result':
+                observed = {'type': 'result', 'at': at or last_at,
+                            'usage': usage_metadata(event.get('usage') or {}),
+                            'model_usage': usage_metadata(event.get('modelUsage') or {}),
+                            'metrics': usage_metadata({k: event[k] for k in
+                                ('total_cost_usd', 'duration_ms', 'duration_api_ms', 'num_turns', 'is_error') if k in event})}
+            if observed:
+                observations[hashlib.sha256(canonical(observed)).hexdigest()] = observed
             if event_type == "assistant" and isinstance(event.get("message"), dict):
                 message = event["message"]
                 usage = message.get("usage") or {}
@@ -251,6 +285,10 @@ def read_chunk(filename, offset=0, last_at=None, limit=MAX_EVENTS):
                                    "time_quality": "timestamp" if at is not None else "adjacent" if last_at is not None else "unknown",
                                    "windows": windows})
         offset = stream.tell()
+    if observations:
+        # Evidence is sent as a compressed packet by collect, separately from
+        # the small hot message index. Result aggregates never enter that index.
+        output.append({'event_type': 'evidence', 'observations': list(observations.values())})
     return output + list(messages.values()), offset, last_at, skipped
 
 
@@ -292,9 +330,11 @@ def collect(config, cache, hours=72, sender=send, now=None):
     since = answer.get("tracking_since") or 0
     config['tracking_since'] = since
     prior = cursors.execute("SELECT value FROM tracker_meta WHERE key='tracking_since'").fetchone()
-    if since and (not prior or float(prior[0]) != since):
+    usage_version = cursors.execute("SELECT value FROM tracker_meta WHERE key='usage_version'").fetchone()
+    if (since and (not prior or float(prior[0]) != since)) or not usage_version or usage_version[0] != USAGE_VERSION:
         cursors.execute('DELETE FROM cursors')
         cursors.execute("INSERT OR REPLACE INTO tracker_meta VALUES('tracking_since',?)", (str(since),))
+        cursors.execute("INSERT OR REPLACE INTO tracker_meta VALUES('usage_version',?)", (USAGE_VERSION,))
         cursors.commit()
     policy = answer.get("effort_policy")
     if isinstance(policy, dict) and policy.get("schema") == 1 and isinstance(policy.get("phases"), dict):
@@ -339,6 +379,9 @@ def collect(config, cache, hours=72, sender=send, now=None):
         for _ in range(20):
             STAGE = "stream"
             events, after, last_at, skipped = read_chunk(filename, offset, last_at)
+            observations = [o for e in events if e.get('event_type') == 'evidence' for o in e['observations']
+                            if not since or (o.get('at') or 0) >= since]
+            events = [e for e in events if e.get('event_type') != 'evidence']
             events = [e for e in events if not since or (e.get("at") or 0) >= since]
             errors += skipped
             for event in events:
@@ -347,7 +390,8 @@ def collect(config, cache, hours=72, sender=send, now=None):
             announced.update(evidence_errors=skipped, pending_scan=int(after < stat.st_size))
             STAGE = "export"
             sender(config, {"schema": 1, "worker": config["worker"], "runs": [announced],
-                            "events": events, "backfill_hours": hours, "errors": errors})
+                            "events": events, "backfill_hours": hours, "errors": errors,
+                            "usage_packet": encode_packet(config['worker'], run['run_id'], observations) if observations else None})
             cursors.execute("INSERT OR REPLACE INTO cursors VALUES(?,?,?,?)", (filename, after, last_at, stat.st_mtime))
             cursors.commit()
             sent += len(events)
@@ -368,6 +412,10 @@ def install():
     current = Path(__file__).resolve()
     if current != source:
         source.write_bytes(current.read_bytes())
+        dependency = current.with_name('quota_usage.py')
+        target = runtime / dependency.name
+        target.write_bytes(dependency.read_bytes())
+        os.chmod(target, 0o600)
     os.chmod(source, 0o600)
     agent = home / "Library/LaunchAgents" / (LABEL + ".plist")
     agent.parent.mkdir(parents=True, exist_ok=True)

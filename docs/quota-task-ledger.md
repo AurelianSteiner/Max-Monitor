@@ -164,9 +164,27 @@ Messzeitpunkte vorliegen. Andernfalls dienen ausschließlich native Meldungen
 als Rückfallquelle. Native App und CLI runden unterschiedlich und werden deshalb
 nicht zu einem gemeinsamen Höchststand vermischt. Numerisches Gleitkomma-Rauschen
 unter einem Millionstel Prozentpunkt ist kein gemessener Verbrauch.
-Die Zuordnung zu parallelen Aufgaben erfolgt gleichmäßig je erfasstem
-Assistenten-Antwortzug im jeweiligen Messintervall und ist ausdrücklich eine
-Schätzung, keine gemessene Einzelaufgabenabrechnung.
+Die Zuordnung zu parallelen Aufgaben wird je Account und Kontingentfenster geprüft:
+Die Auswertung bündelt zusammenhängende, vollständig mit Token-Metadaten erfasste
+Intervalle zu mindestens drei beobachteten Prozentpunkten. Aus mindestens acht
+Blöcken dienen die zeitlich ersten 60 % (mindestens vier) zur Kalibrierung einer
+Account-Skalierung. Auf mindestens vier späteren, zurückgehaltenen Blöcken werden
+Antwortanzahl und Tokengewicht verglichen. Das Tokengewicht wird nur bei mindestens
+10 % geringerem mittlerem absoluten Fehler und 5 % geringerem RMSE verwendet.
+Die Prüfung wird beim Minutenbericht mit dem vorhandenen 48-Stunden-Puffer erneuert;
+sie startet keine Modellanfragen und benötigt keine zusätzliche Infrastruktur.
+
+Das Tokengewicht berücksichtigt Ein-/Ausgabe, Cache-Schreiben getrennt nach
+5 Minuten/1 Stunde, Cache-Lesen, exaktes Modell und gemessenen Geschwindigkeitsmodus.
+Die am 19.10.2026 geprüften API-Listenpreise sind ausschließlich ein relativer
+Schlüssel, keine dokumentierte Umrechnung in Abo-Prozentpunkte. Unterstützt werden
+Opus 5.5, Sonnet 5.5 und Haiku 4.5; unbekannte Modelle, fehlende Cache-Laufzeit,
+fehlender Geschwindigkeitsmodus und unvollständige Intervalle fallen auf die
+gleichmäßige Verteilung je Antwortzug zurück. Es gibt keine hochgerechneten
+Prozentpunkte ohne beobachteten Kontingentanstieg. Die Summe der Anteile bleibt
+gleich der beobachteten Account-Differenz. Auch die bessere Variante ist eine
+Schätzung, keine gemessene Einzelaufgabenabrechnung. Ein besserer Account-Test
+belegt noch keine exakt bekannte Verteilung zwischen parallelen Aufgaben.
 Ein gleichbleibender gerundeter Zähler bedeutet keinen belegten Nullverbrauch:
 Antwortzüge bleiben bis zum nächsten ganzen Prozentpunkt gemeinsam offen und
 werden erst dann auf die beteiligten Aufgaben verteilt. So entstehen aus vielen
@@ -177,6 +195,38 @@ Anstieg innerhalb eines gültigen Messintervalls schließt es. Ein Anstieg über
 die Lücke selbst wird weiterhin keiner Aufgabe zugerechnet.
 Unbeobachtete Privatnutzung desselben Accounts kann enthalten sein. Es gibt keine angebliche Token-zu-Abo-
 Umrechnung; Kapazitätsprognosen bleiben bis zur Kalibrierung deaktiviert.
+
+## Vollständige, komprimierte Messpakete
+
+Der Mac liest die vorhandenen Streams inkrementell und überträgt SHA-256-geprüfte
+zlib-9-Pakete mit sämtlichen unterschiedlichen, inhaltsfreien Usage-Messständen:
+Tokenzähler einschließlich Cache-TTL, Modell, Speed/Service-Tier, numerische
+Provider-Zusatzfelder, Iterations- und Server-Tool-Zähler. SDK-Ergebnissummen werden
+als eigene Belege gespeichert und niemals zu bereits gezählten Nachrichten addiert.
+Werkzeuge liefern ID, Name, Zeitpunkt, Fehlerstatus und serialisierte Ein-/Ausgabe-
+Bytes; diese Bytes werden nicht als zusätzliche Tokens ausgegeben. Prompts,
+Nachrichtentexte, Tool-Argumente, Tool-Ergebnisse und Zugangsdaten verlassen den Mac
+dabei nicht. Werkzeugkosten werden nicht pauschal auf die Usage aufgeschlagen.
+
+Die zentrale Übernahme speichert alle sicheren Messstände verlustfrei in
+`raw_archives`, gemeinsam mit dem kleinen Token-/Werkzeugindex in einer Transaktion.
+Erst nach Bestätigung rückt der Mac-Cursor vor. Gleiche Pakete werden per Inhalts-
+Hash dedupliziert; geänderte Messstände bleiben separat erhalten. Der bestehende
+Archiv-Verifikations-/Exportweg erfasst auch diese Pakete. Bei der Bereinigung
+nach 48 Stunden werden auch Cache-Features und Werkzeugindex vollständig archiviert.
+Es werden keine Messpakete automatisch gelöscht. Nur die kleinen Indizes und
+komprimierten Aufgabensummen werden für die laufende Auswertung gelesen.
+
+Die einmalige Änderung der Usage-Schemaversion setzt ausschließlich die Observer-
+Cursor zurück und ergänzt die noch vorhandenen Streams seit dem Tracking-Start.
+Newsletter-Dienste, Aufträge, Queue und Kundendaten bleiben unberührt. Die API liefert
+unter `precision` die Auswahl, Blockanzahlen und Fehlermaße je Account/Fenster sowie
+unter `evidence_storage` Roh-/Kompressionsgrößen. Einzelaufgaben enthalten
+`token_counts`, `models`, `tools` und `allocation_methods`.
+
+Primärquellen: [API-Preise](https://platform.claude.com/docs/en/about-claude/pricing),
+[Cache-Zähler](https://platform.claude.com/docs/en/build-with-claude/prompt-caching),
+[Usage-Erfassung](https://code.claude.com/docs/en/monitoring-usage).
 
 ## Zentrale Aufwandseinstellungen
 

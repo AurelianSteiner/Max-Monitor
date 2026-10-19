@@ -520,7 +520,7 @@ class WorkerTests(unittest.TestCase):
                 "seven_day": {"utilization": .42, "resetsAt": RESET}}}}
             f.write_text("\n".join(json.dumps(e) for e in [msg, {**msg, "message": {**msg["message"], "usage": {"output_tokens": 20}}}, quota]) + "\n")
             events, offset, at, skipped = worker_module.read_chunk(f)
-            self.assertEqual(len(events), 2)
+            self.assertEqual(len([e for e in events if e['event_type'] != 'evidence']), 2)
             self.assertNotIn("secret", json.dumps(events))
             self.assertEqual(next(e for e in events if e["event_type"] == "message")["output_tokens"], 20)
             self.assertEqual(events[0]["time_quality"], "adjacent")
@@ -537,7 +537,7 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(offset, 0)
             self.assertEqual(events, [])
             f.write_text(raw + "\n")
-            self.assertEqual(len(worker_module.read_chunk(f, offset, at)[0]), 1)
+            self.assertEqual(len([e for e in worker_module.read_chunk(f, offset, at)[0] if e['event_type'] != 'evidence']), 1)
 
     def test_workflow_includes_corrections_upload_and_sales(self):
         for task, kind in [("korrektur-cu-123", "correction"), ("a-klaviyo", "upload"),
