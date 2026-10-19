@@ -206,7 +206,9 @@ nonisolated final class PersistentCredentialVault {
         "fleetMonitoringAccount"
     ]
     enum StorageError: Error {
-        case missingKey, invalidKey, unreadableEntry, persistenceFailed
+        case missingKey, invalidKey
+        case unreadableEntry([String])
+        case persistenceFailed
     }
 
     private let vault: CredentialVault
@@ -251,8 +253,9 @@ nonisolated final class PersistentCredentialVault {
         guard key.count == CredentialVault.keyLength else { throw StorageError.invalidKey }
         let opened = try CredentialVault(fileURL: fileURL, key: key)
         // Validate before publishing a local key or changing any existing data.
-        for name in opened.keys {
-            guard opened.load(key: name) != nil else { throw StorageError.unreadableEntry }
+        let unreadable = opened.keys.filter { opened.load(key: $0) == nil }.sorted()
+        if !unreadable.isEmpty {
+            throw StorageError.unreadableEntry(unreadable)
         }
         var legacyEntries: [String: String] = [:]
         if !ready {

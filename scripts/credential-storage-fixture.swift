@@ -101,6 +101,17 @@ private func check(_ condition: @autoclosure () -> Bool, _ name: String) {
             }
         }
         try reset()
+        let readable = try CredentialVault(fileURL: file, key: original)
+        check(readable.save(key: "teamServerToken", value: "fixture-token"), "seed readable entry")
+        let mismatched = try CredentialVault(fileURL: file, key: CredentialVault.generateKey())
+        check(mismatched.save(key: "accounts", value: accountRaw), "seed unreadable encrypted entry")
+        let unreadableBefore = try Data(contentsOf: file)
+        let unreadable = VaultCredentialStorage(service: "fixture", allowInteraction: false)
+        check(!unreadable.isReady, "unreadable entry keeps consumers gated")
+        check(unreadable.startupDiagnostics["unreadableSavedRecords"] as? [String] == ["accounts"], "diagnostics identify names without credential values")
+        check((try? Data(contentsOf: file)) == unreadableBefore, "diagnostics preserve all original ciphertext")
+        check(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("credentials.key").path), "diagnostic never publishes a mismatched key")
+        try reset()
         legacyStatuses = ["accounts": errSecSuccess, "fleetMonitoringAccount": errSecUserCanceled]
         legacyValues = ["accounts": Data(accountRaw.utf8)]
         let deniedLegacy = VaultCredentialStorage(service: "fixture", allowInteraction: false)

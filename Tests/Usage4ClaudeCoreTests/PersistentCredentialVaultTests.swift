@@ -117,6 +117,27 @@ final class PersistentCredentialVaultTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: vaultURL), before)
     }
 
+    func testUnreadableEntryNamesPreserveOriginalCiphertextAndBlockKeyPublication() throws {
+        let key = CredentialVault.generateKey()
+        let original = try CredentialVault(fileURL: vaultURL, key: key)
+        XCTAssertTrue(original.save(key: "teamServerToken", value: "synthetic-team-token"))
+        let otherKey = try CredentialVault(fileURL: vaultURL, key: CredentialVault.generateKey())
+        XCTAssertTrue(otherKey.save(key: "accounts", value: "synthetic-account"))
+        let before = try Data(contentsOf: vaultURL)
+        XCTAssertThrowsError(try PersistentCredentialVault(directory: directory) { name in
+            name == "vault-key" ? key.base64EncodedString() : nil
+        }) { error in
+            guard let storageError = error as? PersistentCredentialVault.StorageError,
+                  case .unreadableEntry(let names) = storageError else {
+                return XCTFail("Expected exact unreadable entry names")
+            }
+            XCTAssertEqual(names, ["accounts"])
+        }
+        XCTAssertEqual(try Data(contentsOf: vaultURL), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: keyURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: readyURL.path))
+    }
+
     func testCorruptVaultNeverFallsBackOrOverwrites() throws {
         _ = try PersistentCredentialVault(directory: directory, loadLegacy: { _ in nil })
         let corrupted = Data("not-json".utf8)

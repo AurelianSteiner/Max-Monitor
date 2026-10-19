@@ -162,6 +162,7 @@ private final class VaultCredentialStorage: CredentialStorage {
     private var failureMessage = "Gespeicherte Daten konnten nicht sicher übernommen werden. Der ursprüngliche Bestand bleibt erhalten."
     private var providerAccountCounts: [String: Int] = [:]
     private var invalidSavedRecords: [String] = []
+    private var unreadableSavedRecords: [String] = []
     private var unavailableLegacyEntries: [String: Int32] = [:]
     private let allowInteraction: Bool
     var isReady: Bool { vault != nil }
@@ -176,6 +177,7 @@ private final class VaultCredentialStorage: CredentialStorage {
                 "legacyReadCount": legacyReadCount, "credentialStorage": "persistentLocalVault",
                 "unavailableLegacyEntries": unavailableLegacyEntries,
                 "invalidSavedRecords": invalidSavedRecords, "providerAccountCounts": providerAccountCounts,
+                "unreadableSavedRecords": unreadableSavedRecords,
                 "ready": isReady]
     }
     var startupMessage: String { failureMessage }
@@ -225,6 +227,10 @@ private final class VaultCredentialStorage: CredentialStorage {
             if legacyReadCount == 0 { keyReadStatus = "local"; keyOSStatus = nil; keyBytes = CredentialVault.keyLength }
         } catch {
             vault = nil
+            if let storageError = error as? PersistentCredentialVault.StorageError,
+               case .unreadableEntry(let names) = storageError {
+                unreadableSavedRecords = names
+            }
             Logger.keychain.error("Tresor nicht verfügbar; Altbestand bleibt erhalten: \(error.localizedDescription, privacy: .public)")
         }
     }
