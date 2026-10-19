@@ -317,6 +317,7 @@ def collect(config, cache, hours=72, sender=send, now=None):
     cursors.execute("CREATE TABLE IF NOT EXISTS cursors(file TEXT PRIMARY KEY,offset INTEGER,at REAL,modified REAL)")
     cursors.execute("CREATE TABLE IF NOT EXISTS tracker_meta(key TEXT PRIMARY KEY,value TEXT)")
     settings = dict(config.get("settings") or {})
+    settings['usage_version'] = USAGE_VERSION
     policy_path = cache.parent / "effort-policy.json"
     try:
         current_policy = json.loads(policy_path.read_text())
