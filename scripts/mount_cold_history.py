@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Activate already verified cold history without changing any visible file path."""
 import argparse
+import base64
 import fcntl
 import gzip
 import json
@@ -9,7 +10,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import time
-from cold_history import digest
+from cold_history import digest, attributes
 
 
 def activate(source, image, metadata, verification, work, fstab=Path('/etc/fstab')):
@@ -64,6 +65,8 @@ def _activate(source, image, metadata, verification, work, fstab):
     upper.mkdir(mode=original_stat.st_mode & 0o7777)
     os.chown(upper, original_stat.st_uid, original_stat.st_gid)
     os.chmod(upper, original_stat.st_mode & 0o7777)
+    for key, value in attributes(source).items():
+        os.setxattr(upper, key, base64.b64decode(value))
     os.utime(upper, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
     overlay_work.mkdir(mode=0o700)
     (work/'fstab-before').write_bytes(old_fstab)

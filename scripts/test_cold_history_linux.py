@@ -39,6 +39,7 @@ class MountedHistoryTests(unittest.TestCase):
             (source/'empty').touch()
             if with_xattrs:
                 os.setxattr(source/'binary','user.proof',b'full metadata')
+                os.setxattr(source,'user.root-proof',b'root directory metadata')
             db = sqlite3.connect(str(source/'proof.sqlite'))
             db.execute('PRAGMA journal_mode=WAL')
             db.execute('create table proof(value text)')
@@ -62,6 +63,7 @@ class MountedHistoryTests(unittest.TestCase):
                 self.assertEqual((source/'binary').stat().st_ino,(source/'hardlink').stat().st_ino)
                 if with_xattrs:
                     self.assertEqual(os.getxattr(source/'binary','user.proof'),b'full metadata')
+                    self.assertEqual(os.getxattr(source,'user.root-proof'),b'root directory metadata')
                 db = sqlite3.connect((source/'proof.sqlite').as_uri()+'?mode=ro',uri=True)
                 self.assertEqual(db.execute('select value from proof').fetchone()[0],'full original text ä')
                 db.close()
