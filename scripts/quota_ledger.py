@@ -300,22 +300,25 @@ class Ledger:
         return next(iter(matches)) if len(matches) == 1 else None
 
     def materialize(self):
-        # Re-resolve after a later fleet observation; raw evidence is never lost.
-        resolved = {}
-        for event in self.db.execute("SELECT * FROM events WHERE event_type='quota' AND at IS NOT NULL"):
-            windows = json.loads(event["windows"])
-            reset = (windows.get("seven_day") or {}).get("reset")
-            if reset not in resolved:
-                resolved[reset] = self.resolve(reset)
-            account = resolved[reset]
-            if not account:
-                continue
-            for window, value in windows.items():
-                if event["time_quality"] not in ("timestamp", "adjacent"):
+        # Reserve the writer before opening the read cursor. In WAL mode a
+        # concurrent observer commit otherwise makes this snapshot impossible
+        # to upgrade (SQLITE_BUSY_SNAPSHOT), poisoning every following cycle.
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            resolved = {}
+            for event in self.db.execute("SELECT * FROM events WHERE event_type='quota' AND at IS NOT NULL"):
+                windows = json.loads(event["windows"])
+                reset = (windows.get("seven_day") or {}).get("reset")
+                if reset not in resolved:
+                    resolved[reset] = self.resolve(reset)
+                account = resolved[reset]
+                if not account:
                     continue
-                self.sample(identifier([event["id"], window]), account, event["worker"], window,
-                            value["reset"], event["at"], value["percent"], "inferred_reset_cycle", "stream")
-        self.db.commit()
+                for window, value in windows.items():
+                    if event["time_quality"] not in ("timestamp", "adjacent"):
+                        continue
+                    self.sample(identifier([event["id"], window]), account, event["worker"], window,
+                                value["reset"], event["at"], value["percent"], "inferred_reset_cycle", "stream")
 
     def report(self, hours=72, now=None):
         now = time.time() if now is None else now
@@ -634,10 +637,15 @@ def main():
                 result = {"ok": True, "sampled_at": iso()}
                 if args.command == "collect":
                     break
-            except (OSError, ValueError, sqlite3.Error):
+            except (OSError, ValueError, sqlite3.Error) as error:
+                # Release failed transactions/read snapshots before retrying;
+                # a transient observer race must not stall this process forever.
+                ledger.db.rollback()
                 if args.command == "collect":
                     raise
-                print(json.dumps({"ok": False, "at": iso(), "error": "quota_collection_failed"}), flush=True)
+                print(json.dumps({"ok": False, "at": iso(), "error": "quota_collection_failed",
+                                  "type": type(error).__name__,
+                                  "sqlite_error": getattr(error, "sqlite_errorname", None)}), flush=True)
             time.sleep(max(5, args.interval))
     elif args.command == "report":
         result = ledger.report(args.hours)
