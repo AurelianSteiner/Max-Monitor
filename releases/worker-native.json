@@ -5,8 +5,5 @@
   "sourceRevision": "a5c821ac7f9c0534f15599918d030d855ebabe79",
   "sha256": "c8fd8bb3d928d2409193f78207cf35a8cdb65fa202aaeafe9b3b3a4f754e44b8",
   "tag": "worker-native-a5c821ac7f9c",
-  "asset": "Max-Monitor-worker.zip",
-  "canaryWorkerIds": [
-    "newsletter-mac-141b2976"
-  ]
+  "asset": "Max-Monitor-worker.zip"
 }
