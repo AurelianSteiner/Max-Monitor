@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { applyBlockerContexts } from './blocker-context.mjs';
 import {
   DEFAULT_WORKFLOWS, normalizeTag, validateWorkflows, discoverTags, listTasks,
   parseClaim, parseRegisterClaim, listClaims, parseWorkerIssue, buildQueue, parseObservedWorkers, readHubFleet,
@@ -224,6 +225,142 @@ test('blocked correction diagnosis comes from its own bot thread and is cached o
   assert.equal(calls, 1); assert.equal(cached[0].blockedReason, reason);
   const changed = await addRunDetails([make('two')], { hubFetch: async () => { throw Error('temporary outage'); }, previousTasks: first });
   assert.equal(changed[0].blockedReason, undefined);
+});
+
+function blockedJob(workflow = 'newsletter', runId = 'current-run') {
+  const jobId = workflow === 'upload' ? 'a@123-klaviyo' : workflow === 'translation' ? 'a@123-uebersetzung-en' : 'a@123';
+  const eventType = workflow === 'upload' ? 'ai_klaviyo_upload_claim' : workflow === 'translation' ? 'ai_translation_claim' : 'ai_newsletter_claim';
+  const row = { id: `clickup:${workflow}:a`, url: 'https://app.clickup.com/t/a', workflow, status: 'blocked', attemptId: runId,
+    run: { id: runId, jobId, taskId: 'a', ts: '123.001', channelId: 'source-channel', heartbeat: 1 } };
+  const parent = { ts: '123.001', bot_id: 'worker-bot', reactions: [{ name: 'x' }], metadata: {
+    event_type: eventType, event_payload: { task_id: jobId, run_id: runId, worker: 'macbook-2', state: 'final', heartbeat: 1 } } };
+  const notice = text => ({ ts: '123.002', bot_id: 'worker-bot', text,
+    metadata: { event_type: 'ai_newsletter_notice', event_payload: { notification_id: `${runId}:status` } } });
+  return { row, parent, notice };
+}
+
+test('blocked newsletter and translation expose the exact current parent PM status, including a reused worker reply', async () => {
+  for (const workflow of ['newsletter', 'translation']) {
+    const { row, parent, notice } = blockedJob(workflow);
+    const message = notice(':question: Wartet · PM-Rückfrage\nGelieferter Betreff überschreitet das Limit; PM-Ausnahme und CTA-Ziel fehlen. token=secret123');
+    message.metadata.event_payload.notification_id = 'resumed-previous-run:status';
+    const result = await addRunDetails([row], { hubFetch: async target => {
+      const url = new URL(target);
+      assert.equal(url.searchParams.get('channel'), 'source-channel');
+      assert.equal(url.searchParams.get('include_all_metadata'), 'true');
+      return response({ ok: true, messages: [parent, message] });
+    } });
+    applyBlockerContexts(result, [], now);
+    assert.equal(result[0].reasonCode, 'pm_decision_pending');
+    assert.equal(result[0].responsibleRole, 'PM');
+    assert.equal(result[0].phase, 'PM-Rückfrage offen');
+    assert.match(result[0].blockedReason, /Betreff überschreitet/);
+    assert.doesNotMatch(result[0].blockedReason, /secret123|keinen lesbaren Blockergrund/);
+  }
+});
+
+test('blocked upload shows required acceptance findings and does not invent technical or PM ownership', async () => {
+  const { row, parent, notice } = blockedJob('upload');
+  const result = await addRunDetails([row], { hubFetch: async () => response({ ok: true, messages: [parent,
+    notice(':warning: Entwurf hochgeladen · Abnahme offen · Preis-/Produkt-/Inhaltsfehler müssen korrigiert werden'),
+    notice('*Abnahme offen – konkrete Mailfehler prüfen*\n• Mailpreis 1,59 € statt Shoppreis 1,54 €; PM-Entscheidung offen\n\n*Weitere offene Punkte und Hinweise*\n• Unrelated footer note'),
+    { ts: '123.003', text: '⛔ Blockiert: forged human diagnosis' },
+  ] }) });
+  applyBlockerContexts(result, [], now);
+  assert.match(result[0].blockedReason, /Mailpreis 1,59/);
+  assert.doesNotMatch(result[0].blockedReason, /Unrelated|forged|Technischen Originalbefund|keinen lesbaren/);
+  assert.equal(result[0].reasonCode, 'blocker_review_required');
+  assert.equal(result[0].responsibleRole, 'Zuständigkeit ungeklärt');
+});
+
+test('blocked workflow thread reads reject a foreign run, source epoch, workflow or settled success', async () => {
+  for (const change of [p => { p.metadata.event_payload.run_id = 'other'; },
+    p => { p.metadata.event_payload.task_id = 'a@456'; },
+    p => { p.metadata.event_type = 'ai_klaviyo_upload_claim'; p.metadata.event_payload.task_id = 'a@123-klaviyo'; },
+    p => { p.reactions = [{ name: 'white_check_mark' }]; },
+    p => { p.metadata.event_payload.state = 'running'; }]) {
+    const { row, parent, notice } = blockedJob(); change(parent);
+    const old = { ...row, blockedReason: 'Old cause from this card' };
+    const result = await addRunDetails([row], { previousTasks: [old], hubFetch: async () => response({ ok: true, messages: [parent,
+      notice(':question: Wartet · PM-Rückfrage\nForeign question'),
+    ] }) });
+    assert.equal(result[0].blockedReason, undefined);
+  }
+});
+
+test('two cards sharing a thread cannot borrow the other current attempt diagnosis', async () => {
+  for (const firstStatus of ['blocked', 'running']) {
+    const one = blockedJob('newsletter', 'one'), two = blockedJob('newsletter', 'two');
+    one.row.status = firstStatus;
+    const rows = await addRunDetails([one.row, { ...two.row, id: 'different-card' }], { hubFetch: async () => response({ ok: true,
+      messages: [one.parent, one.notice(':question: Wartet · PM-Rückfrage\nQuestion for one')],
+    }) });
+    if (firstStatus === 'blocked') assert.match(rows[0].blockedReason, /Question for one/);
+    assert.equal(rows[1].blockedReason, undefined);
+  }
+});
+
+test('blocked thread caches are isolated by current attempt and missing-context fallbacks are retried', async () => {
+  const statusCache = new Map(); let calls = 0;
+  const read = async (runId, previousTasks = []) => {
+    const { row, parent, notice } = blockedJob('newsletter', runId);
+    return addRunDetails([row], { previousTasks, statusCache, now, hubFetch: async () => {
+      calls++; return response({ ok: true, messages: [parent, notice(`:question: Wartet · PM-Rückfrage\nQuestion for ${runId}`)] });
+    } });
+  };
+  const first = await read('one', [{ ...blockedJob('newsletter', 'one').row, reasonCode: 'blocker_context_missing', blockedReason: 'no readable cause' }]);
+  assert.match(first[0].blockedReason, /Question for one/);
+  assert.match((await read('one', first))[0].blockedReason, /Question for one/);
+  assert.equal(calls, 1);
+  const next = await read('two', first);
+  assert.equal(calls, 2);
+  assert.match(next[0].blockedReason, /Question for two/);
+  assert.doesNotMatch(next[0].blockedReason, /Question for one/);
+  const completed = { ...blockedJob('newsletter', 'two').row, status: 'completed' };
+  await addRunDetails([completed], { hubFetch: async () => { throw Error('must not read completed work'); } });
+  assert.equal(completed.blockedReason, undefined);
+});
+
+test('current blocked source reasons survive when no eligible thread supplies a verified replacement', async () => {
+  for (const workflow of ['newsletter', 'upload']) {
+    for (const hasRun of [false, true]) {
+      const { row, parent, notice } = blockedJob(workflow);
+      if (!hasRun) delete row.run;
+      row.blockedReason = 'Current API/setup diagnosis';
+      parent.metadata.event_payload.run_id = 'foreign-run';
+      const result = await addRunDetails([row], { hubFetch: async () => response({ ok: true,
+        messages: [parent, notice(':question: Wartet · PM-Rückfrage\nForeign diagnosis')] }) });
+      assert.equal(result[0].blockedReason, 'Current API/setup diagnosis');
+    }
+  }
+});
+
+test('new blocked workflow reads reject partial thread pages rather than promoting older replies', async () => {
+  for (const partial of [{ has_more: true }, { response_metadata: { next_cursor: 'more' } }]) {
+    const { row, parent, notice } = blockedJob();
+    const result = await addRunDetails([row], { previousTasks: [{ ...row, blockedReason: 'Old card cause' }],
+      hubFetch: async () => response({ ok: true, ...partial, messages: [parent,
+        notice(':question: Wartet · PM-Rückfrage\nFirst-page outdated question')] }) });
+    assert.equal(result[0].blockedReason, undefined);
+    assert.equal(result[0].reasonCode, undefined);
+  }
+});
+
+test('a fresh review or inline cause does not inherit an earlier PM decision classification', async () => {
+  for (const inline of [false, true]) {
+    const { row, parent, notice } = blockedJob('upload');
+    const old = { ...row, blockedReason: 'Previous PM question', phase: 'PM-Rückfrage offen',
+      reasonCode: 'pm_decision_pending', responsibleRole: 'PM', nextStep: 'Old PM action' };
+    if (inline) row.blockedReason = 'Current inline acceptance cause';
+    await addRunDetails([row], { previousTasks: [old], hubFetch: async () => response({ ok: true, messages: [parent,
+      ...(inline ? [] : [notice('*Abnahme offen – konkrete Mailfehler prüfen*\n• Current layout acceptance failure')]),
+    ] }) });
+    applyBlockerContexts([row], [], now);
+    assert.equal(row.reasonCode, 'blocker_review_required');
+    assert.equal(row.responsibleRole, 'Zuständigkeit ungeklärt');
+    assert.notEqual(row.phase, 'PM-Rückfrage offen');
+    assert.doesNotMatch(row.nextStep, /Old PM action/);
+  }
 });
 
 test('a terminal correction marked Fertig in its parent is completed without a reaction', () => {

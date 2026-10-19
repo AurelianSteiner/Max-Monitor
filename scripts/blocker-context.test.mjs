@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
-import { checkpointBlocker, currentPm, applyBlockerContexts, PM_FIELD_ID } from './blocker-context.mjs';
+import { blockerContext, checkpointBlocker, currentPm, applyBlockerContexts, PM_FIELD_ID } from './blocker-context.mjs';
 import state from './task-state.cjs';
 
 function checkpoint(change = {}) {
@@ -38,6 +38,16 @@ test('PM evidence uses one current explicit users field and never guesses assign
   assert.equal(rows[0].pmOwner, undefined);
   assert.equal(rows[0].pmOwnerId, undefined);
   assert.equal(rows[0].pmCheckedAt, new Date(1000).toISOString());
+});
+
+test('an unknown non-sales blocker is not called technical without state evidence', () => {
+  for (const workflow of ['newsletter', 'upload', 'translation', 'correction']) {
+    const rows = [{ status: 'blocked', workflow, blockedReason: 'Saved acceptance finding' }];
+    applyBlockerContexts(rows, [], 1000);
+    assert.equal(rows[0].reasonCode, 'blocker_review_required');
+    assert.equal(rows[0].responsibleRole, 'Zuständigkeit ungeklärt');
+  }
+  assert.equal(blockerContext('Actual worker failure', { state: 'technisch_blockiert' }).responsibleRole, 'Technik');
 });
 
 test('manual completion is final and cannot become live work during reconciliation', () => {

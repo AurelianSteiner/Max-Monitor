@@ -13,7 +13,7 @@ export function currentPm(task) {
 }
 export function blockerContext(detail, { state, technical = false } = {}) {
   const reason = clean(detail);
-  let reasonCode = 'blocker_review_required', responsibleRole = 'Technik', nextStep = 'Gesicherten Originalbefund prüfen und die zuständige Rolle für die Behebung festlegen.';
+  let reasonCode = 'blocker_review_required', responsibleRole = 'Zuständigkeit ungeklärt', nextStep = 'Gesicherten Originalbefund prüfen und die zuständige Rolle für die Behebung festlegen.';
   if (/Kunde fehlt im RS Hub|noch nicht als Kunde|Kunden-Onboarding|Designbasis.*nicht freigegeben|Design.Library.*nicht freigegeben/i.test(reason)) {
     reasonCode = 'customer_setup_incomplete'; responsibleRole = 'PM und Design'; nextStep = 'Designbasis freigeben und Kunden-Onboarding abschließen; danach den Auftrag gezielt fortsetzen.';
   } else if (/Produktfeed fehlt|Feed[^.;]*nicht gibt|kein[^.;]*Feed|Feed[^.;]*fehlt/i.test(reason)) {
@@ -23,7 +23,7 @@ export function blockerContext(detail, { state, technical = false } = {}) {
   } else if (/Endabnahme|QA.*(?:fehlgeschlagen|nicht bestanden)|Fixrunden/i.test(reason)) {
     reasonCode = 'quality_review_failed'; responsibleRole = 'Design und QA'; nextStep = 'Offene Muss-Punkte anhand des gespeicherten Prüfberichts korrigieren und erneut abnehmen lassen.';
   } else if (technical || state === 'technisch_blockiert') {
-    reasonCode = 'technical_blocker'; nextStep = 'Technischen Originalbefund beheben und den betroffenen Schritt mit den vorhandenen Belegen prüfen.';
+    reasonCode = 'technical_blocker'; responsibleRole = 'Technik'; nextStep = 'Technischen Originalbefund beheben und den betroffenen Schritt mit den vorhandenen Belegen prüfen.';
   }
   return { blockerReason: reason || 'Der gespeicherte Vorgang enthält noch keinen lesbaren Blockergrund.',
     reasonCode: reason ? reasonCode : 'blocker_context_missing', responsibleRole, nextStep };
@@ -58,7 +58,9 @@ export function applyBlockerContexts(rows, tasks, now = Date.now()) {
     delete row.pmOwner; delete row.pmOwnerId;
     Object.assign(row, pm);
     row.pmCheckedAt = new Date(now).toISOString();
-    if (!row.reasonCode) Object.assign(row, blockerContext(row.blockedReason, { technical: row.workflow !== 'sales' }));
+    // A workflow name proves no technical cause. Preserve unknown ownership
+    // until an actual worker state or structured PM journal supplies it.
+    if (!row.reasonCode) Object.assign(row, blockerContext(row.blockedReason));
     const cause = clean(row.blockerReason || row.blockedReason, 200), who = clean(row.responsibleRole, 60);
     row.blockedReason = clean(`Gesicherter Befund: ${cause} · Zuständig: ${who}${pm.pmOwner ? ' (PM: ' + pm.pmOwner + ')' : ' (PM nicht zugeordnet)'} · Nächster Schritt: ${clean(row.nextStep, 160)}`);
   }

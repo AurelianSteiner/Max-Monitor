@@ -981,9 +981,22 @@ export function parseBlockedReason(text) {
 
 function parsePmQuestion(text) {
   const lines = String(text ?? '').split('\n');
+  // Current production status, rewritten in the worker's existing bot reply.
+  // The exact parent claim is checked before this parser is used for other jobs.
+  if (/^(?:❓|:question:)\s+Wartet · PM-Rückfrage\s*$/.test(lines[0])) {
+    return parseBlockedReason(`:warning: blockiert: ${lines.slice(1).join('\n')}`);
+  }
   if (!/^\*?Unklar\s*[–—-]\s*bitte hier antworten\*?/.test(lines[0])) return null;
   const questions = lines.slice(1).map(line => /^\s*•\s*Unklar\s*·\s*Kommentar\s+\d+\s*\(.*?\):\s*(.+)$/.exec(line)?.[1]).filter(Boolean);
   return questions.length ? parseBlockedReason(`:warning: blockiert: ${questions.join(' · ')}`) : null;
+}
+
+function parseUploadReview(text) {
+  const lines = String(text ?? '').split('\n');
+  if (!/^\*?Abnahme offen [–—-] konkrete Mailfehler prüfen\*?\s*$/.test(lines[0])) return null;
+  // Only required acceptance findings, never the unrelated follow-up notes.
+  const required = lines.slice(1).join('\n').split(/\n\s*\*?Weitere offene Punkte und Hinweise\*?/)[0];
+  return parseBlockedReason(`:warning: blockiert: ${required}`);
 }
 
 export function parseWaitingReason(text) {
@@ -1002,15 +1015,16 @@ export async function readRunStatuses(hubFetch, channelId, threads, { concurrenc
   const wanted = new Map();
   for (const thread of threads) {
     const ts = typeof thread === 'string' ? thread : thread?.ts;
-    if (typeof ts === 'string' && !wanted.has(ts)) wanted.set(ts, typeof thread === 'string' ? undefined : thread.heartbeat);
+    if (typeof ts === 'string' && !wanted.has(ts)) wanted.set(ts, typeof thread === 'string' ? {} : thread);
   }
   const statuses = new Map();
-  const known = ts => { const status = cache?.get(`${channelId}:${ts}`)?.status; if (status) statuses.set(ts, status); };
+  const sameAttempt = (old, expected) => old?.runId === expected.runId && old?.jobId === expected.jobId;
+  const known = ts => { const old = cache?.get(`${channelId}:${ts}`); if (sameAttempt(old, wanted.get(ts)) && old?.status) statuses.set(ts, old.status); };
   const pending = [];
-  for (const [ts, heartbeat] of wanted) {
+  for (const [ts, expected] of wanted) {
     const old = cache?.get(`${channelId}:${ts}`);
     const age = old ? now - old.at : NaN;
-    if (old && old.heartbeat === heartbeat && age >= 0 && age < RUN_STATUS_MAX_AGE_MS) known(ts);
+    if (old && sameAttempt(old, expected) && old.heartbeat === expected.heartbeat && age >= 0 && age < RUN_STATUS_MAX_AGE_MS) known(ts);
     else pending.push(ts);
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, async () => {
@@ -1018,16 +1032,32 @@ export async function readRunStatuses(hubFetch, channelId, threads, { concurrenc
       const ts = pending.shift();
       try {
         const url = new URL('https://slack.com/api/conversations.replies');
-        for (const [key, value] of Object.entries({ channel: channelId, ts, limit: 50 })) url.searchParams.set(key, String(value));
+        const expected = wanted.get(ts);
+        for (const [key, value] of Object.entries({ channel: channelId, ts, limit: 50, ...(expected.runId ? { include_all_metadata: true } : {}) })) url.searchParams.set(key, String(value));
         const result = await requestJson(hubFetch, url, 'Slack');
+        const messages = Array.isArray(result.messages) ? result.messages : [];
+        const parentMessage = messages.find(message => message.ts === ts && message.bot_id);
+        const parent = expected.runId ? parseClaim(parentMessage) : null;
+        // A resumed worker may reuse its own status reply. The current parent
+        // metadata must still prove this exact run, job/status epoch and workflow.
+        // Do not label an older first-page reply as the current diagnosis. A
+        // truncated new-path read stays unverified; no extra Slack budget is used.
+        const complete = !result.has_more && !result.response_metadata?.next_cursor;
+        const bound = !expected.runId || complete && parent?.runId === expected.runId && parent.jobId === expected.jobId
+          && parent.taskId === expected.taskId && parent.workflow === expected.workflow
+          && parent.state === 'final' && parent.outcome !== 'completed';
         // Only the worker's own bot reply counts, never a person writing in the thread.
-        const found = (Array.isArray(result.messages) ? result.messages : [])
-          .filter(message => message?.ts !== ts && message?.bot_id).map(message => parseRunStatus(message.text)
+        const found = (bound ? messages : [])
+          .filter(message => message?.ts !== ts && message?.bot_id
+            && (!expected.runId || message.metadata?.event_type === 'ai_newsletter_notice')).map(message => parseRunStatus(message.text)
             || (parsePmQuestion(message.text) ? { pmQuestion: parsePmQuestion(message.text) } : null)
+            || (parseUploadReview(message.text) ? { blockedReason: parseUploadReview(message.text) } : null)
             || (parseWaitingReason(message.text) ? { blockedReason: parseWaitingReason(message.text) } : null)
             || (parseBlockedReason(message.text) ? { blockedReason: parseBlockedReason(message.text) } : null)).filter(Boolean);
-        if (found.length) statuses.set(ts, found.at(-1));
-        cache?.set(`${channelId}:${ts}`, { heartbeat: wanted.get(ts), at: now, status: found.at(-1) || null });
+        let status = !bound ? { unbound: true } : found.at(-1);
+        if (status && expected.runId) status = { ...status, sourceRunId: expected.runId, sourceJobId: expected.jobId };
+        if (status) statuses.set(ts, status);
+        cache?.set(`${channelId}:${ts}`, { heartbeat: expected.heartbeat, runId: expected.runId, jobId: expected.jobId, at: now, status: status || null });
       } catch (error) {
         // Progress is optional: the task simply stays "In Bearbeitung".
         if (isRateLimited(error)) budget.limited = true;
@@ -1125,15 +1155,19 @@ export function createRenderPreviews({ localHub, upload, openDatabase, resize, r
 export async function addRunDetails(rows, { hubFetch, channelId, previews, previousTasks = [], now = Date.now(), statusCache }) {
   const previous = new Map((Array.isArray(previousTasks) ? previousTasks : []).map(row => [row?.id, row]));
   const waiting = row => row.status === 'queued' && /^Wartet · (?:Hub-Übergabe|Fortsetzung in der zentralen Queue|automatische Fortsetzung)$/.test(row.phase || '');
-  const running = rows.filter(row => row.run && (row.status === 'running' || ((row.status === 'blocked' || waiting(row)) && row.workflow === 'correction'
-    && !(previous.get(row.id)?.attemptId === row.attemptId && previous.get(row.id)?.blockedReason))));
+  const running = rows.filter(row => row.run && (row.status === 'running' || (row.status === 'blocked' && row.workflow !== 'correction' && row.phase !== 'Worker meldet sich nicht mehr')
+    || ((row.status === 'blocked' || waiting(row)) && row.workflow === 'correction'
+      && !(previous.get(row.id)?.attemptId === row.attemptId && previous.get(row.id)?.blockedReason))));
   const attempts = rows.filter(row => row.run && row.workflow === 'newsletter' && (['running', 'blocked'].includes(row.status)
     || (row.status === 'completed' && ['running', 'blocked'].includes(previous.get(row.id)?.status))));
   const channels = new Map();
   for (const row of running) {
     const channel = row.run.channelId || channelId;
     if (!channels.has(channel)) channels.set(channel, []);
-    channels.get(channel).push({ ts: row.run.ts, heartbeat: row.run.heartbeat });
+    const bound = row.status === 'blocked' && row.workflow !== 'correction';
+    channels.get(channel).push({ ts: row.run.ts, heartbeat: row.run.heartbeat,
+      ...(bound ? { runId: row.run.id, jobId: row.run.jobId, taskId: row.run.taskId,
+        workflow: row.workflow === 'upload' ? 'klaviyo' : row.workflow === 'translation' ? jobIdentity(row.run.jobId).workflow : row.workflow } : {}) });
   }
   const budget = { limited: false };
   const [statusLists, rendered] = await Promise.all([
@@ -1147,14 +1181,25 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
   const statuses = new Map(statusLists);
   for (const row of rows) {
     const old = previous.get(row.id);
-    const status = statuses.get(row.run?.channelId || channelId)?.get(row.run?.ts);
+    const observed = statuses.get(row.run?.channelId || channelId)?.get(row.run?.ts);
+    const requiresBinding = row.status === 'blocked' && row.workflow !== 'correction';
+    const status = observed && (requiresBinding || observed.sourceRunId)
+      && (observed.sourceRunId !== row.run?.id || observed.sourceJobId !== row.run?.jobId)
+      ? { unbound: true } : observed;
     if (row.status === 'running' && status?.percent !== undefined) { row.progress = status.percent; row.step = status.step; }
-    if ((row.status === 'blocked' || waiting(row)) && row.workflow === 'correction') {
-      row.blockedReason = status?.pmQuestion || status?.blockedReason || (old?.attemptId === row.attemptId && old.blockedReason
-        ? parseBlockedReason(`:warning: blockiert: ${old.blockedReason}`) : undefined);
+    if (row.run && (row.status === 'blocked' || waiting(row) && row.workflow === 'correction')) {
+      const currentReason = status?.pmQuestion || status?.blockedReason || row.blockedReason;
+      row.blockedReason = currentReason || (!status?.unbound && old?.attemptId === row.attemptId && old.blockedReason
+        && old.reasonCode !== 'blocker_context_missing'
+        ? parseBlockedReason(`:warning: blockiert: ${old.blockerReason || old.blockedReason}`) : undefined);
       if (status?.pmQuestion || row.phase === 'PM-Rückfrage offen'
-        || (old?.attemptId === row.attemptId && old.phase === 'PM-Rückfrage offen' && row.blockedReason)) row.phase = 'PM-Rückfrage offen';
-      else if (row.blockedReason && row.status === 'blocked') row.phase = 'Korrektur blockiert';
+        || (!currentReason && old?.attemptId === row.attemptId && old.phase === 'PM-Rückfrage offen' && row.blockedReason)) row.phase = 'PM-Rückfrage offen';
+      else if (row.blockedReason && row.status === 'blocked' && row.workflow === 'correction') row.phase = 'Korrektur blockiert';
+      if (status?.pmQuestion) Object.assign(row, { blockerReason: row.blockedReason, reasonCode: 'pm_decision_pending', responsibleRole: 'PM',
+        nextStep: 'Die offene Entscheidung im bestehenden Rückfragen-Thread klären; vorhandene Arbeit erhalten.' });
+      else if (!currentReason && row.blockedReason && old?.attemptId === row.attemptId && old.reasonCode === 'pm_decision_pending') {
+        Object.assign(row, { blockerReason: row.blockedReason, reasonCode: old.reasonCode, responsibleRole: old.responsibleRole, nextStep: old.nextStep });
+      }
     }
     const list = attempts.includes(row) ? (rendered ? rendered.get(row.run.id) : old?.previews)
       : row.status === 'completed' && old?.status === 'completed' ? old.previews : undefined;
