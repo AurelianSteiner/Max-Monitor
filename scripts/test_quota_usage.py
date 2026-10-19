@@ -81,6 +81,9 @@ class UsageTests(unittest.TestCase):
         rs=self.intervals();rs[-1]['proxy']=10000
         self.assertEqual(validate_intervals(rs)[('a','five_hour')]['method'],'equal_turns')
         self.assertEqual(validate_intervals(self.intervals()[:7])[('a','five_hour')]['reason'],'insufficient_validation')
+        perfect=self.intervals()
+        for r in perfect:r['turns']=10
+        self.assertEqual(validate_intervals(perfect)[('a','five_hour')]['method'],'equal_turns')
 
     def test_incomplete_intervals_and_reset_boundaries_do_not_form_training_blocks(self):
         rs=self.intervals()

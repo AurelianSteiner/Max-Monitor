@@ -211,7 +211,7 @@ def measurement(event, at):
     return None
 
 
-def read_chunk(filename, offset=0, last_at=None, limit=MAX_EVENTS):
+def read_chunk(filename, offset=0, last_at=None, limit=MAX_EVENTS, since=0):
     """Consume complete lines only; timestamps adjacent to quota events are marked.
 
     Provider rate_limit_event records have no own timestamp. The most recent
@@ -247,6 +247,8 @@ def read_chunk(filename, offset=0, last_at=None, limit=MAX_EVENTS):
             at = timestamp(event.get("timestamp"))
             if at is not None:
                 last_at = at
+            if since and (last_at or 0) < since:
+                continue  # Backfill old file prefixes without empty network batches.
             event_type = event.get("type")
             observed = measurement(event, at or last_at)
             if event_type == 'result':
@@ -379,7 +381,7 @@ def collect(config, cache, hours=72, sender=send, now=None):
         # ever skipping data. Each event is independently idempotent at the Hub.
         for _ in range(20):
             STAGE = "stream"
-            events, after, last_at, skipped = read_chunk(filename, offset, last_at)
+            events, after, last_at, skipped = read_chunk(filename, offset, last_at, since=since)
             observations = [o for e in events if e.get('event_type') == 'evidence' for o in e['observations']
                             if not since or (o.get('at') or 0) >= since]
             events = [e for e in events if e.get('event_type') != 'evidence']

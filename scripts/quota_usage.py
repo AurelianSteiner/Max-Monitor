@@ -42,7 +42,10 @@ def usage_metadata(value, depth=0):
                 result[key] = usage_metadata(item, depth + 1)
         return result
     if isinstance(value, list):
-        return [usage_metadata(item, depth + 1) for item in value if isinstance(item, (dict, list))]
+        return [usage_metadata(item, depth + 1) for item in value
+                if item is None or isinstance(item, (dict, list, bool)) or isinstance(item, (int, float)) and math.isfinite(item)]
+    if value is None or isinstance(value, bool) or isinstance(value, (int, float)) and math.isfinite(value):
+        return value
     return {}
 
 
@@ -120,7 +123,7 @@ def validate_intervals(intervals):
                 errors = [scale * b[field] - b['delta'] for b in test]
                 metrics[method] = {'mae_pp': sum(abs(e) for e in errors) / len(errors),
                                    'rmse_pp': math.sqrt(sum(e * e for e in errors) / len(errors))}
-            gain = metrics['token_proxy']['mae_pp'] <= .9 * metrics['equal_turns']['mae_pp']
+            gain = metrics['equal_turns']['mae_pp'] > 1e-9 and metrics['token_proxy']['mae_pp'] <= .9 * metrics['equal_turns']['mae_pp']
             stable = metrics['token_proxy']['rmse_pp'] <= .95 * metrics['equal_turns']['rmse_pp']
             result.update(metrics=metrics, reason='heldout_improvement' if gain and stable else 'no_clear_improvement',
                           method='token_proxy' if gain and stable else 'equal_turns')

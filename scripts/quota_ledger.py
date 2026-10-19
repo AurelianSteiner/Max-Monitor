@@ -254,6 +254,9 @@ class Ledger:
             if isinstance(settings, dict):
                 safe = {k: clean(v, 100) for k, v in settings.items()
                         if re.fullmatch(r"[a-z_]{1,40}", k) and isinstance(v, (str, int, float, bool))}
+                previous = self.db.execute('SELECT settings FROM worker_settings WHERE worker=?', (worker,)).fetchone()
+                if not previous or json.loads(previous[0]) != safe:
+                    self.archive_rows({'worker_settings': [{'worker': worker, 'at': now, 'settings': safe}]}, now)
                 self.db.execute("INSERT OR REPLACE INTO worker_settings VALUES(?,?,?)", (worker, now, json.dumps(safe)))
             for run in runs:
                 run_id = clean(run.get("run_id"), 240)
