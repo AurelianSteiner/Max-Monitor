@@ -21,7 +21,7 @@ import time
 import zlib
 from urllib.parse import urlsplit
 from quota_routing import routing_inputs
-from quota_usage import decode_packet, usage_metadata, token_weight, validate_intervals, VERSION as USAGE_VERSION, PRICE_SOURCE
+from quota_usage import decode_packet, usage_metadata, token_weight, validate_intervals, VERSION as USAGE_VERSION, PRICE_SOURCE, PRICES
 
 SCHEMA = 1
 WEEK = 7 * 86400
@@ -607,6 +607,8 @@ class Ledger:
                     "measurement": "estimated_allocation", "forecast_ready": len(items) >= 5}
         return {"schema": SCHEMA, "generated_at": iso(now), "hours": hours,
             "precision": {'version': USAGE_VERSION, 'price_source': PRICE_SOURCE,
+                          'relative_price_weights': PRICES,
+                          'weight_order': ['input','output','cache_5m_write','cache_1h_write','cache_read'],
                           'api_prices_are_relative_proxy_only': True, 'per_task_ground_truth_available': False,
                           'minimum_block_pp': 3, 'minimum_blocks': 8, 'holdout_fraction': .4,
                           'required_mae_improvement': .1, 'interval_methods': dict(methods),
@@ -652,7 +654,7 @@ class Ledger:
             entry.update(closed=closed, carryover=carryover, coverage=j["coverage"],
                          five_hour_pp=j["estimated_five_hour_pp"] if session_ready else None,
                          weekly_pp=j["estimated_weekly_pp"] if weekly_ready else None,
-                         accounts=sorted(j["allocations"]), estimated=True,
+                         accounts=sorted(j["allocations"]), estimated=True, estimator_version=USAGE_VERSION,
                          check="carryover" if carryover else "complete" if ready else "pending_evidence" if closed else "running")
             # A new continuation after retention is counted, but cannot masquerade
             # as a complete new measurement when old evidence is already compacted.
@@ -663,6 +665,11 @@ class Ledger:
             if closed:
                 encoded = zlib.compress(json.dumps(entry, separators=(",", ":"), ensure_ascii=False).encode(), 9)
                 self.db.execute("INSERT OR REPLACE INTO compact_jobs VALUES(?,?,?)", (j["job"], stamp(j["finished"]), encoded))
+        signature = identifier(report['precision'])
+        if self.setting('precision_signature') != signature:
+            self.archive_rows({'precision_validation': [{'at': now, 'tracking_since': since,
+                               'hours': report['hours'], 'precision': report['precision']}]}, now)
+            self.meta('precision_signature', signature)
         self.db.commit()
 
         def group(rows):
