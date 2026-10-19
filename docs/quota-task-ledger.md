@@ -155,8 +155,15 @@ gemessene Aufgaben verringern den Durchschnitt nicht künstlich. Auch gescheiter
 abgeschlossene Versuche bleiben als Verbrauch erfasst.
 
 Beobachtet werden Account-Prozentpunkte im Fünfstunden- und Wochenfenster.
-Reset-Grenzen, Datenlücken über 30 Minuten und rückläufige Zähler werden nicht
-als Verbrauch verrechnet. Die Rohauflösung beträgt derzeit einen Prozentpunkt.
+Reset-Grenzen, Zähleranstiege über Datenlücken von mehr als 30 Minuten und
+rückläufige Zähler werden nicht als Verbrauch verrechnet. Die Rohauflösung
+beträgt derzeit einen Prozentpunkt. Für jedes Account-Fenster und jeden
+Reset-Zyklus bildet die Auswertung die Differenzen ausschließlich aus CLI-
+Messungen (Streams und bestehende Probes), sobald zwei unterschiedliche
+Messzeitpunkte vorliegen. Andernfalls dienen ausschließlich native Meldungen
+als Rückfallquelle. Native App und CLI runden unterschiedlich und werden deshalb
+nicht zu einem gemeinsamen Höchststand vermischt. Numerisches Gleitkomma-Rauschen
+unter einem Millionstel Prozentpunkt ist kein gemessener Verbrauch.
 Die Zuordnung zu parallelen Aufgaben erfolgt gleichmäßig je erfasstem
 Assistenten-Antwortzug im jeweiligen Messintervall und ist ausdrücklich eine
 Schätzung, keine gemessene Einzelaufgabenabrechnung.
@@ -164,6 +171,10 @@ Ein gleichbleibender gerundeter Zähler bedeutet keinen belegten Nullverbrauch:
 Antwortzüge bleiben bis zum nächsten ganzen Prozentpunkt gemeinsam offen und
 werden erst dann auf die beteiligten Aufgaben verteilt. So entstehen aus vielen
 kleinen Aufgaben keine künstlichen Nullwerte im Durchschnitt.
+Bleibt derselbe gerundete Zähler auch an beiden Seiten einer Messlücke gleich,
+bleiben die Antwortzüge dieses Plateaus offen. Erst ein späterer beobachteter
+Anstieg innerhalb eines gültigen Messintervalls schließt es. Ein Anstieg über
+die Lücke selbst wird weiterhin keiner Aufgabe zugerechnet.
 Unbeobachtete Privatnutzung desselben Accounts kann enthalten sein. Es gibt keine angebliche Token-zu-Abo-
 Umrechnung; Kapazitätsprognosen bleiben bis zur Kalibrierung deaktiviert.
 

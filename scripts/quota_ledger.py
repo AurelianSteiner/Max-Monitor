@@ -408,6 +408,13 @@ class Ledger:
             pairs[(row["account"], row["window"], row["reset"])].append(row)
         covered = set()
         for (account, window, reset), rows in pairs.items():
+            # Native reports round percentages differently from CLI utilization.
+            # A native 100 must not swallow the later CLI step from 99 to 100.
+            # Form deltas within one convention, retaining native-only fallback
+            # until at least two distinct CLI observations can form a baseline.
+            cli = [r for r in rows if r["source"] in ("stream", "probe")]
+            native = [r for r in rows if r["source"] == "fleet"]
+            rows = cli if len({r["at"] for r in cli}) >= 2 else native or cli
             before = None
             charge_begin = None
             for row in rows:
@@ -417,15 +424,15 @@ class Ledger:
                     continue
                 if row["at"] <= before["at"]:
                     continue
-                # Rounded fleet counters can be behind the CLI by one point.
-                delta = row["percent"] - before["percent"]
+                # Even within one convention an observation can lag behind.
+                delta = round(row["percent"] - before["percent"], 6)
                 key = (account, window)
                 if delta < 0:
                     totals[key]["counter_decreases"] += 1
                     # Keep the high-water mark: lagging or rounded counters may
                     # catch up later; counting that rebound would invent usage.
                     continue
-                if row["at"] - before["at"] > 1800 or before["at"] < cutoff:
+                if (row["at"] - before["at"] > 1800 and delta > 0) or before["at"] < cutoff:
                     totals[key]["gaps"] += 1
                     before = row
                     charge_begin = row['at']
@@ -435,6 +442,8 @@ class Ledger:
                 if delta == 0:
                     # Rounded plateaus censor small charges. Hold the turns until
                     # the next whole-point increase, instead of training zeroes.
+                    # Equal counters also bound an unsampled interval to the same
+                    # rounded plateau; a positive delta across a gap stays unknown.
                     before = row
                     continue
                 weights = defaultdict(float)

@@ -243,6 +243,57 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(row["observed_pp"], 3)
         self.assertEqual(row["counter_decreases"], 1)
 
+    def test_native_rounding_does_not_hide_later_cli_increment(self):
+        self.ledger.reset(NOW - 1)
+        self.ledger.fleet(fleet(NOW, 99), NOW)
+        batch = payload()
+        batch['runs'][0]['pending_scan'] = 0
+        batch['events'][0]['windows']['seven_day']['percent'] = 99
+        batch['events'].append({**batch['events'][0], 'id': 'quota-finished',
+                                'at': NOW + 600,
+                                'windows': {'seven_day': {'percent': 100, 'reset': RESET}}})
+        self.ledger.fleet(fleet(NOW + 60, 100), NOW + 60)
+        self.ledger.ingest(batch, NOW + 600)
+        job = self.ledger.report(24, NOW + 700)['jobs'][0]
+        self.assertEqual(job['coverage_by_window']['seven_day'], 1)
+        self.assertEqual(job['estimated_weekly_pp'], 1)
+
+    def test_flat_counter_across_gap_keeps_pending_rounded_turns(self):
+        self.ledger.reset(NOW - 1)
+        self.ledger.fleet(fleet(NOW, 10), NOW)
+        batch = payload()
+        batch['runs'][0]['pending_scan'] = 0
+        self.ledger.ingest(batch, NOW + 600)
+        self.ledger.fleet(fleet(NOW + 600, 10), NOW + 600)
+        self.ledger.fleet(fleet(NOW + 5000, 10), NOW + 5000)
+        self.ledger.fleet(fleet(NOW + 5600, 11), NOW + 5600)
+        job = self.ledger.report(24, NOW + 5700)['jobs'][0]
+        self.assertEqual(job['coverage_by_window']['seven_day'], 1)
+        self.assertEqual(job['estimated_weekly_pp'], 1)
+
+    def test_cli_increase_across_gap_is_not_assigned_to_old_turns(self):
+        self.ledger.reset(NOW - 1)
+        self.ledger.fleet(fleet(NOW, 10), NOW)
+        batch = payload()
+        batch['events'].append({**batch['events'][0], 'id': 'quota-after-gap',
+                                'at': NOW + 5000,
+                                'windows': {'seven_day': {'percent': 11, 'reset': RESET}}})
+        self.ledger.ingest(batch, NOW + 5000)
+        job = self.ledger.report(24, NOW + 5100)['jobs'][0]
+        self.assertEqual(job['coverage_by_window']['seven_day'], 0)
+        self.assertIsNone(job['estimated_weekly_pp'])
+
+    def test_float_noise_does_not_close_a_rounded_plateau(self):
+        self.ledger.reset(NOW - 1)
+        self.ledger.fleet(fleet(NOW, 10), NOW)
+        self.ledger.ingest(payload(), NOW + 600)
+        self.ledger.sample('probe-noise', 'a@example.com', 'mac-1', 'seven_day',
+                           RESET, NOW + 600, 10.000000000000002, 'reset_bound_probe', 'probe')
+        self.ledger.db.commit()
+        job = self.ledger.report(24, NOW + 700)['jobs'][0]
+        self.assertEqual(job['coverage_by_window']['seven_day'], 0)
+        self.assertIsNone(job['estimated_weekly_pp'])
+
     def test_jobs_crossing_report_boundary_do_not_train_partial_costs(self):
         self.ledger.fleet(fleet(NOW, 10), NOW)
         p = payload()
@@ -287,6 +338,10 @@ class LedgerTests(unittest.TestCase):
         b['events']=[{'id':'quota-b','event_type':'quota','run_id':'run-b','at':NOW+750,'time_quality':'adjacent','windows':{'seven_day':{'percent':10,'reset':RESET}}}]
         self.ledger.ingest(b,NOW+900)
         self.ledger.fleet(fleet(NOW+1000,11),NOW+1000)
+        b['events']=[{'id':'quota-b-next','event_type':'quota','run_id':'run-b',
+                      'at':NOW+1000,'time_quality':'timestamp',
+                      'windows':{'seven_day':{'percent':11,'reset':RESET}}}]
+        self.ledger.ingest(b,NOW+1000)
         final=self.ledger.dashboard(NOW+1100)
         row=next(r for r in final['by_kind'] if r['key']=='newsletter')
         self.assertEqual(row['weekly_pp']['n'],2)
