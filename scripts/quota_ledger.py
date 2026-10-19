@@ -260,7 +260,7 @@ class Ledger:
                     continue
                 job = kind + ":" + task_id
                 compact = self.db.execute("SELECT finished FROM compact_jobs WHERE job=?", (job,)).fetchone()
-                if compact and finished is not None and finished <= compact[0] and now - compact[0] > 1800:
+                if compact and finished is not None and finished <= compact[0] and now - compact[0] > 48 * 3600:
                     continue
                 self.db.execute("""INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(worker,run_id)
                   DO UPDATE SET title=excluded.title,customer=COALESCE(NULLIF(excluded.customer,''),runs.customer),
@@ -581,13 +581,15 @@ class Ledger:
             account = next((a for a in report['accounts'] if a['worker'] == setting['worker']), None)
             if account:
                 setting['values']['mac_name'] = account['name']
-        # Keep full raw rows in a verified, compressed archive before pruning
-        # the hot repair buffer. Compression never substitutes a summary.
+        # Keep every task's turns for the full allocation window. Removing one
+        # finished task early changes other parallel tasks' denominator, and a
+        # later queue completion timestamp can reannounce it without its events.
+        # Preserve full rows in the verified archive before pruning this buffer.
         cutoff = now - 48 * 3600
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            old_jobs = [r[0] for r in self.db.execute("SELECT job FROM compact_jobs WHERE finished<?", (now - 1800,))
-                        if jobs[r[0]]["closed"] and (jobs[r[0]]["check"] == "complete" or stamp(jobs[r[0]]["finished"]) < cutoff)]
+            old_jobs = [r[0] for r in self.db.execute("SELECT job FROM compact_jobs WHERE finished<?", (cutoff,))
+                        if jobs[r[0]]["closed"]]
             archived_rows = {"events": [], "runs": []}
             for job in old_jobs:
                 for table in ("events", "runs"):

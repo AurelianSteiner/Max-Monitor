@@ -40,6 +40,12 @@ def payload(messages=True):
                       "time_quality": "timestamp", "input_tokens": 10, "output_tokens": 100}] if messages else [])}
 
 
+def both_windows(at, percent):
+    data = fleet(at, percent)
+    data['machines'][0]['limits'].append({**data['machines'][0]['limits'][0], 'kind': 'session'})
+    return data
+
+
 class LedgerTests(unittest.TestCase):
     def setUp(self):
         self.ledger = ledger_module.Ledger(":memory:")
@@ -298,6 +304,49 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(row['pending'],1)
         self.assertEqual(row['weekly_pp']['n'],0)
         self.assertIsNone(row['weekly_pp']['mean'])
+
+    def test_completion_metadata_refresh_preserves_measured_cost(self):
+        self.ledger.reset(NOW - 1)
+        self.ledger.fleet(both_windows(NOW, 10), NOW)
+        batch = payload()
+        batch['runs'][0]['pending_scan'] = 0
+        batch['events'][0]['windows']['five_hour'] = {'percent': 10, 'reset': RESET}
+        self.ledger.ingest(batch, NOW + 600)
+        self.ledger.fleet(both_windows(NOW + 600, 14), NOW + 600)
+        self.ledger.dashboard(NOW + 700)
+        self.ledger.dashboard(NOW + 2500)
+        # The queue confirms completion seconds after the worker. Its next
+        # announcement has no events because the stream cursor is already done.
+        data = fleet(NOW + 2510, 14)
+        data['queue'] = {'tasks': [{'attemptId': 'run-a', 'status': 'completed',
+                                  'completedAt': NOW + 610}]}
+        self.ledger.fleet(data, NOW + 2510)
+        self.ledger.ingest({**batch, 'events': []}, NOW + 2520)
+        row = next(r for r in self.ledger.dashboard(NOW + 2600)['by_kind']
+                   if r['key'] == 'newsletter')
+        self.assertEqual(row['weekly_pp']['n'], 1)
+        self.assertEqual(row['weekly_pp']['mean'], 4)
+        self.assertEqual(row['pending'], 0)
+
+    def test_finished_parallel_job_stays_in_allocation_denominator(self):
+        self.ledger.reset(NOW - 1)
+        self.ledger.fleet(both_windows(NOW, 10), NOW)
+        first = payload()
+        first['runs'][0]['pending_scan'] = 0
+        first['events'][0]['windows']['five_hour'] = {'percent': 10, 'reset': RESET}
+        self.ledger.ingest(first, NOW + 600)
+        second = payload()
+        second['runs'][0].update(run_id='run-b', task_id='task-b@1',
+                                 state='running', finished=None, pending_scan=0)
+        for event in second['events']:
+            event.update(id=event['id'] + '-b', run_id='run-b')
+        self.ledger.ingest(second, NOW + 600)
+        self.ledger.fleet(both_windows(NOW + 600, 14), NOW + 600)
+        self.ledger.dashboard(NOW + 700)
+        self.ledger.dashboard(NOW + 2500)
+        running = next(j for j in self.ledger.report(48, NOW + 2600)['jobs']
+                       if j['job'] == 'newsletter:task-b@1')
+        self.assertEqual(running['estimated_weekly_pp'], 2)
 
     def test_compaction_preserves_cumulative_means_and_does_not_reimport_old_runs(self):
         self.ledger.reset(NOW-1)

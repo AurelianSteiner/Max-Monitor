@@ -190,8 +190,10 @@ abgeschlossenen Produktionsauftrag.
 - Hub: `/var/lib/max-monitor-quota/ledger.sqlite`, privat, SQLite WAL.
 - Abgeschlossene Aufgaben: ein mit zlib komprimierter Messdatensatz pro Auftrag,
   über alle Zeiträume seit Tracking-Start kumulativ. Kein kompletter Chatverlauf.
-- Vollständig gemessene Abschlüsse: Rohereignisse nach 30 Minuten verdichtet;
-  unvollständige Abschlüsse spätestens nach zwei Tagen. Laufende Aufgaben behalten
+- Abgeschlossene Aufgaben behalten Rohereignisse für volle 48 Stunden im aktiven
+  Messbestand. So bleiben spätere Abschlussmeldungen und die Verteilung auf
+  parallele Aufgaben vollständig auswertbar. Danach werden die Rohzeilen
+  verlustfrei archiviert. Laufende Aufgaben behalten
   ihre Belege, bis ihr Abschluss ausgewertet ist. Quotenmessungen: höchstens 48 h
   plus 30 Minuten Rand für Messintervalle.
 - Öffentliche, inhaltsarme Zusammenfassung: jede Minute atomar unter
