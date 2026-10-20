@@ -279,3 +279,21 @@ test('an older-epoch central pause of an absent Mac is not shown as the new orde
   assert.deepEqual([hubRow.id, hubRow.status, hubRow.attemptId, hubRow.workerId], ['clickup:newsletter:N', 'queued', undefined, undefined]);
   assert.doesNotMatch(hubRow.phase || '', /Fortsetzung im RS Hub gesichert/);
 });
+
+test('a register claim carries only a known typed owner into the queue row and its blocker context', async () => {
+  const { applyBlockerContexts } = await import('./blocker-context.mjs');
+  const order = task('86abc', 'klaviyo upload', ['klaviyo upload · blockiert'], { statusSince: since });
+  const finished = owner => parseRegisterClaim(registerDoc({ taskId: `86abc@${since}-klaviyo`, state: 'final', reactions: ['x'], owner }));
+  assert.equal(finished('stammdaten').owner, 'stammdaten');
+  assert.equal(finished('design').owner, undefined, 'an unknown owner value is dropped');
+  const [row] = buildQueue([order], mergeHubClaims([], [finished('stammdaten')]), DEFAULT_WORKFLOWS, { now });
+  assert.equal(row.status, 'blocked'); assert.equal(row.blockerOwner, 'stammdaten');
+  row.blockedReason = 'Saved acceptance finding';
+  applyBlockerContexts([row], [order], now);
+  assert.equal(row.responsibleRole, 'Stammdaten (RS Hub/ClickUp)'); assert.equal(row.blockerKind, 'waiting_human');
+  assert.equal(row.owner, undefined, 'the register reserves the name owner');
+  const [plain] = buildQueue([order], [finished('design')], DEFAULT_WORKFLOWS, { now });
+  plain.blockedReason = 'Saved acceptance finding';
+  applyBlockerContexts([plain], [order], now);
+  assert.equal(plain.responsibleRole, 'Zuständigkeit ungeklärt');
+});

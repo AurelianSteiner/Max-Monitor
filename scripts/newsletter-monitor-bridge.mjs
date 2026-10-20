@@ -14,7 +14,7 @@ import { cleanupErrorCopies, createErrorCleanupWriter } from './error-copy-clean
 import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
 import { applyPmOwners, createPmRoutingReader } from './pm-owner.mjs';
 import taskState from './task-state.cjs';
-import { checkpointBlocker, applyBlockerContexts } from './blocker-context.mjs';
+import { checkpointBlocker, applyBlockerContexts, blockerContext, BLOCKER_OWNERS } from './blocker-context.mjs';
 import { createStatusAudit, saveStatusAudit } from './status-reconciliation.mjs';
 
 const require = createRequire(import.meta.url);
@@ -388,6 +388,8 @@ export function parseRegisterClaim(doc) {
     ...(paused ? { paused: true, ...(doc.portable === true ? { portable: true } : {}) } : {}),
     workflow: identity.workflow ?? identity.kind, reactions, hub: true,
     ...(typeof doc.channel === 'string' && /^C[A-Z0-9]{5,20}$/.test(doc.channel) ? { channelId: doc.channel } : {}),
+    // Fehleraudit 19.10.2026: the worker's typed owner of a finished run; any other value is dropped.
+    ...(BLOCKER_OWNERS.has(doc.owner) ? { owner: doc.owner } : {}),
     ...claimDetails(identity.kind, doc.state, paused, String(doc.text ?? ''), reactions) };
 }
 
@@ -621,6 +623,12 @@ function causeJobs(value, primary, rowId) {
   return result;
 }
 
+const COPY_UNINHERITED = new Set(['blockerReason', 'reasonCode', 'responsibleRole', 'nextStep', 'blockerKind', 'blockerOwner',
+  'blockerSource', 'blockerSourceRunId', 'blockerSourceHash', 'blockerRecordedAt']);
+// 'eingabe' and 'mensch' cover PM, master data and technical cases alike; the
+// text fallback decides those.
+const OWNER_OF_GRUND = { stammdaten: 'stammdaten', technisch: 'technik', erschoepft: 'technik', rueckfrage_nicht_zugestellt: 'technik' };
+
 // One row per still-present bot error in #ai-fehler, independent of historical
 // ClickUp tags, claim outcomes and canceled Sales tests. A cause post that names
 // several orders (task_ids) gives one row per order, each with the same Slack
@@ -628,6 +636,9 @@ function causeJobs(value, primary, rowId) {
 // Never synthesize completion.
 export function buildBlockedErrors(messages, channelId, tasks = [], { manualUploadIds = new Set() } = {}) {
   const rows = new Map();
+  // Fehleraudit 19.10.2026: a copy names its own owner (worker `owner`, else its
+  // unambiguous `grund`) and never inherits the queue row's blocker fields.
+  const own = row => row && Object.fromEntries(Object.entries(row).filter(([key]) => !COPY_UNINHERITED.has(key)));
   const slackText = text => String(text || '').replace(/<[^|>]+\|([^>]+)>/g, '$1')
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
   for (const message of messages) {
@@ -653,8 +664,10 @@ export function buildBlockedErrors(messages, channelId, tasks = [], { manualUplo
     const company = displayText(slackText(text.split('\n')[0]).replace(/[*`]/g, '').split(' · ').slice(1).join(' · '), 200);
     const id = `slack-error:${channelId}:${message.ts}`;
     const updatedAt = new Date(time).toISOString();
+    const context = lauf ? blockerContext(diagnosis, { state: value.state,
+      owner: BLOCKER_OWNERS.has(value.owner) ? value.owner : OWNER_OF_GRUND[value.grund] }) : {};
     if (!(kind === 'upload' && manualUploadIds.has(taskId))) {
-      rows.set(id, { ...source, id, status: 'blocked', workflow,
+      rows.set(id, { ...own(source), ...context, id, status: 'blocked', workflow,
         title: displayText(slackText(taskLink?.[2] || source?.title || (issue ? `Worker · ${issue.workerId} · ${issue.stage}` : text.split('\n')[0])), 300, 'Fehler in #ai-fehler'),
         url: taskLink?.[1] || source?.url, errorUrl,
         company: source?.company || company, workerId: value?.worker || issue?.workerId,
@@ -666,7 +679,7 @@ export function buildBlockedErrors(messages, channelId, tasks = [], { manualUplo
       const other = errorJob(job, true);
       if (other.kind === 'upload' && manualUploadIds.has(other.taskId)) continue;
       const row = tasks.find(task => task.id === other.sourceId);
-      rows.set(`${id}#${job}`, { ...row, id: `${id}#${job}`, status: 'blocked', workflow: other.workflow,
+      rows.set(`${id}#${job}`, { ...own(row), ...context, id: `${id}#${job}`, status: 'blocked', workflow: other.workflow,
         title: displayText(row?.title || job, 300, 'Fehler in #ai-fehler'),
         url: row?.url || `https://app.clickup.com/t/${encodeURIComponent(other.taskId)}`, errorUrl,
         company: row?.company || company, workerId: value.worker,
@@ -906,7 +919,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         sourceStatus: displayText(typeof task.status === 'string' ? task.status : task.status?.status, 120),
         company: task.folder?.hidden ? undefined : displayText(task.folder?.name, 200),
         figmaUrl: taskFigmaLink(task, (workflow.claimWorkflow ?? workflow.id) === 'newsletter') || ((workflow.claimWorkflow ?? workflow.id) === 'newsletter' ? figmaLink(figmaBoardUrl) : undefined),
-        workerId: claim?.paused && claim.portable ? undefined : claim?.workerId, attemptId: claim?.runId, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
+        workerId: claim?.paused && claim.portable ? undefined : claim?.workerId, attemptId: claim?.runId, blockerOwner: claim?.owner, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
         updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30),
         // Internal only: addRunDetails reads progress and renders of this attempt, then removes it.
         run: claim ? { id: claim.runId, jobId: claim.jobId, workerId: claim.workerId, ts: threadOf(claim), taskId: task.id, channelId: claim.channelId, heartbeat: threadBeat(claim) } : undefined });
@@ -976,7 +989,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
     }
     rows.push({ id: `correction:${claim.jobId}`, title: displayText(claim.title || task?.name, 300, `Korrektur ${claim.taskId}`),
       url: claim.url || (claim.taskId !== claim.jobId ? `https://app.clickup.com/t/${encodeURIComponent(claim.taskId)}` : undefined), workflow: 'correction',
-      company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId,
+      company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId, blockerOwner: claim.owner,
       figmaUrl: claim.figmaUrl,
       phase, progress: status === 'completed' ? 100 : undefined, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
       ...completionEvidence([claim]),
@@ -1037,7 +1050,8 @@ export function parseRunStatus(text) {
 }
 
 export function parseBlockedReason(text) {
-  const value = String(text ?? '').replace(/[*`]/g, '');
+  // Keep worker section headings apart from their text when lines are joined.
+  const value = String(text ?? '').replace(/[*`]/g, '').replace(/^(Kurzfassung|Ursachen|Nächste Schritte|Stand):?[ \t]*$/gm, '$1: ');
   if (!/^(?:⛔|⚠️?|:warning:|:no_entry:).*?(?:Blockiert|blockiert)/u.test(value)) return null;
   const detail = /(?:^|\n|\.\s+)Grund:?\s*([\s\S]+)/.exec(value)?.[1] || value.replace(/^.*?(?:Blockiert|blockiert):?\s*/u, '');
   return displayText(detail.split(/\n(?:_?Stand |:stopwatch:|⏱|Dauer |Entwurf:|<https:\/\/[a-z0-9-]+\.slack\.com\/archives\/)/)[0]
@@ -1473,9 +1487,14 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
         && entry.run_id.slice(0,16) > run.id.slice(0,16))));
     if (!entry) continue;
     row.workerId = undefined;
+    // The claim's typed owner describes its own run only.
+    if (entry.run_id !== run.id) delete row.blockerOwner;
     row.attemptId = entry.run_id;
     if (entry.ready_at === 8640000000000000) {
-      if (entry.blocker) Object.assign(row, entry.blocker);
+      // Fehleraudit 19.10.2026 (Smileypack d857): a stored run without text never
+      // replaces a readable reason of the same commission.
+      const readable = displayText(row.blockedReason || row.blockerReason, 500);
+      if (entry.blocker && !(entry.blocker.reasonCode === 'blocker_context_missing' && readable)) Object.assign(row, entry.blocker);
       if (!/PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')) row.status = 'blocked';
       if (!/PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')) row.phase = 'Blockiert · Fortschritt im RS Hub gesichert';
     } else {

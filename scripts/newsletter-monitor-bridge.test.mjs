@@ -209,6 +209,8 @@ test('blocked correction diagnosis comes from its own bot thread and is cached o
   assert.equal(parseBlockedReason(':warning: Technisch blockiert: Der Lauf hat ohne Ergebnis aufgehört.\n*Grund:* Bild/Farbe geändert; Konflikt\n    at checkReplacement (<input>:34:85)'), 'Bild/Farbe geändert; Konflikt');
   assert.equal(parseBlockedReason('Mensch: blockiert'), null);
   assert.match(parseBlockedReason('⛔ Blockiert: token=secret123'), /ENTFERNT/);
+  assert.equal(parseBlockedReason('⛔ Blockiert:\n*Kurzfassung*\nDer Neubau ist fertig.\n\n*Ursachen:*\n1. Hinweis zählt als Fehler'),
+    'Kurzfassung: Der Neubau ist fertig. Ursachen: 1. Hinweis zählt als Fehler');
   const make = attemptId => ({ id: 'correction:job', workflow: 'correction', status: 'blocked', attemptId,
     run: { id: attemptId, ts: '123.001', channelId: 'correction-channel' } });
   let calls = 0;

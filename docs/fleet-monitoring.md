@@ -233,6 +233,12 @@ immer PM. Für PM, Kunden-Setup und Stammdaten setzt die Brücke zusätzlich
 technische Fehler zählt. Das PM-Feld erscheint als „PM: Name“, „PM-Feld leer“ oder
 „PM-Feld nicht eindeutig: …“.
 
+Eine `#ai-fehler`-Zeile übernimmt keine Blockerfelder ihrer Queue-Zeile. Ihre
+Zuständigkeit kommt aus `owner` oder einem eindeutigen `grund` (`stammdaten`;
+`technisch`, `erschoepft` und `rueckfrage_nicht_zugestellt` als Technik), sonst aus
+dem Text; `eingabe` und `mensch` entscheidet der Text. Ein im RS Hub gesicherter
+Lauf ohne lesbaren Grund ersetzt keinen lesbaren Grund derselben Aufgabe.
+
 ## Fortschritt und Entwurf laufender Newsletter
 
 Für jede laufende Aufgabe liest die Brücke die Status-Antwort des Workers im

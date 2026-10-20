@@ -249,3 +249,28 @@ test('the relay knows the bridge\'s lagging-reservation phase', t => {
     service: { running: true, lastPollAt: new Date(now).toISOString() }, activity: { state: 'idle', acceptingTasks: true, runs: [] } });
   assert.equal(store.snapshot('TEAM1234').queue.tasks[0].phase, 'Worker-Abgleich ausstehend');
 });
+
+test('an #ai-fehler copy names its own owner and never inherits the queue row blocker fields', () => {
+  const copy = (payload, reason, ts = '1791823000.000001') => ({ ts,
+    text: `*Klaviyo-Upload · Kunde*\n:warning: Technisch blockiert: <https://app.clickup.com/t/abc|Mail>\nGrund: ${reason}`,
+    metadata: { event_type: 'ai_newsletter_fehler', event_payload: { kind: 'lauf', worker: 'mac-1', task_id: 'abc@123-klaviyo',
+      run_id: 'attempt-1', state: 'technisch_blockiert', ...payload } } });
+  const queued = { id: 'clickup:upload:abc', title: 'Mail', workflow: 'upload', status: 'blocked', url: 'https://app.clickup.com/t/abc',
+    reasonCode: 'blocker_context_missing', responsibleRole: 'Technik', nextStep: 'Old step', blockerKind: 'technical_failure',
+    blockerOwner: 'technik', blockerSource: 'checkpoint', blockerSourceHash: 'a'.repeat(64), blockerRecordedAt: new Date(now).toISOString(), pmOwner: 'Ben Schulte' };
+  const key = 'Klaviyo-Quellenbindung: Klaviyo-Schlüssel fehlt im RS Hub (KEY_NOT_SET) für uficell; Upload wartet auf den Schlüssel.';
+  const [data] = buildBlockedErrors([copy({ grund: 'stammdaten' }, key)], channel, [queued]);
+  assert.deepEqual([data.reasonCode, data.responsibleRole, data.blockerKind], ['master_data_missing', 'Stammdaten (RS Hub/ClickUp)', 'waiting_human']);
+  for (const field of ['blockerOwner', 'blockerSource', 'blockerSourceHash', 'blockerRecordedAt']) assert.equal(data[field], undefined, field);
+  assert.equal(data.pmOwner, 'Ben Schulte'); assert.equal(data.blockedReason, key);
+  const [pm] = buildBlockedErrors([copy({ owner: 'pm', grund: 'mensch' }, 'Saved acceptance finding')], channel, [queued]);
+  assert.equal(pm.responsibleRole, 'PM');
+  const [title] = buildBlockedErrors([copy({ grund: 'eingabe' }, 'Kunde nicht eindeutig im RS Hub zugeordnet. Markt im Aufgabentitel eindeutig angeben, z. B. „· Europa“')], channel, [queued]);
+  assert.equal(title.responsibleRole, 'PM', 'eingabe has no owner of its own; the text fallback decides');
+  const [technical] = buildBlockedErrors([copy({ grund: 'erschoepft' }, 'Saved acceptance finding')], channel, [queued]);
+  assert.deepEqual([technical.responsibleRole, technical.blockerKind], ['Technik', 'technical_failure']);
+  const battery = { ts: '1791823000.000009', text: ':battery: `Pink` läuft auf Akku (29 %); Ladegerät anschließen.',
+    metadata: { event_type: 'ai_newsletter_fehler', event_payload: { kind: 'system', worker: 'pink', stage: 'strom' } } };
+  const [system] = buildBlockedErrors([battery], channel, [queued]);
+  for (const field of ['reasonCode', 'responsibleRole', 'nextStep', 'blockerKind', 'blockerReason']) assert.equal(system[field], undefined, field);
+});
