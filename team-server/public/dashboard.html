@@ -144,39 +144,36 @@
         </div>
         <div id="consumption-error" class="notice" role="status" hidden></div>
         <div id="usage-planning" class="planning-panel" role="tabpanel" aria-labelledby="usage-planning-tab" tabindex="0" hidden>
-          <div class="planning-intro"><div><h2>Produktion vorausplanen</h2><p>Newsletter, Korrekturen und Uploads als gemeinsamer Kapazitätsplan.</p></div><span class="planning-label">Modellrechnung</span></div>
-          <form id="planning-form" novalidate>
-            <div class="planning-controls">
-              <label>Zeitraum<select name="horizon"><option value="1">1 Tag</option><option value="7">7 Kalendertage</option><option value="28">28 Kalendertage</option></select></label>
-              <label>Kontingente zum Start<select name="startMode"><option value="cycle">Neuer voller Zyklus</option><option value="live">Aktuell verbleibend</option></select></label>
-              <label class="planning-check"><input type="checkbox" name="includeQueue" /> Bestehende Arbeit zuerst</label>
+          <div class="planning-switches">
+            <div class="planning-switch" role="group" aria-label="Kapazität">
+              <button type="button" data-planning-mode="current" aria-pressed="true">Aktuelle Kapazität</button>
+              <button type="button" data-planning-mode="full" aria-pressed="false">Alles bei 0 %</button>
             </div>
-            <div class="planning-workspace">
-              <div class="planning-editor">
-                <h3>Dein Produktionsmix</h3>
-                <label class="planning-quantity">Neue Newsletter<input type="number" name="newsletters" min="0" max="2000" step="1" inputmode="numeric" autocomplete="off" /></label>
-                <div class="planning-pair"><label>Korrekturen je Newsletter<input type="number" name="correctionsPerNewsletter" min="0" max="10" step="0.5" inputmode="decimal" autocomplete="off" /></label><label>Uploads je Newsletter<input type="number" name="uploadsPerNewsletter" min="0" max="5" step="0.5" inputmode="decimal" autocomplete="off" /></label></div>
-                <div class="planning-pair"><label>Weitere Korrekturen<input type="number" name="extraCorrections" min="0" max="2000" step="1" inputmode="numeric" autocomplete="off" /></label><label>Weitere Uploads<input type="number" name="extraUploads" min="0" max="2000" step="1" inputmode="numeric" autocomplete="off" /></label></div>
-                <p id="planning-mix" class="planning-note"></p>
-                <details class="planning-settings"><summary>Arbeitszeit & Reserve</summary><div class="planning-pair"><label>Start um (Berlin)<input type="number" name="startHour" min="0" max="23" step="1" inputmode="numeric" autocomplete="off" /></label><label>Stunden pro Tag<input type="number" name="hoursPerDay" min="1" max="24" step="1" inputmode="numeric" autocomplete="off" /></label><label>Arbeitstage<select name="workdays"><option value="5">Mo–Fr</option><option value="7">Mo–So</option></select></label><label>Kontingentreserve (%)<input type="number" name="reserve" min="0" max="80" step="1" inputmode="numeric" autocomplete="off" /></label></div><label class="planning-check"><input type="checkbox" name="conservative" /> Mit Verbrauchs- und Zeitpuffer rechnen</label><p class="planning-note">Puffer: Durchschnitt plus eine gemessene Standardabweichung. Die Kontingentreserve bleibt zusätzlich frei.</p></details>
-                <details class="planning-settings" id="planning-expansion"><summary>Zusätzliche Macs & Claude-Pläne</summary><label>Vergleichbarer bestehender Mac<select name="referenceWorker" id="planning-reference"><option value="">Referenz wählen…</option></select></label><div class="planning-pair"><label>Zusätzliche MacBooks<input type="number" name="extraMacs" min="0" max="30" step="1" inputmode="numeric" autocomplete="off" /></label><label>Eigene neue Claude-Pläne<input type="number" name="extraAccounts" min="0" max="30" step="1" inputmode="numeric" autocomplete="off" /></label><label>Parallele Plätze je neuem Mac<input type="number" name="newSlots" min="1" max="10" step="1" inputmode="numeric" autocomplete="off" /></label><label>5-h-Kapazität je Plan ×<input type="number" name="fiveHourFactor" min="0.1" max="20" step="0.1" inputmode="decimal" autocomplete="off" /></label><label>Wochenkapazität je Plan ×<input type="number" name="weeklyFactor" min="0.1" max="20" step="0.1" inputmode="decimal" autocomplete="off" /></label></div><p class="planning-note">1 × übernimmt den gemessenen Verbrauch des Referenz-Accounts. Andere Faktoren sind eigene Annahmen; Max 5× und 20× werden nicht pauschal umgerechnet. Ohne neue Pläne teilen zusätzliche Macs das Referenz-Kontingent.</p></details>
-              </div>
-              <div class="planning-results">
-                <div id="planning-warning" class="planning-warning" role="status" hidden></div>
-                <div id="planning-verdict" class="planning-verdict" aria-live="polite"><h3>Messbasis wird geladen…</h3><p>Verbinde deinen Team-Server, um die Kapazität zu berechnen.</p></div>
-                <div class="planning-capacity"><div><span id="planning-maximum" class="planning-big">—</span><strong>Newsletter-Pakete im Zeitraum</strong><span id="planning-package-detail" class="planning-note"></span></div><div class="planning-capacity-side"><span id="planning-per-day">—</span><span id="planning-utilization">—</span><span id="planning-fleet">—</span></div></div>
-                <div id="planning-comparison" class="planning-comparison" hidden></div>
-                <div class="planning-timeline-head"><h3>Tagesplan</h3><span id="planning-calendar-label" class="planning-note"></span></div>
-                <div id="planning-timeline" class="planning-timeline" aria-label="Geplanter Aufwand pro Tag"></div>
-                <div class="planning-legend"><span><i class="planning-key newsletter"></i>Newsletter</span><span><i class="planning-key correction"></i>Korrekturen</span><span><i class="planning-key upload"></i>Uploads</span></div>
-                <div class="planning-remaining"><h3>Danach noch Platz für</h3><div id="planning-remaining"></div><p class="planning-note">Drei unabhängige Alternativen. Diese Restmengen lassen sich nicht addieren.</p></div>
-                <details class="planning-settings"><summary>Messbasis & eigene Annahmen</summary><p class="planning-note">Mindestens 5 auswertbare Aufgaben je Account, Art und Messgröße. Leere Felder nutzen Messwerte; Eingaben ersetzen sie nur für den gewählten Referenz-Account und seine Szenario-Kopien.</p><div id="planning-evidence" class="planning-evidence"></div><div id="planning-excluded" class="planning-note"></div></details>
-              </div>
+            <div class="planning-switch" role="group" aria-label="Zeitraum">
+              <button type="button" data-planning-period="day" aria-pressed="true">Pro Tag</button>
+              <button type="button" data-planning-period="week" aria-pressed="false">Pro Woche</button>
             </div>
-            <p id="planning-validation" class="planning-validation" role="alert" hidden></p>
-            <div class="planning-actions"><button id="planning-save" class="primary" type="submit" hidden>Teamplanung speichern</button><button id="planning-discard" class="text-button" type="button" hidden>Entwurf verwerfen</button><button id="planning-export" class="text-button" type="button" disabled>Plan als CSV</button><span id="planning-status" role="status"></span></div>
-          </form>
-          <details class="planning-method"><summary>So wird gerechnet</summary><p>Jeder Account hat ein gemeinsames 5-Stunden- und Wochenbudget. Die Simulation startet Aufgaben in 15-Minuten-Schritten, beachtet Arbeitszeiten, Art-Plätze und das Gesamtlimit jedes Macs. Aufgabenkosten werden beim Start reserviert; jede Aufgabe muss vor Betriebsschluss fertig werden. Der Tagesplan zeigt auch bestehende Arbeit.</p><p>„Neuer voller Zyklus“ ist ein zukünftiges Szenario ab dem nächsten Arbeitstag mit vollen Budgets. „Aktuell verbleibend“ nutzt ausschließlich frische Kontingente und bestätigte Reset-Zeiten. Künftige Resets sind Modellannahmen. Ein 5-Stunden-Fenster beginnt nach seinem Ablauf erst mit der nächsten Aufgabe neu.</p><p>Bestehende laufende und wartende Aufgaben werden vollständig vorgerechnet. Pausierte Arbeit, PM-Rückfragen und manuelle Aufgaben bleiben außerhalb der verfügbaren Queue. Menschliche Freigabezeiten, künftige Störungen und zusätzliche Modelllimits sind nicht vorhersehbar. Unterschiedliche Accounts werden anhand eigener Messwerte berechnet. Ein Newsletter-Paket enthält die eingestellten Korrekturen und Uploads.</p><p>Die Zuordnung von Abo-Prozentpunkten zu Aufgaben ist geschätzt. Laufzeiten enthalten Wartezeiten und wiederholte Versuche. Die Simulation liefert einen vorsichtigen Ablauf; andere Reihenfolgen können mehr schaffen. Sie reserviert oder startet keine Aufträge und verändert keine Aufwandseinstellungen.</p><a href="https://support.claude.com/en/articles/11049741-what-is-the-max-plan" target="_blank" rel="noopener noreferrer">Claude Max: offizielle Nutzungslimits ↗</a></details>
+          </div>
+          <div class="planning-balance">
+            <h2>Kapazität verteilen</h2>
+            <p id="planning-message" role="status" hidden></p>
+            <div class="planning-row newsletter">
+              <div class="planning-row-head"><label for="planning-newsletter">Newsletter</label><input id="planning-newsletter-count" class="planning-count" type="number" min="0" step="1" inputmode="numeric" autocomplete="off" aria-label="Anzahl Newsletter" /></div>
+              <input id="planning-newsletter" class="planning-range" type="range" min="0" max="0" value="0" step="1" />
+            </div>
+            <div class="planning-row correction">
+              <div class="planning-row-head"><label for="planning-correction">Korrekturen</label><input id="planning-correction-count" class="planning-count" type="number" min="0" step="1" inputmode="numeric" autocomplete="off" aria-label="Anzahl Korrekturen" /></div>
+              <input id="planning-correction" class="planning-range" type="range" min="0" max="0" value="0" step="1" />
+            </div>
+            <div class="planning-row upload">
+              <div class="planning-row-head"><label for="planning-upload">Uploads</label><input id="planning-upload-count" class="planning-count" type="number" min="0" step="1" inputmode="numeric" autocomplete="off" aria-label="Anzahl Uploads" /></div>
+              <input id="planning-upload" class="planning-range" type="range" min="0" max="0" value="0" step="1" />
+            </div>
+            <div class="planning-total">
+              <span id="planning-utilization" role="status">—</span>
+              <div id="planning-meter" class="planning-meter" role="meter" aria-label="Eingeplante Kapazität" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="planning-share-newsletter"></span><span id="planning-share-correction"></span><span id="planning-share-upload"></span></div>
+            </div>
+          </div>
         </div>
         <div id="usage-next" class="usage-panel distribution-panel" role="tabpanel" aria-labelledby="usage-next-tab" tabindex="0">
           <div class="distribution-tabs" role="tablist" aria-label="Aufgabenart">

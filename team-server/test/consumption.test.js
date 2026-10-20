@@ -17,12 +17,8 @@ test('consumption requires team auth; only admins change allowlisted effort with
   const guest=(await call('/members','POST',{name:'Guest',role:'guest'})).body.member;
   assert.equal((await call('/consumption','GET',undefined,'wrong')).status,401);
   assert.equal((await call('/planning','PATCH',{revision:0,config:{}},'wrong')).status,401);
-  assert.equal((await call('/planning','PATCH',{revision:0,config:{}},guest.token)).status,403);
-  assert.equal((await call('/planning','PATCH',{revision:0,config:{hoursPerDay:30}})).status,400);
-  let result=await call('/planning','PATCH',{revision:0,config:{newsletters:42}});
-  assert.equal(result.status,200); assert.equal(result.body.planning.config.newsletters,42);
-  assert.equal((await call('/planning','PATCH',{revision:0,config:{}})).status,409);
-  result=await call('/consumption','GET',undefined,guest.token);
+  assert.equal((await call('/planning','PATCH',{revision:0,config:{}},guest.token)).status,404);
+  let result=await call('/consumption','GET',undefined,guest.token);
   assert.equal(result.status,200);assert.equal(result.body.canManage,false);assert.equal(result.body.summary,null);
   const update={revision:0,phases:{newsletter:'high',newsletter_review:'medium'}};
   assert.equal((await call('/effort','PATCH',update,guest.token)).status,403);
@@ -36,8 +32,9 @@ test('consumption requires team auth; only admins change allowlisted effort with
   const averageUpdates={on_new_task:true,on_task_evidence:true,scheduled_interval_seconds:43200,next_scheduled_at:'2026-10-20T04:00:00Z',saved_snapshots:2};
   fs.writeFileSync(path.join(process.env.QUOTA_PUBLIC_DIR,'QUOTATEST.json'),JSON.stringify({schema:2,generated_at:new Date().toISOString(),by_kind:[],average_updates:averageUpdates}));
   result=await call('/consumption');assert.equal(result.body.stale,false);assert.deepEqual(result.body.summary.by_kind,[]);
-  assert.equal(result.body.planning.revision,1);assert.equal(result.body.planning.config.newsletters,42);
-  assert.equal(result.body.planning.evidence.backlogFresh,false);
+  assert.deepEqual(result.body.planning.evidence.accounts,[]);
+  assert.equal(result.body.planning.config,undefined);
+  assert.equal(fs.existsSync(path.join(dir,'QUOTATEST/planning.json')),false);
   assert.deepEqual(result.body.summary.average_updates,averageUpdates);
   assert.equal((await fetch(`http://127.0.0.1:${server.address().port}/fleet-assets/consumption.js`)).status,200);
   for(const asset of ['planning-model.js','planning.js','planning.css'])assert.equal((await fetch(`http://127.0.0.1:${server.address().port}/fleet-assets/${asset}`)).status,200);

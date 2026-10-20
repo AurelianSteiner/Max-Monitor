@@ -590,7 +590,7 @@ const server = http.createServer((req, res) => {
       const result = effortConfig.consumption(teamDir(teamId),teamId,who.role);
       const currentFleet = visibleFleet(teamId,who);
       result.distribution = distribution(result.summary, currentFleet.machines);
-      result.planning = { ...planning.readPlanning(teamDir(teamId)), evidence: planning.planningEvidence(result.summary, currentFleet) };
+      result.planning = { evidence: planning.planningEvidence(result.summary, currentFleet) };
       return send(res,200,result);
     }
     catch { return send(res,503,{error:'Aufwandseinstellungen können gerade nicht gelesen werden.'}); }
@@ -602,14 +602,6 @@ const server = http.createServer((req, res) => {
       try { const policy=effortConfig.savePolicy(teamDir(teamId),JSON.parse(raw),who); return send(res,200,{policy}); }
       catch(e) { return send(res,e instanceof SyntaxError ? 400 : e.status||503,{error:e.status?e.message:'Einstellungen konnten nicht gespeichert werden.'}); }
     },8192);
-  }
-  if (req.method === 'PATCH' && rest === '/planning') {
-    if (!['admin','super'].includes(who.role)) return send(res,403,{error:'Nur Admins dürfen die Teamplanung speichern.'});
-    return readBody(req,(error,raw)=>{
-      if(error) return send(res,413,{error:'Planung zu groß'});
-      try { return send(res,200,{planning:planning.savePlanning(teamDir(teamId),JSON.parse(raw),who)}); }
-      catch(e) { return send(res,e instanceof SyntaxError ? 400 : e.status||503,{error:e.status?e.message:'Planung konnte nicht gespeichert werden.'}); }
-    },32768);
   }
   if (req.method === "GET" && rest === "/fleet") {
     return fleetResult(res, () => visibleFleet(teamId, who));

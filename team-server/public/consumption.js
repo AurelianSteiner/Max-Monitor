@@ -127,6 +127,7 @@
   const kindTabs=document.querySelector('.distribution-tabs');
   function selectUsage(tab,persist=true){
     selectTabs(usageTabs,tab);
+    document.querySelector('.consumption-refresh').hidden=tab.dataset.usageTab==='planning';
     for(const item of usageTabs.querySelectorAll('[role="tab"]'))$(item.getAttribute('aria-controls')).hidden=item!==tab;
     if(persist)rememberTab('usage-tab',tab.dataset.usageTab);
   }
