@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 import zlib
 
-from quota_ledger import AVERAGE_SNAPSHOT_SECONDS, Ledger, stamp
+from quota_ledger import AVERAGE_SNAPSHOT_SECONDS, AVERAGE_WINDOW_SECONDS, KINDS, Ledger, iso, stamp
 from test_quota_tracker import NOW, both_windows, payload
 
 
@@ -56,6 +56,54 @@ class AverageUpdatesTests(unittest.TestCase):
         later = self.ledger.dashboard(self.at + 3 * 86400)
         compact = next(r for r in later['by_kind'] if r['key'] == 'newsletter')
         self.assertEqual(compact['duration_seconds'], row['duration_seconds'])
+
+    def test_all_averages_use_completion_within_five_days_and_keep_history(self):
+        template = self.ledger.dashboard(self.at)['recent_jobs'][0]
+        self.ledger.reset(self.at - 10 * 86400)
+        self.ledger.fleet(both_windows(self.at, 12), self.at)
+        for kind in KINDS:
+            for name, end, five, weekly in [
+                ('old', self.at - AVERAGE_WINDOW_SECONDS - 1, 90, 90),
+                ('boundary', self.at - AVERAGE_WINDOW_SECONDS, 8, 1),
+                ('recent', self.at - 86400, 12, 3),
+                ('unmeasured-week', self.at - 3600, 4, None),
+                ('future', self.at + 1, 90, 90),
+            ]:
+                job = {**template, 'job': kind + '-' + name, 'kind': kind,
+                       'started': iso(self.at - 6 * 86400), 'finished': iso(end),
+                       'five_hour_pp': five, 'weekly_pp': weekly,
+                       'check': 'complete' if weekly is not None else 'pending_evidence'}
+                self.ledger.db.execute('INSERT INTO compact_jobs VALUES(?,?,?)',
+                                       (job['job'], end, zlib.compress(json.dumps(job).encode())))
+        self.ledger.db.commit()
+        summary = self.ledger.dashboard(self.at)
+        self.assertEqual(summary['average_window'], {
+            'days': 5, 'from': iso(self.at - AVERAGE_WINDOW_SECONDS), 'to': iso(self.at), 'basis': 'finished'})
+        for groups in ('by_kind', 'by_account_kind', 'by_customer_kind'):
+            self.assertEqual(len(summary[groups]), len(KINDS))
+            for row in summary[groups]:
+                self.assertEqual((row['closed'], row['pending']), (3, 1))
+                self.assertEqual((row['five_hour_pp']['n'], row['five_hour_pp']['mean']), (3, 8))
+                self.assertEqual((row['weekly_pp']['n'], row['weekly_pp']['mean']), (2, 2))
+        for kind, costs in summary['scheduling']['workers']['mac-1']['costs'].items():
+            row = next(r for r in summary['by_kind'] if r['key'] == kind)
+            self.assertEqual(costs['weekly_pp'], row['weekly_pp'])
+        self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM compact_jobs').fetchone()[0], 5 * len(KINDS))
+
+    def test_expired_measurements_drop_on_heartbeat_without_new_tasks_after_restart(self):
+        self.ledger.publish_averages(self.public, self.at)
+        expiry = NOW + 600 + AVERAGE_WINDOW_SECONDS
+        self.ledger.db.close()
+        self.ledger = Ledger(self.path)
+        boundary = self.ledger.publish_averages(self.public, expiry)
+        self.assertEqual(next(r for r in boundary['by_kind'] if r['key'] == 'newsletter')['weekly_pp']['n'], 1)
+        expired = self.ledger.publish_averages(self.public, expiry + 61)
+        row = next(r for r in expired['by_kind'] if r['key'] == 'newsletter')
+        self.assertEqual((row['closed'], row['weekly_pp']['n'], row['weekly_pp']['mean']), (0, 0, None))
+        self.assertEqual(expired['closed'], 1)  # Lifetime history is retained.
+        self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM compact_jobs').fetchone()[0], 1)
+        self.assertEqual(self.ledger.average_history()[0]['average_window'], expired['average_window'])
+        self.assertEqual(json.loads(self.public.read_text())['by_kind'], expired['by_kind'])
 
     def test_new_task_recalculates_before_minute_without_diluting_finished_average(self):
         first = self.ledger.publish_averages(self.public, self.at)

@@ -19,8 +19,14 @@ Der Anker und die letzten Termine bleiben über Dienstneustarts erhalten. Nach e
 Unterbrechung wird der aktuelle Stand beim nächsten Zyklus erfasst; nicht beobachtete
 historische Zeitpunkte werden nicht nachträglich mit erfundenen Werten aufgefüllt.
 
-Die Durchschnittswerte bleiben kumulativ seit Tracking-Start. Das Zwölf-Stunden-
-Intervall setzt die Stichprobe nicht zurück. Neue/laufende Aufgaben zählen weiterhin
+Die Durchschnittswerte verwenden rollierend die **letzten fünf Tage (120 Stunden)**.
+Maßgeblich ist der Abschlusszeitpunkt; die vollständigen Kosten aller Versuche und
+Follow-ups einer Aufgabe bleiben zusammen. Das gilt für alle sechs Aufgabenarten,
+Accounts und Kunden sowie deren abgeleitete Planungskosten. Ältere Abschlüsse
+fallen bei der minütlichen Frischeprüfung auch ohne neue Aufgaben heraus. Historie
+und kumulative Erfassungszähler bleiben erhalten. `summary.average_window` und
+gespeicherte Durchschnittsstände enthalten die Fenstergrenzen.
+Das Zwölf-Stunden-Intervall setzt die Stichprobe nicht zurück. Neue/laufende Aufgaben zählen weiterhin
 erst mit einem abgeschlossenen, ausreichend belegten Lauf in den jeweiligen
 Fensterdurchschnitt. Fünfstunden- und Wochenmittel speichern ihre auswertbaren
 Aufgabenzahlen getrennt. Alle sechs Arten werden auch ohne auswertbaren Abschluss

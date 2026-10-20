@@ -17,7 +17,12 @@ direkt eingegeben werden. Es gibt keinen Speicher-, Entwurfs- oder Exportablauf.
 
 Alle Accounts haben laut Vorgabe denselben Max-Plan. Deshalb verwendet die
 Berechnung die gemeinsamen Mittelwerte aus `summary.by_kind`, identisch mit dem
-Reiter Verbrauch, für jede Aufgabenart und alle Accounts. Eigene Stichproben je
+Reiter Verbrauch, für jede Aufgabenart und alle Accounts. Diese Mittelwerte umfassen
+die in den letzten fünf Tagen abgeschlossenen Aufgaben (rollierende 120 Stunden,
+Abschlusszeit zählt). Jede Verbrauchsaktualisierung berechnet die Planbarkeit mit
+demselben Stand neu: ohne Mengenauswahl steigt oder sinkt die maximal mögliche
+Newsletterzahl; bei einer gewählten Menge wird der verbleibende Raum neu verteilt.
+Eigene Stichproben je
 Account, Laufzeitmodelle, Tageskalender, Queue-Abzüge und zusätzliche Reserven
 entfallen. Geteilte Account-IDs werden einmal gezählt. Auch pausierte Macs und
 Accounts ohne eigene Aufgabenstichprobe zählen; ihre Auftragsannahme ist keine

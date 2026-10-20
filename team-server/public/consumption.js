@@ -49,8 +49,9 @@
       });
       body.append(tr);
     }
-    $('consumption-empty').hidden=Boolean(summary?.closed);
-    $('consumption-totals').textContent=summary?`${summary.closed} abgeschlossen`:'Erfassung wird geladen…';
+    const closed=rows.reduce((sum,row)=>sum+(row.closed||0),0);
+    $('consumption-empty').hidden=closed>0;
+    $('consumption-totals').textContent=summary?`${closed} abgeschlossen`:'Erfassung wird geladen…';
   }
   function draw(){
     window.MaxMonitorPlanning?.update(data, request);
