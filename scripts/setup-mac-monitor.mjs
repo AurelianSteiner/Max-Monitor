@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { workerDisplayIdentity } from './enroll-monitor-worker.mjs';
+import { ensureWorkerWallpaper } from './worker-wallpaper.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -704,7 +705,18 @@ function defaultReceiptPath(options) {
 // update itself: the sporadic Mac 5 failures had no build failure (A14-02,
 // Fehleraudit 17.10.2026). An interactive enrollment never records one.
 export async function setup(options, dependencies = {}) {
-  if (!options.updateOnly || options.dryRun) return setupSteps(options, dependencies);
+  if (!options.updateOnly || options.dryRun) {
+    const result=await setupSteps(options,dependencies);
+    if(options.dryRun) return result;
+    // Apply after a durable enrollment: a wallpaper failure must not roll back
+    // a valid app/connection or restart a running worker.
+    const wallpaper=await (dependencies.wallpaperImpl || ensureWorkerWallpaper)({
+      workerId:result.workerId,workerIdentity:result.workerIdentity,check:options.check,
+    },{runner:dependencies.runner || run});
+    if(!options.check && wallpaper.configured)
+      (dependencies.log || console.log)(`Desktop-Hintergrund ${result.workerIdentity.name} (${wallpaper.color}) auf allen Bildschirmen bestätigt.`);
+    return {...result,wallpaper};
+  }
   const receiptPath = dependencies.receiptPath ?? defaultReceiptPath(options);
   const now = dependencies.now ?? Date.now;
   try { return await setupSteps(options, {...dependencies, receiptPath}); }
@@ -722,7 +734,7 @@ async function setupSteps(options, { runner = run, workerReader = readWorker,
   const worker = await workerReader(options);
   if (options.dryRun) return {schema:1,mode:'dry-run',workerId:worker.workerId,
     appPath:options.appPath,hubHost:worker.hubHost,
-    steps:['Zentralen Mac-Namen und Farbe prüfen','App installieren','Eigenen Mitglieds-Token über Hub beziehen','Team und Worker-ID speichern','Autostart aktivieren','App öffnen']};
+    steps:['Zentralen Mac-Namen und Farbe prüfen','App installieren','Eigenen Mitglieds-Token über Hub beziehen','Team und Worker-ID speichern','Autostart aktivieren','App öffnen','Desktop-Hintergrund in der Mac-Farbe setzen und prüfen']};
   const revision = await sourceRevision(runner);
   const release = options.updateOnly && !options.appBundle ? await manifestReader() : null;
   // Stop the automatic path before any artifact/source comparison, fallback

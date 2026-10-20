@@ -49,7 +49,7 @@ async function fixture(t, { previous = false, configured = false } = {}) {
         memberId: enrollment.memberId, role: 'member', verified: true, fleetAvailable: true, launchAtLoginStatus: 'enabled' } : {}) },
     nativeFailure: false, signatureFailure: false, appFailure: false, fleetFailure: false,
     runningApps: [], nextPid: 9000, terminationRefused: false, openAbsent: false, openWrongPath: false };
-  const calls = [], logs = [];
+  const calls = [], logs = [], wallpaperCalls = [];
   const appReader = async appPath => {
     try { await fs.access(path.join(appPath, 'Contents', 'marker')); }
     catch { return null; }
@@ -114,10 +114,15 @@ async function fixture(t, { previous = false, configured = false } = {}) {
   };
   const options = optionsFrom(['--worker-root', workerRoot, '--app-path', destination, '--app-bundle', source]);
   const dependencies = { runner, appReader, workerReader: async () => worker,
+    wallpaperImpl:async options=>{
+      wallpaperCalls.push(options);
+      if(state.wallpaperFailure) throw new Error('Desktop-Hintergrund nicht bestätigt.');
+      return {configured:true,color:options.workerIdentity.color};
+    },
     artifactReader: async () => source,
     manifestReader: async () => ({schema:1,version:'2.14.1',sourceRevision:REVISION}),
     platform: 'darwin', receiptPath, pause: async () => {}, log: value => logs.push(value) };
-  return { directory, source, destination, receiptPath, options, dependencies, state, calls, logs, worker,
+  return { directory, source, destination, receiptPath, options, dependencies, state, calls, logs, worker, wallpaperCalls,
     async marker() { return fs.readFile(path.join(destination, 'Contents', 'marker'), 'utf8'); },
     async writeReceipt(sourceRevision = REVISION) {
       await fs.mkdir(path.dirname(receiptPath), { recursive: true });
@@ -989,6 +994,28 @@ test('a repeated healthy setup reconciles name and color without copying or reco
   assert.ok(!repeated.some(call => call.command === '/usr/bin/open'), 'the intended app is already running');
   assert.equal(f.state.runningApps.filter(app => app.bundleId === BUNDLE_ID).length, 1);
   assert.equal(await f.marker(), 'new app');
+  assert.equal(f.wallpaperCalls.length,2);
+  assert.equal(f.wallpaperCalls[1].workerIdentity.color,'#17191D');
+});
+
+test('a wallpaper failure leaves an already installed app and its verified enrollment intact',async t=>{
+  const f=await fixture(t,{previous:true});
+  f.state.wallpaperFailure=true;
+  await assert.rejects(setup(f.options,f.dependencies),/Desktop-Hintergrund/);
+  assert.equal(await f.marker(),'new app');
+  assert.equal(f.state.status.verified,true);
+  assert.equal(JSON.parse(await fs.readFile(f.receiptPath,'utf8')).workerId,f.worker.workerId);
+});
+
+test('maintenance and dry-run do not set wallpaper; an explicit check only reads it',async t=>{
+  const f=await fixture(t,{previous:true,configured:true});
+  await f.writeReceipt();
+  await setup({...f.options,updateOnly:true},f.dependencies);
+  await setup({...f.options,dryRun:true},f.dependencies);
+  assert.equal(f.wallpaperCalls.length,0);
+  await setup({...f.options,check:true},f.dependencies);
+  assert.equal(f.wallpaperCalls.length,1);
+  assert.equal(f.wallpaperCalls[0].check,true);
 });
 
 test('missing or invalid central colors stop onboarding before app changes, also on a healthy repeat', async t => {

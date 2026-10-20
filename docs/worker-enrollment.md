@@ -68,6 +68,15 @@ prüft die zentrale Zuordnung ausschließlich lesend. Der Hintergrundmodus
 
 Der Abschluss umfasst die echte Übersicht und Mitgliederliste: genau ein Mac
 mit der richtigen Worker-ID, dem vereinbarten Namen und seiner Farbhinterlegung.
+Zusätzlich erzeugt `scripts/worker-wallpaper.mjs` aus derselben zentralen Farbe
+ein einfarbiges sRGB-PNG unter `~/Pictures/MacWorker/` und setzt es per macOS
+auf allen angeschlossenen Bildschirmen. Die Einrichtung liest die tatsächlich
+gesetzten Bildpfade pro Bildschirm zurück und prüft die gespeicherte Bildfarbe.
+Bei erneuter Einrichtung wird dies wieder geprüft und bei Bedarf berichtigt.
+`--check` liest ausschließlich; `--update-only` ändert den Desktop nicht.
+Ein expliziter persönlicher Mac ohne Mac-Farbe behält seinen Hintergrund.
+Ein Fehler beim Hintergrund bleibt als offener Einrichtungspunkt sichtbar und
+setzt weder die bereits gespeicherte Monitor-Verbindung noch laufende Arbeit zurück.
 
 Die Monitor-App stellt ihre dauerhaft gespeicherte Geräte-UUID bereit. Der
 Installer übermittelt diese UUID zusammen mit der bereits vorhandenen
