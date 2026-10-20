@@ -29,7 +29,9 @@ export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}, bindings =
     // Only journals still waiting for an answer or a queued continuation compete.
     const waiting = matches.map(set => ({ set,
       pending: jobs.some(job => job.setId === set.id && job.sourceVersion === set.sourceVersion
-        && job.state === 'queued' && set.questions.some(q => q.id === job.questionId && q.status === 'accepted' && q.revision === job.revision)),
+        && (job.state === 'queued' || job.state === 'dispatched' && !set.completion
+          && set.runId === run.id && job.runId === run.id && job.dispatchRunId === run.id)
+        && set.questions.some(q => q.id === job.questionId && q.status === 'accepted' && q.revision === job.revision)),
       open: set.questions.filter(q => ['open', 'waiting'].includes(q.status)),
       sourceChange: set.sourceChange?.reason && set.questions.some(q => q.status === 'replaced') ? set.sourceChange : null,
     })).filter(({ pending, open, sourceChange }) => pending || open.length || sourceChange);

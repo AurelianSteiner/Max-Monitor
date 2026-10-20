@@ -150,6 +150,24 @@ test('a source-invalidated answer shows the actual source check instead of an ol
   applyPmQuestions([foreign], source); assert.equal(foreign.status, 'blocked');
 });
 
+test('portable PM dispatch remains waiting while the central checkpoint publication catches up', () => {
+  const previous = set('newsletter', { id: 'old', runId: 'earlier', headRunId: 'run1',
+    questions: [{ id: 'Q1', status: 'accepted', revision: 1 }] });
+  const current = set('newsletter', { id: 'current', questions: [{ id: 'Q2', status: 'accepted', revision: 1 }] });
+  const job = { setId: 'current', questionId: 'Q2', sourceVersion: 'v1', revision: 1,
+    state: 'dispatched', runId: 'run1', dispatchRunId: 'run1' };
+  const source = { sets: [previous, current], jobs: [{ ...job, setId: 'old', questionId: 'Q1', runId: 'earlier' }, job] };
+  for (let poll = 0; poll < 3; poll++) {
+    const next = row('newsletter', { blockedReason: 'Ersatzprodukt fehlt' }); applyPmQuestions([next], source);
+    assert.equal(next.phase, 'Wartet auf Fortsetzung'); assert.equal(next.reasonCode, 'continuation_pending');
+    assert.equal(next.blockedReason, undefined);
+  }
+  for (const overrides of [{ dispatchRunId: 'executed-run' }, { runId: 'other' }, { revision: 2 }, { sourceVersion: 'old' }]) {
+    const next = row('newsletter'); applyPmQuestions([next], { ...source, jobs: [{ ...job, ...overrides }] });
+    assert.equal(next.status, 'blocked', 'an executed or foreign dispatch cannot hide a new technical blocker');
+  }
+});
+
 test('archived journals cannot replace an active decision or revive a retired question', () => {
   const old=set('klaviyo',{id:'archived',archivedAt:1234});
   const only=row();applyPmQuestions([only],{sets:[old]});assert.equal(only.status,'blocked');
