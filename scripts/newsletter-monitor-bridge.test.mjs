@@ -227,6 +227,14 @@ test('blocked correction diagnosis comes from its own bot thread and is cached o
   assert.equal(calls, 1); assert.equal(cached[0].blockedReason, reason);
   const changed = await addRunDetails([make('two')], { hubFetch: async () => { throw Error('temporary outage'); }, previousTasks: first });
   assert.equal(changed[0].blockedReason, undefined);
+  // The monitor's own placeholders are read again and never reused as the diagnosis.
+  for (const reasonCode of ['completion_report_missing', 'blocker_context_missing']) {
+    const placeholder = [{ ...make('one'), blockedReason: 'Seit 19.10., 11:00 kein lesbares Ergebnis', reasonCode }];
+    const retried = await addRunDetails([make('one')], { hubFetch: fetcher, previousTasks: placeholder });
+    assert.equal(retried[0].blockedReason, reason);
+    const outage = await addRunDetails([make('one')], { hubFetch: async () => { throw Error('temporary outage'); }, previousTasks: placeholder });
+    assert.equal(outage[0].blockedReason, undefined);
+  }
 });
 
 function blockedJob(workflow = 'newsletter', runId = 'current-run') {

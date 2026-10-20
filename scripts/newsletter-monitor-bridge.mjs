@@ -875,6 +875,16 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       // A closed source is no longer an open production order. Its generic
       // closing time does not prove when this individual workflow finished.
       if (task.status?.type === 'closed') status = 'completed';
+      let phase;
+      // Fehleraudit 19.10.2026: a new status epoch still carrying the previous
+      // order's tag, without any reservation of its own, is a new order that is
+      // not yet reserved. A final attempt of the current epoch stays blocked, and
+      // an order the worker parks keeps its blocked history (nobody reserves it).
+      if (ordered && task.statusSince && ['blocked', 'failed'].includes(status) && !claim
+        && !matches.some(match => jobIdentity(match.jobId).epoch === String(task.statusSince))
+        && !admission.parked(task, statusKindOf(task), task.statusSince)) {
+        status = 'queued'; phase = refusedPhase(task) || 'Wartet · neuer Auftrag, noch nicht reserviert';
+      }
       // In its start status only reservations of the current order (same epoch as
       // the worker's job ID) describe it. A live older attempt still holds its place
       // and a paused one bound to its Mac still blocks the order; a centrally saved
@@ -882,9 +892,10 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       const active = claim && ['claiming', 'running'].includes(claim.state) ? [claim] : [];
       const fresh = active.find(claim => now - claim.heartbeat * 1000 <= staleMinutes * 60000);
       const pausedTag = tags.some(name => / · pausiert$/i.test(name) && Object.values(workflow.stateTags || {}).flat().some(tag => normalizeTag(tag) === normalizeTag(name)));
-      let phase;
       if (pausedTag && !fresh) { status = 'queued'; phase = 'Wartet · automatische Fortsetzung'; }
-      if ((!pausedTag || fresh) && status !== 'completed' && status !== 'failed' && status !== 'blocked') {
+      // Fehleraudit 19.10.2026: a fresh, unpaused live reservation of a new run
+      // outranks the previous run's blocked tag; stale or paused claims do not.
+      if ((!pausedTag || fresh) && status !== 'completed' && status !== 'failed' && (status !== 'blocked' || (fresh && fresh.paused !== true))) {
         if (fresh) { status = fresh.state === 'running' ? 'running' : 'queued'; phase = fresh.state === 'running' ? 'In Bearbeitung' : 'Reserviert'; }
         else if (active.length && reservationLags(active[0], seenAt, now)) { status = 'queued'; phase = RESERVATION_LAG_PHASE; }
         else if (active.length) { status = 'blocked'; phase = 'Worker meldet sich nicht mehr'; }
@@ -1238,10 +1249,12 @@ export function createRenderPreviews({ localHub, upload, openDatabase, resize, r
 // backfilled for tasks that finished before this monitor saw them run.
 export async function addRunDetails(rows, { hubFetch, channelId, previews, previousTasks = [], now = Date.now(), statusCache }) {
   const previous = new Map((Array.isArray(previousTasks) ? previousTasks : []).map(row => [row?.id, row]));
+  // The monitor's own placeholders are no diagnosis: read the thread again, never reuse them.
+  const unreadable = old => ['blocker_context_missing', 'completion_report_missing'].includes(old?.reasonCode);
   const waiting = row => row.status === 'queued' && /^Wartet · (?:Hub-Übergabe|Fortsetzung in der zentralen Queue|automatische Fortsetzung)$/.test(row.phase || '');
   const running = rows.filter(row => row.run && (row.status === 'running' || (row.status === 'blocked' && row.workflow !== 'correction' && row.phase !== 'Worker meldet sich nicht mehr')
     || ((row.status === 'blocked' || waiting(row)) && row.workflow === 'correction'
-      && !(previous.get(row.id)?.attemptId === row.attemptId && previous.get(row.id)?.blockedReason))));
+      && !(previous.get(row.id)?.attemptId === row.attemptId && previous.get(row.id)?.blockedReason && !unreadable(previous.get(row.id))))));
   const attempts = rows.filter(row => row.run && row.workflow === 'newsletter' && (['running', 'blocked'].includes(row.status)
     || (row.status === 'completed' && ['running', 'blocked'].includes(previous.get(row.id)?.status))));
   const channels = new Map();
@@ -1274,7 +1287,7 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
     if (row.run && (row.status === 'blocked' || waiting(row) && row.workflow === 'correction')) {
       const currentReason = status?.pmQuestion || status?.blockedReason || row.blockedReason;
       row.blockedReason = currentReason || (!status?.unbound && old?.attemptId === row.attemptId && old.blockedReason
-        && old.reasonCode !== 'blocker_context_missing'
+        && !unreadable(old)
         ? parseBlockedReason(`:warning: blockiert: ${old.blockerReason || old.blockedReason}`) : undefined);
       if (status?.pmQuestion || row.phase === 'PM-Rückfrage offen'
         || (!currentReason && old?.attemptId === row.attemptId && old.phase === 'PM-Rückfrage offen' && row.blockedReason)) row.phase = 'PM-Rückfrage offen';
@@ -1505,6 +1518,30 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
   return rows;
 }
 
+// Fehleraudit 19.10.2026: a run's ✅/❌/❓ or reason reaches Slack up to about two
+// minutes after its terminal reservation (observed 82 s to 2 min). Until then a
+// blocked row without any reason is a result still being taken over, not a
+// blocker. After the grace period it is a concrete technical reporting gap.
+export const BLOCKER_GRACE_MS = 5 * 60000;
+const BERLIN_MINUTE = new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+export function applyBlockerGrace(rows, previousTasks = [], now = Date.now()) {
+  const previous = new Map((Array.isArray(previousTasks) ? previousTasks : []).map(row => [row?.id, row]));
+  for (const row of rows) {
+    if (row.status !== 'blocked' || row.workflow === 'sales' || row.blockedReason || row.reasonCode
+      || ['Worker meldet sich nicht mehr', 'PM-Rückfrage offen'].includes(row.phase)) continue;
+    const old = previous.get(row.id);
+    const recorded = old && (old.attemptId ?? null) === (row.attemptId ?? null) ? Date.parse(old.blockerRecordedAt) : NaN;
+    const since = Number.isFinite(recorded) && recorded <= now ? recorded : now;
+    row.blockerRecordedAt = new Date(since).toISOString();
+    if (now - since < BLOCKER_GRACE_MS) { row.status = 'queued'; row.phase = 'Ergebnis wird übernommen'; continue; }
+    // A stable time, not a minute count: the diagnosis binds operator decisions (fleet.js taskVersion).
+    const reason = `Seit ${BERLIN_MINUTE.format(since)} kein lesbares Ergebnis (✅/❌/❓ oder Begründung) des Laufs gemeldet.`;
+    Object.assign(row, { blockedReason: reason, blockerReason: reason, reasonCode: 'completion_report_missing', responsibleRole: 'Technik',
+      nextStep: 'Endzustand und Slack-Thread des Laufs auf dem Mac prüfen (runs/<run_id>/ergebnis.json); Arbeitsstand erhalten.' });
+  }
+  return rows;
+}
+
 // errorPayloads (optional Map): filled with ts -> metadata of every top-level copy
 // in #ai-fehler, only after a complete read of that channel; the error-copy
 // cleanup decides from it which copies stay before reading any thread.
@@ -1629,6 +1666,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   // still belongs to the exact source attempt after the producer Mac is cleared.
   applyPmQuestions(queue, questionResult.value, bindings);
   queue.push(...salesResult.value);
+  applyBlockerGrace(queue, previousTasks, now);
   applyBlockerContexts(queue, tasks, now);
   await applyPmOwners(queue, tasks, { questions: questionResult.value, routing: pmRouting, now });
   for (let index = 0; index < queue.length; index++) queue[index] = taskState.reconcileTask(queue[index]);

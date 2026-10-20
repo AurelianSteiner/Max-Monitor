@@ -239,6 +239,16 @@ Zuständigkeit kommt aus `owner` oder einem eindeutigen `grund` (`stammdaten`;
 dem Text; `eingabe` und `mensch` entscheidet der Text. Ein im RS Hub gesicherter
 Lauf ohne lesbaren Grund ersetzt keinen lesbaren Grund derselben Aufgabe.
 
+Zwischenzustände sind keine Blockade ohne Grund: Eine frische, nicht pausierte
+Live-Reservierung eines neuen Laufs geht dem Tag „· blockiert“ des Vorlaufs vor
+(veraltete oder pausierte Reservierungen nicht). Eine neue Statusepoche mit altem
+Tag und ohne eigene Reservierung wartet als „Wartet · neuer Auftrag, noch nicht
+reserviert“; geparkte Aufträge behalten ihren Verlauf. Eine blockierte Zeile ohne
+lesbaren Grund und ohne Zuordnung steht bis zu fünf Minuten als „Ergebnis wird
+übernommen“ in der Queue; danach meldet sie „Seit <Zeitpunkt> kein lesbares Ergebnis
+… des Laufs gemeldet“ mit Zuständigkeit Technik. Der Zeitpunkt bleibt je Versuch
+fest, damit Befund und Abhak-Version stabil bleiben.
+
 ## Fortschritt und Entwurf laufender Newsletter
 
 Für jede laufende Aufgabe liest die Brücke die Status-Antwort des Workers im
