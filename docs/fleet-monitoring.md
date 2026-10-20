@@ -380,8 +380,9 @@ jeweils als begrenzter `--once`-Aufruf. `MONITOR_BRIDGE_INTERVAL_SECONDS` änder
 das Intervall. Launchd startet keine zweite Instanz derselben laufenden Aufgabe.
 Die Dateien liegen unter `~/Library/LaunchAgents/` und
 `~/Library/Application Support/Max Monitor/Newsletter Bridge/<TEAM-ID>/`.
-Die generierte plist enthält keinen Token; das Startskript liest ihn bei jeder
-Ausführung aus dem Schlüsselbund. Absolute Pfade und Dateirechte `0600`/`0700`
+Die generierte plist enthält keinen Token. Die Installation übernimmt ihn einmal
+aus dem Schlüsselbund in die private Datei `bridge-token` (`0600`) im
+Dienstordner; das Startskript liest nur noch diese Datei (`MONITOR_BRIDGE_TOKEN_FILE`). Absolute Pfade und Dateirechte `0600`/`0700`
 schützen die Konfiguration. Der Installer führt keine Newsletter-Jobs aus.
 
 ```bash
@@ -410,9 +411,11 @@ Provider-Zugangsdaten werden nicht übertragen.
 
 Die Bridge liest alle Spaces des ClickUp-Workspaces und entdeckt die tatsächlich
 vorhandenen Tag-Schreibweisen. Sie fragt anschließend alle Seiten der passenden
-Aufgaben einschließlich Subtasks ab. `include_closed=false` lässt geschlossene
-ClickUp-Aufgaben aus. Abgeschlossene Pre-Gen-Schritte einer weiterhin offenen
-ClickUp-Aufgabe bleiben als `completed` sichtbar.
+Aufgaben einschließlich Subtasks ab. `include_closed=true` behält geschlossene
+ClickUp-Aufgaben als abgeschlossenen Verlauf (Live-Stand 19.10.2026); ihr
+allgemeiner Schließzeitpunkt belegt keinen Abschluss des einzelnen Schritts.
+Abgeschlossene Pre-Gen-Schritte einer weiterhin offenen ClickUp-Aufgabe bleiben
+als `completed` sichtbar.
 
 Standardmäßig werden diese Workflows erkannt:
 
