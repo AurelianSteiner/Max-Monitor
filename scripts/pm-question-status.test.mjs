@@ -124,6 +124,32 @@ test('an answered follow-up queues its continuation despite its dispatched prede
   }
 });
 
+test('a source-invalidated answer shows the actual source check instead of an old missing-product blocker', () => {
+  const old = set('newsletter', { id: 'old', runId: 'previous', headRunId: 'run1',
+    questions: [{ id: 'Q1', title: 'Ersatzprodukt?', status: 'accepted', revision: 1 }] });
+  const current = set('newsletter', { id: 'current', sourceChange: {
+    reason: 'Der Figma-Rahmen wurde seit der gespeicherten Quellenprüfung geändert. Die gespeicherte PM-Antwort bleibt erhalten.', at: Date.parse('2026-10-14T09:00:00Z') },
+    questions: [{ id: 'Q2', title: 'Welches Produkt?', status: 'replaced', revision: 2, answer: { value: 'Govinda' } }] });
+  const source = { sets: [old, current], jobs: [
+    { setId: 'old', questionId: 'Q1', sourceVersion: 'v1', state: 'dispatched', revision: 1 },
+    { setId: 'current', questionId: 'Q2', sourceVersion: 'v1', state: 'blocked', revision: 1 },
+  ] };
+  for (let refresh = 0; refresh < 3; refresh++) {
+    const next = row('newsletter', { blockedReason: 'Ersatzprodukt fehlt', reasonCode: 'blocker_review_required' });
+    applyPmQuestions([next], source);
+    assert.equal(next.status, 'queued'); assert.equal(next.phase, 'Wartet · Quellenabgleich');
+    assert.equal(next.reasonCode, 'pm_source_changed'); assert.equal(next.responsibleRole, 'Technik');
+    assert.match(next.blockedReason, /PM-Antwort gespeichert \(Q2: Govinda\)/);
+    assert.match(next.blockedReason, /Figma-Rahmen/); assert.doesNotMatch(next.blockedReason, /Ersatzprodukt fehlt/);
+  }
+  current.questions[0].status = 'accepted'; current.questions[0].revision = 1; delete current.sourceChange;
+  source.jobs[1].state = 'queued';
+  const resumed = row('newsletter'); applyPmQuestions([resumed], source);
+  assert.equal(resumed.phase, 'Wartet auf Fortsetzung'); assert.equal(resumed.reasonCode, 'continuation_pending');
+  const foreign = row('newsletter', { run: { id: 'newer', taskId: 't1' } });
+  applyPmQuestions([foreign], source); assert.equal(foreign.status, 'blocked');
+});
+
 test('archived journals cannot replace an active decision or revive a retired question', () => {
   const old=set('klaviyo',{id:'archived',archivedAt:1234});
   const only=row();applyPmQuestions([only],{sets:[old]});assert.equal(only.status,'blocked');

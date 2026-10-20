@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
+const displayText = (value, limit) => String(value || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, limit).trim();
 
 export function readPmQuestions(file, openDatabase = file => new (require('node:sqlite').DatabaseSync)(file, { readOnly: true })) {
   if (!fs.existsSync(file)) return { sets: [], jobs: [] };
@@ -19,7 +20,7 @@ export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}, bindings =
     if (!['blocked', 'failed'].includes(row.status) || !run || (row.attemptId && row.attemptId !== run.id)) continue;
     const stage = row.workflow === 'upload' ? 'klaviyo' : row.workflow === 'correction' ? 'korrektur' : row.workflow;
     const matches = sets.filter(set => set.mode === 'production' && !set.archivedAt && set.stage === stage
-      && set.questions.some(q => ['open', 'waiting', 'accepted'].includes(q.status))
+      && set.questions.some(q => ['open', 'waiting', 'accepted'].includes(q.status) || q.status === 'replaced' && set.sourceChange?.reason)
       && set.taskId === run.taskId && set.workerId === (run.workerId || row.workerId)
       && (set.headRunId || set.runId) === run.id && set.threadTs
       && (stage !== 'translation' || row.id === `clickup:translation-${String(set.language).toLowerCase()}:${set.taskId}`));
@@ -30,13 +31,26 @@ export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}, bindings =
       pending: jobs.some(job => job.setId === set.id && job.sourceVersion === set.sourceVersion
         && job.state === 'queued' && set.questions.some(q => q.id === job.questionId && q.status === 'accepted' && q.revision === job.revision)),
       open: set.questions.filter(q => ['open', 'waiting'].includes(q.status)),
-    })).filter(({ pending, open }) => pending || open.length);
+      sourceChange: set.sourceChange?.reason && set.questions.some(q => q.status === 'replaced') ? set.sourceChange : null,
+    })).filter(({ pending, open, sourceChange }) => pending || open.length || sourceChange);
     // Never guess between genuinely competing open journals for one attempt.
     if (waiting.length !== 1) continue;
-    const { set, open } = waiting[0];
+    const { set, open, sourceChange } = waiting[0];
     row.attemptId = run.id;
     row.updatedAt = new Date(Math.max(Date.parse(row.updatedAt) || 0, set.createdAt || 0)).toISOString();
-    row.blockedReason = open.map(q => `${q.id}: ${q.title}`).join(' · ').slice(0, 500) || undefined;
+    if (sourceChange) {
+      const saved = set.questions.filter(q => q.answer).map(q => `${q.id}: ${q.answer.value}`).join(' · ');
+      row.status = 'queued';
+      row.phase = 'Wartet · Quellenabgleich';
+      row.blockedReason = displayText(`${saved ? `PM-Antwort gespeichert (${saved}). ` : ''}${sourceChange.reason}`, 500);
+      row.blockerReason = row.blockedReason;
+      row.reasonCode = 'pm_source_changed';
+      row.responsibleRole = /Figma-Rahmen/.test(sourceChange.reason) ? 'Technik' : 'PM';
+      row.nextStep = displayText('Die geänderte Quelle mit dem gespeicherten Stand abgleichen; anschließend die vorhandene Antwort im selben Auftrag fortsetzen.', 300);
+      row.updatedAt = new Date(Math.max(Date.parse(row.updatedAt), Number(sourceChange.at) || 0)).toISOString();
+      continue;
+    }
+    row.blockedReason = displayText(open.map(q => `${q.id}: ${q.title}`).join(' · '), 500) || undefined;
     row.status = 'queued';
     row.phase = open.length ? 'Wartet · PM-Rückfrage' : 'Wartet auf Fortsetzung';
     // The fresh journal replaces a historical technical checkpoint diagnosis.
@@ -45,7 +59,7 @@ export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}, bindings =
     row.reasonCode = open.length ? 'pm_decision_pending' : 'continuation_pending';
     row.responsibleRole = open.length ? 'PM' : 'Produktion';
     row.nextStep = open.length
-      ? `Im bestehenden Rückfragen-Thread klären: ${row.blockedReason}`.slice(0, 500)
+      ? displayText(`Im bestehenden Rückfragen-Thread klären: ${row.blockedReason}`, 300)
       : 'Die gespeicherte PM-Antwort im bestehenden Produktionsauftrag fortsetzen und das Ergebnis prüfen.';
   }
   return rows;
