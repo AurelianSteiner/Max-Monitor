@@ -133,3 +133,22 @@ test('clarification HTTP endpoint is authenticated and restricted to admins', as
   assert.equal((await request('/fleet/tasks/clarification', 'POST', body)).body.task.status, 'queued');
   assert.equal((await request('/fleet')).body.queue.tasks[0].status, 'queued');
 });
+
+test('a typed PM role is a PM question, other typed roles skip the free-text heuristic, untyped rows keep it', t => {
+  const { store } = setup(t);
+  const cases = [
+    { id: 'typed-pm', reasonCode: 'pm_decision_pending', responsibleRole: 'PM', blockedReason: 'Gesicherter Befund: Gutscheincode fehlt.' },
+    { id: 'master-data', reasonCode: 'master_data_missing', responsibleRole: 'Stammdaten (RS Hub/ClickUp)',
+      blockedReason: 'Gesicherter Befund: Design-Library nicht freigegeben im RS Hub' },
+    { id: 'setup', reasonCode: 'customer_setup_incomplete', responsibleRole: 'PM und Design', blockedReason: 'Designbasis nicht freigegeben' },
+    { id: 'technical', reasonCode: 'technical_blocker', responsibleRole: 'Technik', blockedReason: 'Black-Week-Gestaltung nicht freigegeben' },
+    { id: 'technical-pm', reasonCode: 'pm_decision_pending', responsibleRole: 'PM', blockedReason: 'HTTP 429 beim Upload' },
+    { id: 'legacy', reasonCode: 'blocker_review_required', responsibleRole: 'Zuständigkeit ungeklärt', blockedReason: 'Die Black-Week-Gestaltung ist nicht freigegeben.' },
+    { id: 'untyped', blockedReason: 'Die Black-Week-Gestaltung ist nicht freigegeben.' },
+  ];
+  store.updateQueue(team, queue(cases.map(value => task(value))));
+  const rows = store.snapshot(team).queue.tasks;
+  assert.deepEqual(rows.map(row => [row.id, row.status]), [['typed-pm', 'queued'], ['master-data', 'blocked'], ['setup', 'blocked'],
+    ['technical', 'blocked'], ['technical-pm', 'blocked'], ['legacy', 'queued'], ['untyped', 'queued']]);
+  assert.equal(rows[0].phase, 'Wartet · PM-Rückfrage');
+});

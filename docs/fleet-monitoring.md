@@ -249,6 +249,12 @@ lesbaren Grund und ohne Zuordnung steht bis zu fünf Minuten als „Ergebnis wir
 … des Laufs gemeldet“ mit Zuständigkeit Technik. Der Zeitpunkt bleibt je Versuch
 fest, damit Befund und Abhak-Version stabil bleiben.
 
+Der Relay übernimmt diese Zuordnung: Eine getypte Zeile mit der Rolle „PM“ wartet als
+„Wartet · PM-Rückfrage“, andere getypte Rollen (Technik, Stammdaten, PM und Design)
+bleiben blockiert. Nur ungetypte bzw. ungeklärte Zeilen (`blocker_review_required`,
+`blocker_context_missing`) prüft er weiter am Freitext; technische Befunde bleiben
+in jedem Fall blockiert.
+
 ## Fortschritt und Entwurf laufender Newsletter
 
 Für jede laufende Aufgabe liest die Brücke die Status-Antwort des Workers im
