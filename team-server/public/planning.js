@@ -90,7 +90,8 @@
     if (!current.machines) warnings.push('Noch keine Macs mit auswertbarer Account-Zuordnung und Platzlimits.');
     if (current.accountsCount > current.calibratedAccounts) warnings.push(`${current.calibratedAccounts} von ${current.accountsCount} Accounts haben eine vollständige Messbasis für diesen Mix. Unvollständige Accounts tragen nur zu belegten Aufgabenarten bei.`);
     if (current.manual || config.extraMacs) warnings.push('Dieses Szenario enthält eigene Annahmen. Zusätzliche Macs und Pläne sind simuliert.');
-    const paused = source?.scheduling?.routing?.fleet?.filter(m => m.annahme !== true).length || 0;
+    const included = new Set(current.inventory.machines.map(m => m.id));
+    const paused = source?.scheduling?.routing?.fleet?.filter(m => included.has(m.worker_id) && m.annahme !== true).length || 0;
     if (config.startMode === 'cycle' && paused) warnings.push(`Der volle Zukunftszyklus plant auch mit ${paused} derzeit pausierten Macs. Für die tatsächliche Produktion muss ihre Annahme wieder möglich sein.`);
     $('planning-warning').hidden = !warnings.length;
     $('planning-warning').replaceChildren(...warnings.map(w => el('p', '', w)));
