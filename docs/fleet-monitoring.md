@@ -489,9 +489,11 @@ Lauf. Nur Fragensätze mit offenen Fragen oder einer gültigen, noch wartenden
 Antwortfortsetzung bestimmen die Anzeige. Mehrere tatsächlich konkurrierende
 Fragensätze werden weiterhin nicht anhand ihres Alters erraten.
 Hat eine Quellenprüfung eine bereits gespeicherte PM-Antwort angehalten, zeigt
-Max Monitor „Wartet · Quellenabgleich“ mit der tatsächlichen Quellenänderung und
-der erhaltenen Antwort. Ein alter Checkpoint darf daraus keine neue angeblich
-unbeantwortete Produktfrage oder unzugeordnete technische Blockade machen.
+Max Monitor den Quellenabgleich mit der tatsächlichen Quellenänderung und der
+erhaltenen Antwort. Technische Figma-Abweichungen bleiben bis zum belegten
+Abgleich blockiert; geänderte fachliche Vorgaben warten auf den PM. Ein alter
+Checkpoint darf daraus keine neue angeblich unbeantwortete Produktfrage oder
+unzugeordnete technische Blockade machen.
 Ist eine EN-Mail unter derselben ClickUp-ID bereits im Review, blendet die Ansicht
 ihren unreservierten alten Übersetzungs-Tag-Eintrag aus. Die abgeschlossene Mail
 bleibt erhalten; aktive oder blockierte Übersetzungen werden nicht ausgeblendet.

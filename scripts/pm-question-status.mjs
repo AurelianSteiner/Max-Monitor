@@ -42,12 +42,13 @@ export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}, bindings =
     row.updatedAt = new Date(Math.max(Date.parse(row.updatedAt) || 0, set.createdAt || 0)).toISOString();
     if (sourceChange) {
       const saved = set.questions.filter(q => q.answer).map(q => `${q.id}: ${q.answer.value}`).join(' · ');
-      row.status = 'queued';
-      row.phase = 'Wartet · Quellenabgleich';
+      const technical = /Figma-Rahmen/.test(sourceChange.reason);
+      row.status = technical ? 'blocked' : 'queued';
+      row.phase = technical ? 'Blockiert · Quellenabgleich' : 'Wartet · PM-Rückfrage';
       row.blockedReason = displayText(`${saved ? `PM-Antwort gespeichert (${saved}). ` : ''}${sourceChange.reason}`, 500);
       row.blockerReason = row.blockedReason;
-      row.reasonCode = 'pm_source_changed';
-      row.responsibleRole = /Figma-Rahmen/.test(sourceChange.reason) ? 'Technik' : 'PM';
+      row.reasonCode = technical ? 'preparation_source_changed' : 'pm_source_changed';
+      row.responsibleRole = technical ? 'Technik' : 'PM';
       row.nextStep = displayText('Die geänderte Quelle mit dem gespeicherten Stand abgleichen; anschließend die vorhandene Antwort im selben Auftrag fortsetzen.', 300);
       row.updatedAt = new Date(Math.max(Date.parse(row.updatedAt), Number(sourceChange.at) || 0)).toISOString();
       continue;

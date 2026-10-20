@@ -137,11 +137,17 @@ test('a source-invalidated answer shows the actual source check instead of an ol
   for (let refresh = 0; refresh < 3; refresh++) {
     const next = row('newsletter', { blockedReason: 'Ersatzprodukt fehlt', reasonCode: 'blocker_review_required' });
     applyPmQuestions([next], source);
-    assert.equal(next.status, 'queued'); assert.equal(next.phase, 'Wartet · Quellenabgleich');
-    assert.equal(next.reasonCode, 'pm_source_changed'); assert.equal(next.responsibleRole, 'Technik');
+    assert.equal(next.status, 'blocked'); assert.equal(next.phase, 'Blockiert · Quellenabgleich');
+    assert.equal(next.reasonCode, 'preparation_source_changed'); assert.equal(next.responsibleRole, 'Technik');
     assert.match(next.blockedReason, /PM-Antwort gespeichert \(Q2: Govinda\)/);
     assert.match(next.blockedReason, /Figma-Rahmen/); assert.doesNotMatch(next.blockedReason, /Ersatzprodukt fehlt/);
   }
+  const reason = current.sourceChange.reason;
+  current.sourceChange.reason = 'Der Briefingtext wurde nach der PM-Antwort geändert.';
+  const business = row('newsletter'); applyPmQuestions([business], source);
+  assert.equal(business.status, 'queued'); assert.equal(business.phase, 'Wartet · PM-Rückfrage');
+  assert.equal(business.reasonCode, 'pm_source_changed'); assert.equal(business.responsibleRole, 'PM');
+  current.sourceChange.reason = reason;
   current.questions[0].status = 'accepted'; current.questions[0].revision = 1; delete current.sourceChange;
   source.jobs[1].state = 'queued';
   const resumed = row('newsletter'); applyPmQuestions([resumed], source);
