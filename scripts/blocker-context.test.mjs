@@ -206,6 +206,12 @@ test('the PM caption distinguishes an empty, an ambiguous and an unread PM field
   assert.equal(caption(field([])), 'PM-Feld leer');
   assert.equal(caption(field([user('1', 'Ben Schulte'), user('2', 'John Koci')])), 'PM-Feld nicht eindeutig: Ben Schulte, John Koci');
   assert.equal(caption(null), 'PM nicht zugeordnet');
+  // Long names never push the next step out of the 500 characters.
+  const long = field([1, 2, 3].map(n => user(String(n), `Sehr langer Benutzername ${n} ${'x'.repeat(70)}`)));
+  const rows = [{ status: 'blocked', workflow: 'upload', url: 'https://app.clickup.com/t/t', blockedReason: KEY_NOT_SET }];
+  applyBlockerContexts(rows, [long], 1000);
+  assert.ok(rows[0].blockedReason.length <= 500); assert.ok(rows[0].blockedReason.endsWith(rows[0].nextStep));
+  assert.match(rows[0].blockedReason, /\(PM-Feld nicht eindeutig: Sehr langer Benutzername 1[^)]{0,80} …\) · Nächster Schritt:/);
   assert.deepEqual(pmFieldState(field([user('1', 'A'), user('2', 'B')])), { read: true, names: ['A', 'B'] });
   assert.deepEqual(currentPm(field([user('1', 'A'), user('2', 'B')])), {});
 });

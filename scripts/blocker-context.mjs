@@ -23,7 +23,8 @@ function pmCaption(task, pm) {
   if (pm.pmOwner) return ` (PM: ${pm.pmOwner})`;
   const field = task ? pmFieldState(task) : { read: false, names: [] };
   if (field.read && !field.names.length) return ' (PM-Feld leer)';
-  if (field.names.length > 1) return ` (PM-Feld nicht eindeutig: ${field.names.slice(0, 3).map(name => name.replace(/[()]/g, '')).join(', ')})`;
+  // Bounded, so the next step always fits into the 500 characters.
+  if (field.names.length > 1) return ` (PM-Feld nicht eindeutig: ${clip(field.names.slice(0, 3).map(name => name.replace(/[()]/g, '')).join(', '), 100)})`;
   return ' (PM nicht zugeordnet)';
 }
 
