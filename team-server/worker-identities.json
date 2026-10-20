@@ -7,5 +7,6 @@
   "mac-worker-6-64d66918": {"name": "Orange", "color": "#CA6027", "textColor": "#FFFFFF"},
   "macbook-air-von-gustav-ccdf84ef": {"name": "Lila", "color": "#76519E", "textColor": "#FFFFFF"},
   "macbook-air-von-nachteule-cdb5c505": {"name": "Türkis", "color": "#238A91", "textColor": "#FFFFFF"},
+  "pink": {"name": "Pink", "color": "#FF69B4", "textColor": "#252214"},
   "macbook-von-till-main-2": {"name": "MacBook von Till", "personal": true}
 }

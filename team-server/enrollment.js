@@ -1,4 +1,5 @@
 const crypto = require("node:crypto");
+const workerIdentities = require("./worker-identities.json");
 
 const WORKER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -24,18 +25,24 @@ function validateEnrollment(body) {
 // Retrying the same Mac returns the same member; a copied identity fails closed.
 function enrollWorkerMember(body, { read, write }) {
   const enrollment = validateEnrollment(body);
+  const displayName = Object.hasOwn(workerIdentities, enrollment.workerId)
+    ? workerIdentities[enrollment.workerId].name : enrollment.name;
   const members = read();
   const existing = members.find((member) => member.enrollment?.workerId === enrollment.workerId);
   if (existing) {
     if (existing.enrollment.deviceId !== enrollment.deviceId) throw new EnrollmentError(409, "Worker-ID ist bereits einem anderen Mac zugeordnet");
     if (!["member", "admin", "guest"].includes(existing.role) || typeof existing.token !== "string" || !/^[0-9a-f]{32}$/.test(existing.token)) throw new EnrollmentError(409, "registriertes Worker-Mitglied muss vom Inhaber geprüft werden");
+    if (Object.hasOwn(workerIdentities, enrollment.workerId) && existing.name !== displayName) {
+      existing.name = displayName;
+      write(members);
+    }
     return { member: existing, created: false };
   }
   if (members.some((member) => member.enrollment?.deviceId === enrollment.deviceId)) throw new EnrollmentError(409, "Mac ist bereits mit einer anderen Worker-ID registriert");
   if (members.length >= 200) throw new EnrollmentError(400, "zu viele Mitglieder");
   const member = {
     id: `worker-${crypto.createHash("sha256").update(enrollment.workerId).digest("hex").slice(0, 24)}`,
-    name: enrollment.name,
+    name: displayName,
     role: "member",
     macWorker: true,
     token: crypto.randomBytes(16).toString("hex"),

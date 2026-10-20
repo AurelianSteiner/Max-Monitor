@@ -52,6 +52,23 @@ Nur Änderungen an den Bauquellen der App (`Usage4Claude/`, `Usage4Claude.xcodep
 
 ## Was das Worker-Setup automatisch macht
 
+Vor der Einrichtung prüft das Onboarding den Anzeigenamen und die Farbe anhand
+der exakten Worker-ID in `team-server/worker-identities.json` auf dem Hub. Neue
+Macs dort mit dem vereinbarten Namen, `color` und `textColor` als Hexfarben
+ergänzen und bereitstellen. Fehlende Zuordnungen stoppen die Einrichtung vor
+App-Änderungen; ein ausdrücklich als `personal` geführter Mac behält seine
+persönliche Anzeige. Der macOS-Rechnername dient nicht als Anzeigename.
+
+Die Registrierung übernimmt den zentralen Namen auch für bestehende Mitglieder
+und bewahrt Token, Rolle, MacWorker-Freigabe und Gerätebindung. Das Setup liest
+Name und Farbe nach der Registrierung erneut aus der gemeinsamen Fleet zurück.
+Auch die bereits verbundene Einrichtung führt diesen Abgleich aus; `--check`
+prüft die zentrale Zuordnung ausschließlich lesend. Der Hintergrundmodus
+`--update-only` bleibt ein reines App-Update und registriert keine Mitglieder.
+
+Der Abschluss umfasst die echte Übersicht und Mitgliederliste: genau ein Mac
+mit der richtigen Worker-ID, dem vereinbarten Namen und seiner Farbhinterlegung.
+
 Die Monitor-App stellt ihre dauerhaft gespeicherte Geräte-UUID bereit. Der
 Installer übermittelt diese UUID zusammen mit der bereits vorhandenen
 `worker_id` der Newsletter-Konfiguration über SSH an den festen Hub-Befehl:
@@ -63,6 +80,9 @@ node /opt/max-monitor/scripts/enroll-monitor-worker.mjs --stdin
 Das JSON auf stdin hat `workerId`, `deviceId` und optional `name`. `deviceId`
 ist die UUID aus `FleetSettings` der App. Hardware-UUID oder ein bei jedem Setup
 neu erzeugter Wert dürfen hier nicht als Ersatz verwendet werden.
+Das Onboarding setzt zusätzlich `requireIdentity: true`. Der Hub-Helfer prüft
+damit die zentrale Zuordnung vor der Registrierung und bestätigt den gespeicherten
+Mitgliedsnamen und die Fleet-Farbe danach als `workerIdentity` in seiner Antwort.
 
 Die Antwort auf stdout ist ein einzelnes JSON-Objekt mit `schema`, `serverURL`,
 `teamId`, `token`, `memberId`, `workerId` und `deviceId`. Der Installer fängt diese

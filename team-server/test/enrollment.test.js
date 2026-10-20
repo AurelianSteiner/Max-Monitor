@@ -9,6 +9,29 @@ const deviceA = "610be10e-8a00-4e00-b000-000000000051";
 const deviceB = "610be10e-8a00-4e00-b000-000000000052";
 const owner = "test-enrollment-owner";
 
+test('central worker names repair existing enrollments while preserving binding, access and credentials', () => {
+  const {enrollWorkerMember} = require('../enrollment');
+  let members = [];
+  let writes = 0;
+  const storage = {read:() => structuredClone(members),write:value => {members=value; writes++;}};
+  const body = {workerId:'pink',deviceId:deviceA,name:'MacBook Air von Nachtesel'};
+  const first = enrollWorkerMember(body,storage);
+  assert.equal(first.member.name,'Pink');
+  members[0].name = 'alter Rechnername';
+  members[0].role = 'admin';
+  members[0].macWorker = false;
+  const preserved = structuredClone(members[0]);
+  const repeated = enrollWorkerMember(body,storage);
+  assert.equal(repeated.created,false);
+  assert.deepEqual(repeated.member,{...preserved,name:'Pink'});
+  assert.deepEqual(members[0],repeated.member);
+  assert.equal(writes,2);
+  enrollWorkerMember(body,storage);
+  assert.equal(writes,2,'an already correct enrollment needs no write');
+  assert.throws(() => enrollWorkerMember({...body,deviceId:deviceB},storage),/anderen Mac/);
+  assert.equal(writes,2);
+});
+
 test("trusted enrollment safely provisions a separate ordinary token for every worker", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "max-monitor-enrollment-"));
   process.env.DATA_DIR = directory;

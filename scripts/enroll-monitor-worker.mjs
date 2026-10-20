@@ -75,11 +75,26 @@ export async function checkEnrollment(settings, { fetchImpl = fetch } = {}) {
   if (capability.schema !== 1 || capability.role !== 'member') throw new Error('Monitor-Server unterstützt die benötigte Worker-Registrierung nicht.');
   const snapshot = await request(settings, '/fleet', { fetchImpl });
   if (snapshot.schema !== 1 || !Array.isArray(snapshot.machines) || !Array.isArray(snapshot.queue?.tasks)) throw new Error('Monitor-Server stellt keine gemeinsame Fleet-Übersicht bereit.');
-  return { schema: 1, ok: true, serverURL: settings.serverURL, teamId: settings.teamId, role: 'member', enrollmentAvailable: true, fleetAvailable: true };
+  return { schema: 1, ok: true, serverURL: settings.serverURL, teamId: settings.teamId, role: 'member', enrollmentAvailable: true, fleetAvailable: true,
+    workerIdentities: snapshot.workerIdentities };
+}
+
+export function workerDisplayIdentity(identities, workerId) {
+  const identity = identities && Object.hasOwn(identities, workerId) ? identities[workerId] : null;
+  if (!identity || typeof identity.name !== 'string' || !identity.name.trim() || identity.name.length > 120 ||
+      /[\x00-\x1f\x7f]/.test(identity.name) ||
+      (identity.personal !== true && (!/^#[0-9a-f]{6}$/i.test(identity.color || '') || !/^#[0-9a-f]{6}$/i.test(identity.textColor || '')))) {
+    throw new Error(`Name und Farbe für ${workerId} fehlen in der zentralen Max-Monitor-Zuordnung (team-server/worker-identities.json). Vor dem Onboarding festlegen und auf dem Hub bereitstellen.`);
+  }
+  return identity.personal === true ? {name:identity.name,personal:true}
+    : {name:identity.name,color:identity.color,textColor:identity.textColor};
 }
 
 export async function enrollMonitorWorker(settings, body, { fetchImpl = fetch } = {}) {
   const identity = enrollment.validateEnrollment(body);
+  const display = body.requireIdentity === true
+    ? workerDisplayIdentity((await checkEnrollment(settings,{fetchImpl})).workerIdentities, identity.workerId) : null;
+  if (display) identity.name = display.name;
   const result = await request(settings, '/workers/enroll', { body: identity, fetchImpl });
   const member = result.member;
   if (result.schema !== 1 || !member || member.role !== 'member' || !/^[a-z0-9-]{1,64}$/.test(member.id) ||
@@ -87,8 +102,16 @@ export async function enrollMonitorWorker(settings, body, { fetchImpl = fetch } 
       member.enrollment?.workerId !== identity.workerId || member.enrollment?.deviceId !== identity.deviceId) {
     throw new Error('Monitor-Server lieferte keine gültige Mitglieds-Zuordnung.');
   }
+  if (display) {
+    const savedMember = (await request(settings, '/members', {fetchImpl})).members?.find(item => item.id === member.id);
+    const saved = await request(settings, '/fleet', {fetchImpl});
+    if (member.name !== display.name || savedMember?.name !== display.name || savedMember?.token !== member.token ||
+        JSON.stringify(workerDisplayIdentity(saved.workerIdentities,identity.workerId)) !== JSON.stringify(display))
+      throw new Error('Gespeicherter Max-Monitor-Name oder Farbe weicht von der zentralen Zuordnung ab.');
+  }
   return { schema: 1, serverURL: settings.serverURL, teamId: settings.teamId, token: member.token,
-    memberId: member.id, workerId: identity.workerId, deviceId: identity.deviceId };
+    memberId: member.id, workerId: identity.workerId, deviceId: identity.deviceId,
+    ...(display ? {workerIdentity:display} : {}) };
 }
 
 export function parseArguments(argv) {

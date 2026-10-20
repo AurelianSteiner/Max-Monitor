@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import { configuration, loadConfiguration, checkEnrollment, enrollMonitorWorker, parseArguments, main } from './enroll-monitor-worker.mjs';
+import { configuration, loadConfiguration, checkEnrollment, enrollMonitorWorker, parseArguments, main, workerDisplayIdentity } from './enroll-monitor-worker.mjs';
 
 const identity = { workerId: 'mac-5', deviceId: '610be10e-8a00-4e00-b000-000000000051', name: 'Mac 5' };
 const ownerToken = 'private-owner-token';
@@ -65,6 +65,50 @@ test('enrollment outputs one ordinary token and validates the server-side bindin
   for (const override of [{ role: 'admin' }, { token: 'bad' }, { enrollment: { ...member.enrollment, workerId: 'mac-other' } }, { enrollment: { ...member.enrollment, deviceId: 'wrong' } }]) {
     await assert.rejects(enrollMonitorWorker(settings, identity, { fetchImpl: async () => response({ schema: 1, member: { ...member, ...override } }) }), /Mitglieds-Zuordnung/);
   }
+});
+
+test('onboarding requires a central identity and reads back the saved name and color', async () => {
+  const display = {name:'Pink',color:'#FF69B4',textColor:'#252214'};
+  const workerIdentities = {[identity.workerId]:display};
+  const calls = [];
+  const fetchImpl = async (url,options) => {
+    calls.push({url,options});
+    if (url.endsWith('/members')) return response({members:[{...member,name:'Pink'}]});
+    if (options.method === 'POST') {
+      assert.equal(JSON.parse(options.body).name,'Pink');
+      return response({schema:1,member:{...member,name:'Pink'}});
+    }
+    return response(url.endsWith('/workers/enroll') ? {schema:1,role:'member'}
+      : {schema:1,machines:[],queue:{tasks:[]},workerIdentities});
+  };
+  const result = await enrollMonitorWorker(settings,{...identity,requireIdentity:true},{fetchImpl});
+  assert.deepEqual(result.workerIdentity,display);
+  assert.equal(calls.filter(call => call.url.endsWith('/fleet')).length,2);
+  delete workerIdentities[identity.workerId];
+  calls.length = 0;
+  await assert.rejects(enrollMonitorWorker(settings,{...identity,requireIdentity:true},{fetchImpl}),/Name und Farbe/);
+  assert.ok(calls.every(call => call.options.method === 'GET'));
+});
+
+test('onboarding rejects wrong member names and color changes during registration', async () => {
+  for (const failure of ['responseName','savedName','color']) {
+    let reads = 0;
+    const display = {name:'Pink',color:'#FF69B4',textColor:'#252214'};
+    await assert.rejects(enrollMonitorWorker(settings,{...identity,requireIdentity:true},{fetchImpl:async (url,options) => {
+      if (options.method === 'POST') return response({schema:1,member:{...member,name:failure === 'responseName' ? 'hostname' : 'Pink'}});
+      if (url.endsWith('/members')) return response({members:[{...member,name:failure === 'savedName' ? 'hostname' : 'Pink'}]});
+      if (url.endsWith('/workers/enroll')) return response({schema:1,role:'member'});
+      reads++;
+      return response({schema:1,machines:[],queue:{tasks:[]},workerIdentities:{[identity.workerId]:{
+        ...display,...(failure === 'color' && reads > 1 ? {color:'#000000'} : {})}}});
+    }}),/weicht/);
+  }
+});
+
+test('personal Macs keep their explicit identity; incomplete worker palettes fail closed', () => {
+  assert.deepEqual(workerDisplayIdentity({personal:{name:'Till',personal:true}},'personal'),{name:'Till',personal:true});
+  for (const value of [undefined,{name:'Pink'},{name:'Pink',color:'#FF69B4'},{name:'\nPink',color:'#FF69B4',textColor:'#252214'}])
+    assert.throws(() => workerDisplayIdentity({pink:value},'pink'),/Name und Farbe/);
 });
 
 test('errors never echo raw upstream bodies or owner credentials', async () => {

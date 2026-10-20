@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { workerDisplayIdentity } from './enroll-monitor-worker.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -721,7 +722,7 @@ async function setupSteps(options, { runner = run, workerReader = readWorker,
   const worker = await workerReader(options);
   if (options.dryRun) return {schema:1,mode:'dry-run',workerId:worker.workerId,
     appPath:options.appPath,hubHost:worker.hubHost,
-    steps:['App installieren','Eigenen Mitglieds-Token über Hub beziehen','Team und Worker-ID speichern','Autostart aktivieren','App öffnen']};
+    steps:['Zentralen Mac-Namen und Farbe prüfen','App installieren','Eigenen Mitglieds-Token über Hub beziehen','Team und Worker-ID speichern','Autostart aktivieren','App öffnen']};
   const revision = await sourceRevision(runner);
   const release = options.updateOnly && !options.appBundle ? await manifestReader() : null;
   // Stop the automatic path before any artifact/source comparison, fallback
@@ -752,6 +753,23 @@ async function setupSteps(options, { runner = run, workerReader = readWorker,
   }
   if (options.updateOnly) return updateExistingMonitor(options,{worker,app,revision,release,releaseCurrent,
     receipt,receiptPath,runner,appReader,artifactReader,log,pause,now});
+  let workerIdentity;
+  const checkIdentity = async () => {
+    await fs.access(worker.identityFile); await fs.access(worker.knownHostsFile);
+    if (!options.check) log('Max Monitor: zentralen Namen und Farbe prüfen.');
+    const preflight = parseJson(await runner('ssh', hubArguments(worker, options, true), {label:'Hub-Konfiguration prüfen'}), 'Hub-Prüfung');
+    if (preflight.ok !== true || preflight.schema !== 1) throw new Error('Max Monitor ist auf dem Hub noch nicht bereitgestellt.');
+    workerIdentity = workerDisplayIdentity(preflight.workerIdentities,worker.workerId);
+  };
+  const enrollIdentity = async deviceId => {
+    const result = validateEnrollment(parseJson(await runner('ssh', hubArguments(worker,options), {
+      input:JSON.stringify({workerId:worker.workerId,deviceId,name:workerIdentity.name,requireIdentity:true}),
+      label:'Monitor-Namen und Farbe abgleichen'}), 'Hub-Registrierung'),worker.workerId,deviceId,options.allowLoopback);
+    if (JSON.stringify(result.workerIdentity) !== JSON.stringify(workerIdentity))
+      throw new Error('Max-Monitor-Name und Farbe wurden nicht gespeichert bestätigt. Hub aktualisieren und Onboarding erneut ausführen.');
+    log(`Max Monitor: ${workerIdentity.name}${workerIdentity.color ? ` · ${workerIdentity.color}` : ''} zentral bestätigt.`);
+    return result;
+  };
   let initialStatus = null;
   if (app && !app.legacy) {
     try { initialStatus = await appStatus(app, true, runner); } catch {
@@ -767,7 +785,8 @@ async function setupSteps(options, { runner = run, workerReader = readWorker,
     if (options.check) {
       if (!healthy(initialStatus, worker)) throw new Error('Monitor ist noch nicht vollständig mit diesem Worker verbunden.');
       if (receipt?.sourceRevision !== revision) throw new Error('Die Monitor-App muss auf die aktuelle Repo-Version aktualisiert werden.');
-      return {schema:1,mode:'check',...startupSummary(initialStatus, options.launchAtLogin, null)};
+      await checkIdentity();
+      return {schema:1,mode:'check',workerIdentity,...startupSummary(initialStatus, options.launchAtLogin, null)};
     }
     // Never take over an existing owner/personal connection or another worker.
     if (!options.updateOnly && initialStatus.configured && !initialStatus.workerId)
@@ -784,6 +803,10 @@ async function setupSteps(options, { runner = run, workerReader = readWorker,
   if (app && connected && !options.appBundle && (!releaseCurrent || app.version === release.version) &&
       (receipt?.sourceRevision === revision ||
       await nativeCodeUnchanged(receipt?.sourceRevision, revision, runner))) {
+    await checkIdentity();
+    const enrollment = await enrollIdentity(initialStatus.deviceId);
+    if (enrollment.memberId !== initialStatus.memberId || enrollment.serverURL !== initialStatus.serverURL || enrollment.teamId !== initialStatus.teamId)
+      throw new Error('Bestehende Monitor-Zuordnung weicht vom Hub ab; vorhandene Verbindung bleibt erhalten.');
     if (receipt.sourceRevision !== revision) {
       const updated = {...receipt,sourceRevision:revision,
         binarySourceRevision:receipt.binarySourceRevision || receipt.sourceRevision,checkedAt:new Date().toISOString()};
@@ -793,14 +816,11 @@ async function setupSteps(options, { runner = run, workerReader = readWorker,
     }
     log('Max Monitor ist bereits mit diesem Worker verbunden.');
     if (options.open) await openMonitorApp(options.appPath, options.bundleId, runner, pause);
-    return {schema:1,mode:'existing',...startupSummary(initialStatus, options.launchAtLogin, log)};
+    return {schema:1,mode:'existing',workerIdentity,...startupSummary(initialStatus, options.launchAtLogin, log)};
   }
   // Detect a missing/unupgraded central service before an expensive local build.
   if (!options.updateOnly) {
-  await fs.access(worker.identityFile); await fs.access(worker.knownHostsFile);
-  log('Max Monitor: zentralen Hub prüfen.');
-  const preflight = parseJson(await runner('ssh', hubArguments(worker, options, true), {label:'Hub-Konfiguration prüfen'}), 'Hub-Prüfung');
-  if (preflight.ok !== true || preflight.schema !== 1) throw new Error('Max Monitor ist auf dem Hub noch nicht bereitgestellt.');
+  await checkIdentity();
   }
   let bundle = options.appBundle;
   const artifact = !bundle && options.updateOnly ? await artifactReader(revision,runner,{installedAppPath:options.appPath,workerId:worker.workerId}) : null;
@@ -842,10 +862,7 @@ async function setupSteps(options, { runner = run, workerReader = readWorker,
           keys.some(key => verified[key] !== initialStatus[key]))
         throw new Error('Bestehender älterer Monitor-Zugang nach dem Update nicht vollständig bestätigt.');
     } else {
-    const request = {workerId:worker.workerId,deviceId:identity.deviceId,name:os.hostname()};
-    const enrollment = validateEnrollment(parseJson(await runner('ssh', hubArguments(worker,options), {
-      input:JSON.stringify(request),label:'Eigenen Monitor-Zugang einrichten'}), 'Hub-Registrierung'),
-      worker.workerId,identity.deviceId,options.allowLoopback);
+    const enrollment = await enrollIdentity(identity.deviceId);
     let loginTimedOut = false;
     try {
       parseJson(await runner(app.executable,['--enroll'],{
@@ -868,14 +885,14 @@ async function setupSteps(options, { runner = run, workerReader = readWorker,
     if (options.open) await openMonitorApp(options.appPath, options.bundleId, runner, pause);
     await fs.mkdir(path.dirname(receiptPath),{recursive:true,mode:0o700});
     const safeReceipt = {schema:1,sourceRevision:revision,appPath:options.appPath,
-      workerId:worker.workerId,deviceId:verified.deviceId,serverURL:verified.serverURL,teamId:verified.teamId,installedAt:new Date().toISOString()};
+      workerId:worker.workerId,workerIdentity,deviceId:verified.deviceId,serverURL:verified.serverURL,teamId:verified.teamId,installedAt:new Date().toISOString()};
     await fs.writeFile(receiptPath,JSON.stringify(safeReceipt,null,2)+'\n',{mode:0o600});
     // Cleanup must never undo an already configured and verified installation.
     await install.finish().catch(()=>{});
     log('Max Monitor ist verbunden; Geräteberichte laufen jede Minute.');
     const startup = startupSummary(verified, options.launchAtLogin, log);
     log('Das eigene Claude-Konto einmal in Max Monitor anmelden, damit dessen Kontingente erscheinen.');
-    return {schema:1,mode:'installed',...startup};
+    return {schema:1,mode:'installed',workerIdentity,...startup};
   } catch (error) {
     if (install) {
       // Never remove a bundle while its newly launched process still runs.

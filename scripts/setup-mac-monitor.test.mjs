@@ -40,9 +40,10 @@ async function fixture(t, { previous = false, configured = false } = {}) {
   await fs.writeFile(identityFile, 'fake test key');
   await fs.writeFile(knownHostsFile, 'fake pinned test host');
   const worker = { workerId: 'mac-5', hubHost: 'root@hub.example.test', identityFile, knownHostsFile };
-  const enrollment = { schema: 1, serverURL: 'https://monitor.example.test/max-monitor', teamId: 'RSMACS01',
+  const workerIdentity = {name:'Schwarz',color:'#17191D',textColor:'#FFFFFF'};
+  const enrollment = { schema: 1, serverURL: 'https://monitor.example.test/max-monitor', teamId: 'RSMACS01', workerIdentity,
     token: MEMBER_TOKEN, memberId: 'worker-mac-5', workerId: worker.workerId, deviceId: DEVICE_ID };
-  const state = { revision: REVISION, preflight: { schema: 1, ok: true }, enrollment,
+  const state = { revision: REVISION, preflight: { schema: 1, ok: true, workerIdentities:{[worker.workerId]:workerIdentity} }, enrollment,
     status: { schema: 1, bundleId: 'xyz.fi5h.Usage4Claude', deviceId: DEVICE_ID, configured,
       ...(configured ? { serverURL: enrollment.serverURL, teamId: enrollment.teamId, workerId: worker.workerId,
         memberId: enrollment.memberId, role: 'member', verified: true, fleetAvailable: true, launchAtLoginStatus: 'enabled' } : {}) },
@@ -957,7 +958,7 @@ test('first installation passes one member token only through native stdin and w
   assert.equal(result.workerId, f.worker.workerId);
   assert.equal(await f.marker(), 'new app');
   const enrollment = f.calls.find(call => call.command === 'ssh' && call.args.at(-1).endsWith('--stdin'));
-  assert.deepEqual(JSON.parse(enrollment.input), { workerId: f.worker.workerId, deviceId: DEVICE_ID, name: os.hostname() });
+  assert.deepEqual(JSON.parse(enrollment.input), { workerId: f.worker.workerId, deviceId: DEVICE_ID, name: 'Schwarz', requireIdentity:true });
   const native = f.calls.find(call => call.args[0] === '--enroll');
   assert.equal(JSON.parse(native.input).token, MEMBER_TOKEN);
   assert.equal(JSON.parse(native.input).launchAtLogin, true);
@@ -974,18 +975,43 @@ test('first installation passes one member token only through native stdin and w
   assert.deepEqual(await fs.readdir(path.dirname(f.destination)), ['Max Monitor.app']);
 });
 
-test('a repeated healthy setup keeps the existing app and member without another enrollment or copy', async t => {
+test('a repeated healthy setup reconciles name and color without copying or reconfiguring the app', async t => {
   const f = await fixture(t);
   await setup(f.options, f.dependencies);
   const before = f.calls.length;
   const result = await setup({ ...f.options, appBundle: undefined }, f.dependencies);
   assert.equal(result.mode, 'existing');
   const repeated = f.calls.slice(before);
-  assert.ok(!repeated.some(call => ['ssh', '/usr/bin/ditto', '/bin/bash'].includes(call.command)));
+  assert.ok(!repeated.some(call => ['/usr/bin/ditto', '/bin/bash'].includes(call.command)));
+  assert.equal(repeated.filter(call => call.command === 'ssh').length,2);
+  assert.deepEqual(result.workerIdentity,f.state.enrollment.workerIdentity);
   assert.ok(!repeated.some(call => call.args[0] === '--enroll'));
   assert.ok(!repeated.some(call => call.command === '/usr/bin/open'), 'the intended app is already running');
   assert.equal(f.state.runningApps.filter(app => app.bundleId === BUNDLE_ID).length, 1);
   assert.equal(await f.marker(), 'new app');
+});
+
+test('missing or invalid central colors stop onboarding before app changes, also on a healthy repeat', async t => {
+  for (const repeated of [false,true]) {
+    const f = await fixture(t);
+    if (repeated) await setup(f.options,f.dependencies);
+    for (const identity of [undefined,{name:'Schwarz'},{name:'Schwarz',color:'red',textColor:'#FFFFFF'}]) {
+      f.state.preflight.workerIdentities[f.worker.workerId] = identity;
+      const before = f.calls.length;
+      await assert.rejects(setup({...f.options,...(repeated ? {appBundle:undefined} : {})},f.dependencies),/Name und Farbe/);
+      const calls = f.calls.slice(before);
+      assert.ok(!calls.some(call => ['/usr/bin/ditto','/bin/bash','/usr/bin/open'].includes(call.command) || call.args[0] === '--enroll'));
+      assert.ok(!calls.some(call => call.command === 'ssh' && call.args.at(-1).endsWith('--stdin')));
+    }
+  }
+});
+
+test('unconfirmed saved display identity cannot finish onboarding', async t => {
+  const f = await fixture(t,{previous:true});
+  delete f.state.enrollment.workerIdentity;
+  await assert.rejects(setup(f.options,f.dependencies),/nicht gespeichert bestätigt/);
+  assert.equal(await f.marker(),'previous app');
+  assert.ok(!f.calls.some(call => call.args[0] === '--enroll'));
 });
 
 test('a running copy with the old product name stops and the intended installation becomes live', async t => {
@@ -1109,7 +1135,8 @@ test('check succeeds read-only for the installed source and rejects a stale rece
   await assert.rejects(setup(options, f.dependencies), /aktuelle Repo-Version/);
   assert.equal(await f.marker(), 'previous app');
   assert.equal(await fs.readFile(f.receiptPath, 'utf8'), receipt);
-  assert.ok(f.calls.every(call => call.command === 'git' || call.args[0] === '--enrollment-status'));
+  assert.ok(f.calls.every(call => call.command === 'git' || call.args[0] === '--enrollment-status' ||
+    (call.command === 'ssh' && call.args.at(-1).endsWith('--check'))));
 });
 
 test('dry-run performs no commands, app copy, receipt write or member enrollment, including on non-macOS', async t => {
@@ -1243,7 +1270,8 @@ test('check reports pending login approval while preserving verified monitoring 
   assert.equal(result.loginApprovalRequired, true);
   assert.match(result.loginHint, /Systemeinstellungen.*Anmeldeobjekte/);
   assert.equal(f.logs.length, 0); // --check reserves stdout for its safe JSON result.
-  assert.ok(f.calls.every(call => call.command === 'git' || call.args[0] === '--enrollment-status'));
+  assert.ok(f.calls.every(call => call.command === 'git' || call.args[0] === '--enrollment-status' ||
+    (call.command === 'ssh' && call.args.at(-1).endsWith('--check'))));
 });
 
 test('repeated setup explains pending login approval without enrolling another member', async t => {
@@ -1254,7 +1282,8 @@ test('repeated setup explains pending login approval without enrolling another m
   assert.equal(result.mode, 'existing');
   assert.equal(result.loginApprovalRequired, true);
   assert.ok(f.logs.some(line => line.includes('Anmeldeobjekte')));
-  assert.ok(!f.calls.some(call => call.command === 'ssh' || call.args[0] === '--enroll'));
+  assert.ok(!f.calls.some(call => call.args[0] === '--enroll'));
+  assert.equal(f.calls.filter(call => call.command === 'ssh' && call.args.at(-1).endsWith('--stdin')).length,1);
 });
 
 test('failed autostart registration is reported separately from successful fleet enrollment', async t => {
