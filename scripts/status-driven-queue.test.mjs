@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   DEFAULT_WORKFLOWS, START_STATUSES, buildQueue, parseClaim, listStatusTasks, readStatusEpochs, collectSnapshot,
   parseRegisterClaim, readHubReservations, mergeHubClaims, hubRuntimeDirectory, parseObservedWorkers, readHubFleet, addRunDetails,
+  applyBlockerGrace, BLOCKER_GRACE_MS, BLOCKER_GRACE_PHASE,
 } from './newsletter-monitor-bridge.mjs';
 
 const now = Date.parse('2026-10-16T09:00:00Z');
@@ -278,4 +279,92 @@ test('an older-epoch central pause of an absent Mac is not shown as the new orde
   const [hubRow] = snapshot.tasks;
   assert.deepEqual([hubRow.id, hubRow.status, hubRow.attemptId, hubRow.workerId], ['clickup:newsletter:N', 'queued', undefined, undefined]);
   assert.doesNotMatch(hubRow.phase || '', /Fortsetzung im RS Hub gesichert/);
+});
+
+test('a register claim carries only a known typed owner into the queue row and its blocker context', async () => {
+  const { applyBlockerContexts } = await import('./blocker-context.mjs');
+  const order = task('86abc', 'klaviyo upload', ['klaviyo upload · blockiert'], { statusSince: since });
+  const finished = owner => parseRegisterClaim(registerDoc({ taskId: `86abc@${since}-klaviyo`, state: 'final', reactions: ['x'], owner }));
+  assert.equal(finished('stammdaten').owner, 'stammdaten');
+  assert.equal(finished('design').owner, undefined, 'an unknown owner value is dropped');
+  const [row] = buildQueue([order], mergeHubClaims([], [finished('stammdaten')]), DEFAULT_WORKFLOWS, { now });
+  assert.equal(row.status, 'blocked'); assert.equal(row.blockerOwner, 'stammdaten');
+  row.blockedReason = 'Saved acceptance finding';
+  applyBlockerContexts([row], [order], now);
+  assert.equal(row.responsibleRole, 'Stammdaten (RS Hub/ClickUp)'); assert.equal(row.blockerKind, 'waiting_human');
+  assert.equal(row.owner, undefined, 'the register reserves the name owner');
+  const [plain] = buildQueue([order], [finished('design')], DEFAULT_WORKFLOWS, { now });
+  plain.blockedReason = 'Saved acceptance finding';
+  applyBlockerContexts([plain], [order], now);
+  assert.equal(plain.responsibleRole, 'Zuständigkeit ungeklärt');
+});
+
+test('a fresh unpaused live reservation of a new run outranks the previous blocked tag', () => {
+  const order = task('86abc', 'klaviyo upload', ['klaviyo upload · blockiert'], { statusSince: since });
+  const live = overrides => parseRegisterClaim(registerDoc({ runId: '20261016T085900Z-new', taskId: `86abc@${since}-klaviyo`, ...overrides }));
+  const row = claim => buildQueue([order], [claim], DEFAULT_WORKFLOWS, { now })[0];
+  assert.deepEqual([row(live()).status, row(live()).phase], ['running', 'In Bearbeitung']);
+  assert.deepEqual([row(live({ state: 'claiming' })).status, row(live({ state: 'claiming' })).phase], ['queued', 'Reserviert']);
+  assert.equal(row(live({ paused: true })).status, 'blocked', 'a paused reservation keeps the blocked tag');
+  assert.equal(row(live({ heartbeat: now / 1000 - 31 * 60 })).status, 'blocked', 'a stale reservation keeps the blocked tag');
+});
+
+test('a new status epoch with the old blocked tag and no reservation of its own waits as a new order', () => {
+  const E1 = '1792120000000';
+  const order = (tags = ['pre gen · blockiert']) => task('86abc', 'pre-gen', tags, { statusSince: since });
+  const final = epoch => parseRegisterClaim(registerDoc({ runId: `20261016T08${epoch === since ? '50' : '10'}00Z-a`, taskId: `86abc@${epoch}`,
+    state: 'final', reactions: ['x'] }));
+  const [fresh] = buildQueue([order()], [final(E1)], DEFAULT_WORKFLOWS, { now });
+  assert.deepEqual([fresh.status, fresh.phase], ['queued', 'Wartet · neuer Auftrag, noch nicht reserviert']);
+  assert.deepEqual(buildQueue([order()], [], DEFAULT_WORKFLOWS, { now }).map(row => row.status), ['queued']);
+  const [current] = buildQueue([order()], [final(E1), final(since)], DEFAULT_WORKFLOWS, { now });
+  assert.equal(current.status, 'blocked', 'a final attempt of the current epoch stays blocked');
+  // A parked order is never reserved; its blocked history stays as before.
+  assert.deepEqual(buildQueue([order(['pre gen · blockiert', 'manuell'])], [final(E1)], DEFAULT_WORKFLOWS, { now }).map(row => row.status), ['blocked']);
+});
+
+test('a just finished attempt without any result waits five minutes before it is a technical reporting gap', () => {
+  const order = task('T', 'revision extern', [], { statusSince: since });
+  const finished = parseRegisterClaim(registerDoc({ runId: '20261016T085000Z-k', taskId: `korrektur-cu-T@${since}-extern`, state: 'final',
+    text: '*Korrektur · Kunde*\n<https://app.clickup.com/t/T|Herbst>' }));
+  const rows = () => buildQueue([order], [finished], DEFAULT_WORKFLOWS, { now }).map(row => { delete row.run; return row; });
+  const [first] = applyBlockerGrace(rows(), [], now);
+  assert.deepEqual([first.status, first.phase, first.reasonCode, first.blockedReason], ['queued', BLOCKER_GRACE_PHASE, undefined, undefined]);
+  assert.equal(BLOCKER_GRACE_PHASE, 'Wartet · Ergebnis wird übernommen');
+  assert.equal(first.blockerRecordedAt, new Date(now).toISOString());
+  const [waiting] = applyBlockerGrace(rows(), [first], now + BLOCKER_GRACE_MS - 1000);
+  assert.equal(waiting.status, 'queued'); assert.equal(waiting.blockerRecordedAt, first.blockerRecordedAt);
+  const [late] = applyBlockerGrace(rows(), [{ ...first, blockerRecordedAt: new Date(now - 6 * 60000).toISOString() }], now);
+  assert.deepEqual([late.status, late.reasonCode, late.responsibleRole], ['blocked', 'completion_report_missing', 'Technik']);
+  assert.match(late.blockedReason, /^Seit 16\.10\., 10:54 kein lesbares Ergebnis/);
+  const [again] = applyBlockerGrace(rows(), [late], now + 60000);
+  assert.equal(again.blockedReason, late.blockedReason, 'the diagnosis stays stable between cycles');
+  // Another attempt starts its own grace; a readable cause, sales and stale workers are untouched.
+  const [other] = applyBlockerGrace(rows(), [{ ...late, attemptId: 'older' }], now);
+  assert.equal(other.status, 'queued');
+  const reason = { ...rows()[0], blockedReason: '⛔ Blockiert: Datei fehlt' };
+  const stale = { ...rows()[0], phase: 'Worker meldet sich nicht mehr' };
+  const sales = { id: 'sales:1', workflow: 'sales', status: 'blocked' };
+  assert.deepEqual(applyBlockerGrace([reason, stale, sales], [], now).map(row => row.status), ['blocked', 'blocked', 'blocked']);
+});
+
+test('the snapshot applies the result grace before the blocker context', async () => {
+  const config = { clickup: { workspace_id: '24553341' }, slack: { channel_id: 'C0C6NMMGGJV' }, hub: {} };
+  const hubFetch = async target => {
+    const url = new URL(target);
+    if (url.hostname === 'slack.com') return response({ ok: true, messages: [], has_more: false });
+    if (url.pathname.endsWith('/space')) return response({ spaces: [] });
+    if (url.pathname.endsWith('/task')) return response({ tasks: [task('T', 'revision extern')], last_page: true });
+    if (url.pathname.endsWith('/time_in_status')) return response({ current_status: { status: 'revision extern', since } });
+    throw new Error(`unexpected ${url}`);
+  };
+  const reservationReader = () => [parseRegisterClaim(registerDoc({ runId: '20261016T085000Z-k', taskId: `korrektur-cu-T@${since}-extern`,
+    state: 'final', text: '*Korrektur · Kunde*\n<https://app.clickup.com/t/T|Herbst>' }))];
+  const first = await collectSnapshot({ now, config, hubFetch, fleetReader: async () => [], reservationReader });
+  const row = first.tasks.find(entry => entry.workflow === 'correction');
+  assert.deepEqual([row.status, row.phase, row.reasonCode], ['queued', BLOCKER_GRACE_PHASE, undefined]);
+  const later = await collectSnapshot({ now: now + 6 * 60000, config, hubFetch, fleetReader: async () => [], reservationReader, previousTasks: first.tasks });
+  const blocked = later.tasks.find(entry => entry.workflow === 'correction');
+  assert.equal(blocked.status, 'blocked'); assert.equal(blocked.reasonCode, 'completion_report_missing');
+  assert.match(blocked.blockedReason, /^Gesicherter Befund: Seit .* kein lesbares Ergebnis .* · Zuständig: Technik/);
 });

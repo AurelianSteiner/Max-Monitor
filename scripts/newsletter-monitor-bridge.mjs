@@ -9,11 +9,12 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { readBridgeToken } from './monitor-bridge-credentials.mjs';
 import { cleanupErrorCopies, createErrorCleanupWriter } from './error-copy-cleanup.mjs';
 import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
 import { applyPmOwners, createPmRoutingReader } from './pm-owner.mjs';
 import taskState from './task-state.cjs';
-import { checkpointBlocker, applyBlockerContexts } from './blocker-context.mjs';
+import { checkpointBlocker, applyBlockerContexts, blockerContext, BLOCKER_OWNERS } from './blocker-context.mjs';
 import { createStatusAudit, saveStatusAudit } from './status-reconciliation.mjs';
 
 const require = createRequire(import.meta.url);
@@ -139,7 +140,8 @@ export async function listTasks(hubFetch, workspaceId, variants, { maxPages = 20
   // paginated query keeps the minute cadence within the shared Hub token's limit.
   for (let page = 0; page < maxPages; page += 1) {
     const url = new URL(`https://api.clickup.com/api/v2/team/${encodeURIComponent(workspaceId)}/task`);
-    for (const [key, value] of Object.entries({ page, subtasks: true, include_closed: false })) url.searchParams.set(key, String(value));
+    // Workflow history remains part of Gesamt after the parent task is closed.
+    for (const [key, value] of Object.entries({ page, subtasks: true, include_closed: true })) url.searchParams.set(key, String(value));
     for (const tag of variants) url.searchParams.append('tags[]', tag);
     const result = await requestJson(hubFetch, url, 'ClickUp');
     if (!Array.isArray(result.tasks)) throw new Error('ClickUp: Aufgabenliste fehlt.');
@@ -318,14 +320,14 @@ function claimDetails(kind, state, paused, text, reactions) {
   const link = /<([^|>]+)\|([^>]+)>/.exec(text.split('\n')[1] || '');
   let url;
   try { const candidate = new URL(link?.[1]); if (candidate.protocol === 'https:' && !candidate.username && !candidate.password && candidate.href.length <= 2000) url = candidate.href; } catch { /* Optional task link. */ }
-  // Completed corrections replace the parent text and need no separate reaction.
+  // All worker kinds now replace the parent text on successful completion.
   // Only the terminal label of this exact claim can confirm completion.
   const terminalLine = text.split('\n')[1] || '';
-  const doneLabel = kind === 'correction' && state === 'final' && /^(?:✅|:white_check_mark:)\s*Fertig:/u.test(terminalLine);
+  const doneLabel = ['final', 'released'].includes(state) && /^(?:✅|:white_check_mark:)\s*Fertig:/u.test(terminalLine);
   return { doneLabel, ...claimOutcome(kind, state, paused, doneLabel, reactions),
     ...(kind === 'correction' ? { figmaUrl: [...text.matchAll(/<([^|>]+)(?:\|[^>]+)?>/g)]
       .map(match => figmaLink(match[1])).find(Boolean) } : {}),
-    url, company: kind === 'correction' ? displayText(text.split('\n')[0].replace(/^\*?Korrektur\s*·\s*/, '').replace(/[*`]/g, ''), 200) : undefined,
+    url, company: displayText((/^[*]?[^\n·]+\s·\s(.+?)[*]?$/u.exec(text.split('\n')[0])?.[1] || (kind === 'correction' ? text.split('\n')[0] : '')).replace(/[*`]/g, ''), 200),
     title: displayText((link?.[2] || text.split('\n')[0].replace(/[*`]/g, '')).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 300) };
 }
 
@@ -386,6 +388,8 @@ export function parseRegisterClaim(doc) {
     ...(paused ? { paused: true, ...(doc.portable === true ? { portable: true } : {}) } : {}),
     workflow: identity.workflow ?? identity.kind, reactions, hub: true,
     ...(typeof doc.channel === 'string' && /^C[A-Z0-9]{5,20}$/.test(doc.channel) ? { channelId: doc.channel } : {}),
+    // Fehleraudit 19.10.2026: the worker's typed owner of a finished run; any other value is dropped.
+    ...(BLOCKER_OWNERS.has(doc.owner) ? { owner: doc.owner } : {}),
     ...claimDetails(identity.kind, doc.state, paused, String(doc.text ?? ''), reactions) };
 }
 
@@ -431,15 +435,17 @@ export function readHubReservations(runtimeDir, { now = Date.now(), lookbackDays
 // progress replies, its reactions and the time a terminal post was written.
 export function mergeHubClaims(slackClaims, hubClaims) {
   if (!Array.isArray(hubClaims)) return slackClaims;
+  const identity = claim => JSON.stringify([claim.taskId, claim.jobId, claim.workflow, claim.runId]);
   const posted = new Map();
   for (const claim of slackClaims) {
-    const old = posted.get(claim.runId);
-    if (!old || compareSlackTs(claim.ts, old.ts) > 0) posted.set(claim.runId, claim);
+    const key = identity(claim);
+    const old = posted.get(key);
+    if (!old || compareSlackTs(claim.ts, old.ts) > 0) posted.set(key, claim);
   }
-  const owned = new Set(hubClaims.map(claim => claim.runId));
-  const merged = slackClaims.filter(claim => !owned.has(claim.runId));
+  const owned = new Set(hubClaims.map(identity));
+  const merged = slackClaims.filter(claim => !owned.has(identity(claim)));
   for (const hub of hubClaims) {
-    const slack = posted.get(hub.runId);
+    const slack = posted.get(identity(hub));
     if (!slack) { merged.push(hub); continue; }
     const live = LIVE_CLAIM_STATES.has(hub.state);
     const settled = !live && !LIVE_CLAIM_STATES.has(slack.state);
@@ -617,6 +623,12 @@ function causeJobs(value, primary, rowId) {
   return result;
 }
 
+const COPY_UNINHERITED = new Set(['blockerReason', 'reasonCode', 'responsibleRole', 'nextStep', 'blockerKind', 'blockerOwner',
+  'blockerSource', 'blockerSourceRunId', 'blockerSourceHash', 'blockerRecordedAt']);
+// 'eingabe' and 'mensch' cover PM, master data and technical cases alike; the
+// text fallback decides those.
+const OWNER_OF_GRUND = { stammdaten: 'stammdaten', technisch: 'technik', erschoepft: 'technik', rueckfrage_nicht_zugestellt: 'technik' };
+
 // One row per still-present bot error in #ai-fehler, independent of historical
 // ClickUp tags, claim outcomes and canceled Sales tests. A cause post that names
 // several orders (task_ids) gives one row per order, each with the same Slack
@@ -624,6 +636,9 @@ function causeJobs(value, primary, rowId) {
 // Never synthesize completion.
 export function buildBlockedErrors(messages, channelId, tasks = [], { manualUploadIds = new Set() } = {}) {
   const rows = new Map();
+  // Fehleraudit 19.10.2026: a copy names its own owner (worker `owner`, else its
+  // unambiguous `grund`) and never inherits the queue row's blocker fields.
+  const own = row => row && Object.fromEntries(Object.entries(row).filter(([key]) => !COPY_UNINHERITED.has(key)));
   const slackText = text => String(text || '').replace(/<[^|>]+\|([^>]+)>/g, '$1')
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
   for (const message of messages) {
@@ -649,8 +664,10 @@ export function buildBlockedErrors(messages, channelId, tasks = [], { manualUplo
     const company = displayText(slackText(text.split('\n')[0]).replace(/[*`]/g, '').split(' · ').slice(1).join(' · '), 200);
     const id = `slack-error:${channelId}:${message.ts}`;
     const updatedAt = new Date(time).toISOString();
+    const context = lauf ? blockerContext(diagnosis, { state: value.state,
+      owner: BLOCKER_OWNERS.has(value.owner) ? value.owner : OWNER_OF_GRUND[value.grund] }) : {};
     if (!(kind === 'upload' && manualUploadIds.has(taskId))) {
-      rows.set(id, { ...source, id, status: 'blocked', workflow,
+      rows.set(id, { ...own(source), ...context, id, status: 'blocked', workflow,
         title: displayText(slackText(taskLink?.[2] || source?.title || (issue ? `Worker · ${issue.workerId} · ${issue.stage}` : text.split('\n')[0])), 300, 'Fehler in #ai-fehler'),
         url: taskLink?.[1] || source?.url, errorUrl,
         company: source?.company || company, workerId: value?.worker || issue?.workerId,
@@ -662,7 +679,7 @@ export function buildBlockedErrors(messages, channelId, tasks = [], { manualUplo
       const other = errorJob(job, true);
       if (other.kind === 'upload' && manualUploadIds.has(other.taskId)) continue;
       const row = tasks.find(task => task.id === other.sourceId);
-      rows.set(`${id}#${job}`, { ...row, id: `${id}#${job}`, status: 'blocked', workflow: other.workflow,
+      rows.set(`${id}#${job}`, { ...own(row), ...context, id: `${id}#${job}`, status: 'blocked', workflow: other.workflow,
         title: displayText(row?.title || job, 300, 'Fehler in #ai-fehler'),
         url: row?.url || `https://app.clickup.com/t/${encodeURIComponent(other.taskId)}`, errorUrl,
         company: row?.company || company, workerId: value.worker,
@@ -721,7 +738,7 @@ export function contentKind(task, claims = []) {
 
 export function completionEvidence(claims) {
   const latest = claims.filter(claim => claim.state !== 'withdrawn')
-    .sort((a, b) => Number(b.ts) - Number(a.ts))[0];
+    .sort((a, b) => compareSlackTs(b.ts, a.ts))[0];
   if (!latest || latest.completionTimestampKnown === false || !['final', 'released'].includes(latest.state) || latest.outcome !== 'completed') return {};
   const time = Number(latest.heartbeat) * 1000;
   if (!Number.isFinite(time) || time <= 0) return {};
@@ -742,14 +759,35 @@ export function selectCurrentClaim(matches, now, staleMinutes = 30) {
 
 export function retainCompletionDates(rows, previousTasks = [], claims = []) {
   const previousById = new Map(previousTasks.map(task => [task.id, task]));
+  const latestFor = row => {
+    const workflow = row.workflow === 'upload' ? 'klaviyo' : row.workflow === 'translation' ? row.id.split(':')[1] : row.workflow;
+    const taskId = row.id.split(':').at(-1);
+    return claims.filter(claim => claim.state !== 'withdrawn' && (row.workflow === 'correction'
+      ? claim.workflow === 'correction' && `correction:${claim.jobId}` === row.id
+      : claim.taskId === taskId && claim.workflow === workflow)).sort((a, b) => compareSlackTs(b.ts, a.ts))[0];
+  };
   for (const row of rows) {
     const previous = previousById.get(row.id);
     if (row.status !== 'completed' || row.completedAt || previous?.status !== 'completed'
-      || previous.completionSource !== 'slack' || !previous.completedAt) continue;
-    const workflow = row.workflow === 'upload' ? 'klaviyo' : row.workflow === 'translation' ? row.id.split(':')[1] : row.workflow;
-    const taskId = row.id.split(':').at(-1);
-    if (!claims.some(claim => claim.taskId === taskId && claim.workflow === workflow))
+      || previous.completionSource !== 'slack' || !previous.completedAt
+      || (row.attemptId && row.attemptId !== previous.attemptId)) continue;
+    const latest = latestFor(row);
+    // A register-only replay of the same successful attempt cannot erase an
+    // already verified Slack date after that post leaves the history window.
+    if (!latest || (latest.runId === previous.attemptId && latest.runId === row.attemptId
+      && ['final', 'released'].includes(latest.state) && latest.outcome === 'completed'))
       Object.assign(row, { completedAt: previous.completedAt, completionSource: previous.completionSource });
+  }
+  // The 60-day claim query is a transport window, not an expiry date for
+  // verified production history. A newer source row or attempt always wins.
+  const ids = new Set(rows.map(row => row.id));
+  for (const previous of previousTasks) {
+    if (ids.has(previous.id) || previous.status !== 'completed' || previous.completionSource !== 'slack'
+      || !Number.isFinite(Date.parse(previous.completedAt))) continue;
+    const latest = latestFor(previous);
+    if (latest && (latest.runId !== previous.attemptId || latest.outcome !== 'completed')) continue;
+    rows.push({ ...previous });
+    ids.add(previous.id);
   }
   return rows;
 }
@@ -818,27 +856,46 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       const starts = (workflow.startStatuses ?? []).map(normalizeStatus);
       // Like the worker: the start status is the order, a tag never is.
       const ordered = starts.includes(sourceStatus);
-      if (!ordered && !workflowMatches(workflow, tags)) continue;
+      const matches = claims.filter(claim => claim.taskId === task.id && claim.workflow === (workflow.claimWorkflow ?? workflow.id)
+        && !(ordered && task.statusSince && (!LIVE_CLAIM_STATES.has(claim.state) || (claim.paused && claim.portable))
+          && jobIdentity(claim.jobId).epoch && jobIdentity(claim.jobId).epoch !== String(task.statusSince)));
+      const claim = selectCurrentClaim(matches, now, staleMinutes);
+      // Tags are transient: moving to upload/review may remove every Pre-Gen
+      // tag. The exact successful reservation remains workflow history.
+      const finished = claim?.outcome === 'completed'
+        && (!ordered || (task.statusSince && jobIdentity(claim.jobId).epoch === String(task.statusSince)));
+      if (!ordered && !workflowMatches(workflow, tags) && !finished) continue;
       const normalized = new Set(tags.map(normalizeTag));
       let status = 'queued';
       for (const name of ['queued', 'running', 'failed', 'blocked', 'completed']) {
         if ((workflow.stateTags?.[name] ?? []).some(tag => normalized.has(normalizeTag(tag)))) status = name;
       }
+      if (finished) status = 'completed';
       if ((workflow.claimWorkflow ?? workflow.id) === 'klaviyo' && admission.manualUpload(task) && status !== 'completed') continue;
+      // A closed source is no longer an open production order. Its generic
+      // closing time does not prove when this individual workflow finished.
+      if (task.status?.type === 'closed') status = 'completed';
+      let phase;
+      // Fehleraudit 19.10.2026: a new status epoch still carrying the previous
+      // order's tag, without any reservation of its own, is a new order that is
+      // not yet reserved. A final attempt of the current epoch stays blocked, and
+      // an order the worker parks keeps its blocked history (nobody reserves it).
+      if (ordered && task.statusSince && ['blocked', 'failed'].includes(status) && !claim
+        && !matches.some(match => jobIdentity(match.jobId).epoch === String(task.statusSince))
+        && !admission.parked(task, statusKindOf(task), task.statusSince)) {
+        status = 'queued'; phase = refusedPhase(task) || 'Wartet · neuer Auftrag, noch nicht reserviert';
+      }
       // In its start status only reservations of the current order (same epoch as
       // the worker's job ID) describe it. A live older attempt still holds its place
       // and a paused one bound to its Mac still blocks the order; a centrally saved
       // (portable) pause of an older epoch no longer describes it (F29, Till 16.10.2026).
-      const matches = claims.filter(claim => claim.taskId === task.id && claim.workflow === (workflow.claimWorkflow ?? workflow.id)
-        && !(ordered && task.statusSince && (!LIVE_CLAIM_STATES.has(claim.state) || (claim.paused && claim.portable))
-          && jobIdentity(claim.jobId).epoch && jobIdentity(claim.jobId).epoch !== String(task.statusSince)));
-      const claim = selectCurrentClaim(matches, now, staleMinutes);
       const active = claim && ['claiming', 'running'].includes(claim.state) ? [claim] : [];
       const fresh = active.find(claim => now - claim.heartbeat * 1000 <= staleMinutes * 60000);
       const pausedTag = tags.some(name => / · pausiert$/i.test(name) && Object.values(workflow.stateTags || {}).flat().some(tag => normalizeTag(tag) === normalizeTag(name)));
-      let phase;
       if (pausedTag && !fresh) { status = 'queued'; phase = 'Wartet · automatische Fortsetzung'; }
-      if ((!pausedTag || fresh) && status !== 'completed' && status !== 'failed' && status !== 'blocked') {
+      // Fehleraudit 19.10.2026: a fresh, unpaused live reservation of a new run
+      // outranks the previous run's blocked tag; stale or paused claims do not.
+      if ((!pausedTag || fresh) && status !== 'completed' && status !== 'failed' && (status !== 'blocked' || (fresh && fresh.paused !== true))) {
         if (fresh) { status = fresh.state === 'running' ? 'running' : 'queued'; phase = fresh.state === 'running' ? 'In Bearbeitung' : 'Reserviert'; }
         else if (active.length && reservationLags(active[0], seenAt, now)) { status = 'queued'; phase = RESERVATION_LAG_PHASE; }
         else if (active.length) { status = 'blocked'; phase = 'Worker meldet sich nicht mehr'; }
@@ -861,19 +918,56 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       const url = taskUrl(task);
       const name = displayText(task.name, 300, task.id);
       const title = workflow.titleSuffix ? `${displayText(name, 300 - workflow.titleSuffix.length - 3)} · ${workflow.titleSuffix}` : name;
-      const evidence = status === 'completed' ? completionEvidence(matches) : {};
+      // Downstream review also completes Pre-Gen, even without a finished tag.
+      // Resolve that state before attaching the exact attempt's completion date.
+      const evidence = status === 'completed' || taskState.preGenFinished({ workflow: workflow.queueWorkflow ?? workflow.id, sourceStatus: taskStatus(task) })
+        ? completionEvidence(matches) : {};
       rows.push({ id: `clickup:${workflow.id}:${task.id}`, title, url, workflow: workflow.queueWorkflow ?? workflow.id, status,
         ...languagePackage(task, tasks, workflow),
         contentKind: contentKind(task, matches),
         ...evidence,
-        completionSource: evidence.completionSource || (status === 'completed' ? 'clickup' : undefined),
+        completionSource: evidence.completionSource || (status === 'completed' ? finished ? 'register' : 'clickup' : undefined),
         sourceStatus: displayText(typeof task.status === 'string' ? task.status : task.status?.status, 120),
         company: task.folder?.hidden ? undefined : displayText(task.folder?.name, 200),
         figmaUrl: taskFigmaLink(task, (workflow.claimWorkflow ?? workflow.id) === 'newsletter') || ((workflow.claimWorkflow ?? workflow.id) === 'newsletter' ? figmaLink(figmaBoardUrl) : undefined),
-        workerId: claim?.paused && claim.portable ? undefined : claim?.workerId, attemptId: claim?.runId, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
+        workerId: claim?.paused && claim.portable ? undefined : claim?.workerId, attemptId: claim?.runId, blockerOwner: claim?.owner, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
         updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30),
         // Internal only: addRunDetails reads progress and renders of this attempt, then removes it.
         run: claim ? { id: claim.runId, jobId: claim.jobId, workerId: claim.workerId, ts: threadOf(claim), taskId: task.id, channelId: claim.channelId, heartbeat: threadBeat(claim) } : undefined });
+    }
+  }
+  // A completed mail may have no automation tags left at all, so ClickUp's
+  // tag/start-status inventory cannot return it. Keep its source-bound success
+  // visible under the same workflow+ClickUp ID, as with correction history.
+  const sourceIds = new Set(tasks.map(task => task.id));
+  for (const workflow of workflows) {
+    const groups = new Map();
+    for (const claim of claims) {
+      if (claim.workflow !== (workflow.claimWorkflow ?? workflow.id) || sourceIds.has(claim.taskId)) continue;
+      if (!groups.has(claim.taskId)) groups.set(claim.taskId, []);
+      groups.get(claim.taskId).push(claim);
+    }
+    for (const [taskId, matches] of groups) {
+      const claim = selectCurrentClaim(matches, now, staleMinutes);
+      if (claim?.outcome !== 'completed') continue;
+      let sourceUrl;
+      try {
+        const url = new URL(claim.url);
+        // History without a current ClickUp row still needs an exact source
+        // binding in the worker receipt; a title or run ID alone is insufficient.
+        if (url.protocol !== 'https:' || url.hostname !== 'app.clickup.com' || url.username || url.password
+          || decodeURIComponent(url.pathname) !== `/t/${taskId}`) continue;
+        sourceUrl = url.href;
+      } catch { continue; }
+      const evidence = completionEvidence(matches);
+      const title = displayText(claim.title, 300, taskId);
+      rows.push({ id: `clickup:${workflow.id}:${taskId}`, title: workflow.titleSuffix ? `${title} · ${workflow.titleSuffix}` : title,
+        url: sourceUrl, workflow: workflow.queueWorkflow ?? workflow.id,
+        contentKind: contentKind({ name: title }, matches), company: claim.company,
+        status: 'completed', phase: 'Abgeschlossen', progress: 100, workerId: claim.workerId, attemptId: claim.runId,
+        ...evidence, completionSource: evidence.completionSource || 'register',
+        updatedAt: evidence.completedAt || new Date(claim.heartbeat * 1000).toISOString(),
+        run: { id: claim.runId, jobId: claim.jobId, workerId: claim.workerId, ts: threadOf(claim), taskId, channelId: claim.channelId, heartbeat: threadBeat(claim) } });
     }
   }
   // Revisions come from the approval workflow. They can run while the old
@@ -906,7 +1000,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
     }
     rows.push({ id: `correction:${claim.jobId}`, title: displayText(claim.title || task?.name, 300, `Korrektur ${claim.taskId}`),
       url: claim.url || (claim.taskId !== claim.jobId ? `https://app.clickup.com/t/${encodeURIComponent(claim.taskId)}` : undefined), workflow: 'correction',
-      company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId,
+      company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId, blockerOwner: claim.owner,
       figmaUrl: claim.figmaUrl,
       phase, progress: status === 'completed' ? 100 : undefined, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
       ...completionEvidence([claim]),
@@ -967,7 +1061,8 @@ export function parseRunStatus(text) {
 }
 
 export function parseBlockedReason(text) {
-  const value = String(text ?? '').replace(/[*`]/g, '');
+  // Keep worker section headings apart from their text when lines are joined.
+  const value = String(text ?? '').replace(/[*`]/g, '').replace(/^(Kurzfassung|Ursachen|Nächste Schritte|Stand):?[ \t]*$/gm, '$1: ');
   if (!/^(?:⛔|⚠️?|:warning:|:no_entry:).*?(?:Blockiert|blockiert)/u.test(value)) return null;
   const detail = /(?:^|\n|\.\s+)Grund:?\s*([\s\S]+)/.exec(value)?.[1] || value.replace(/^.*?(?:Blockiert|blockiert):?\s*/u, '');
   return displayText(detail.split(/\n(?:_?Stand |:stopwatch:|⏱|Dauer |Entwurf:|<https:\/\/[a-z0-9-]+\.slack\.com\/archives\/)/)[0]
@@ -1154,10 +1249,12 @@ export function createRenderPreviews({ localHub, upload, openDatabase, resize, r
 // backfilled for tasks that finished before this monitor saw them run.
 export async function addRunDetails(rows, { hubFetch, channelId, previews, previousTasks = [], now = Date.now(), statusCache }) {
   const previous = new Map((Array.isArray(previousTasks) ? previousTasks : []).map(row => [row?.id, row]));
+  // The monitor's own placeholders are no diagnosis: read the thread again, never reuse them.
+  const unreadable = old => ['blocker_context_missing', 'completion_report_missing'].includes(old?.reasonCode);
   const waiting = row => row.status === 'queued' && /^Wartet · (?:Hub-Übergabe|Fortsetzung in der zentralen Queue|automatische Fortsetzung)$/.test(row.phase || '');
   const running = rows.filter(row => row.run && (row.status === 'running' || (row.status === 'blocked' && row.workflow !== 'correction' && row.phase !== 'Worker meldet sich nicht mehr')
     || ((row.status === 'blocked' || waiting(row)) && row.workflow === 'correction'
-      && !(previous.get(row.id)?.attemptId === row.attemptId && previous.get(row.id)?.blockedReason))));
+      && !(previous.get(row.id)?.attemptId === row.attemptId && previous.get(row.id)?.blockedReason && !unreadable(previous.get(row.id))))));
   const attempts = rows.filter(row => row.run && row.workflow === 'newsletter' && (['running', 'blocked'].includes(row.status)
     || (row.status === 'completed' && ['running', 'blocked'].includes(previous.get(row.id)?.status))));
   const channels = new Map();
@@ -1190,7 +1287,7 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
     if (row.run && (row.status === 'blocked' || waiting(row) && row.workflow === 'correction')) {
       const currentReason = status?.pmQuestion || status?.blockedReason || row.blockedReason;
       row.blockedReason = currentReason || (!status?.unbound && old?.attemptId === row.attemptId && old.blockedReason
-        && old.reasonCode !== 'blocker_context_missing'
+        && !unreadable(old)
         ? parseBlockedReason(`:warning: blockiert: ${old.blockerReason || old.blockedReason}`) : undefined);
       if (status?.pmQuestion || row.phase === 'PM-Rückfrage offen'
         || (!currentReason && old?.attemptId === row.attemptId && old.phase === 'PM-Rückfrage offen' && row.blockedReason)) row.phase = 'PM-Rückfrage offen';
@@ -1324,7 +1421,10 @@ export async function readLocalSales(directory, now = Date.now()) {
       const paused = job.status === 'paused' || (['reserved', 'running', 'delivery'].includes(job.status) && job.monitor?.paused === true);
       const status = Object.hasOwn(statuses, job.status) ? paused ? 'queued' : statuses[job.status] : undefined;
       const stamp = job.observed_at || job.updated_at || job.created_at;
-      const finished = job.completed_at || job.finished_at || job.done_at || job.delivered_at;
+      // sales-hub writes updated_at when it confirms the three delivered PDFs
+      // and enters done. observed_at is a later, independent monitor heartbeat.
+      const finished = job.completed_at || job.finished_at || job.done_at || job.delivered_at
+        || (job.status === 'done' ? job.updated_at : undefined);
       const finishedTime = typeof finished === 'number' ? finished : Date.parse(finished);
       const seen = typeof stamp === 'number' ? stamp : Date.parse(stamp);
       if (!status || !/^[a-z0-9][a-z0-9._-]{0,79}$/i.test(job.worker)
@@ -1400,15 +1500,47 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
         && entry.run_id.slice(0,16) > run.id.slice(0,16))));
     if (!entry) continue;
     row.workerId = undefined;
+    // The claim's typed owner describes its own run only.
+    if (entry.run_id !== run.id) delete row.blockerOwner;
     row.attemptId = entry.run_id;
     if (entry.ready_at === 8640000000000000) {
-      if (entry.blocker) Object.assign(row, entry.blocker);
+      // Fehleraudit 19.10.2026 (Smileypack d857): a stored run without text never
+      // replaces a readable reason of the same commission.
+      const readable = displayText(row.blockedReason || row.blockerReason, 500);
+      if (entry.blocker && !(entry.blocker.reasonCode === 'blocker_context_missing' && readable)) Object.assign(row, entry.blocker);
       if (!/PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')) row.status = 'blocked';
       if (!/PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')) row.phase = 'Blockiert · Fortschritt im RS Hub gesichert';
     } else {
       row.status = 'queued';
       row.phase = 'Wartet · Fortsetzung im RS Hub gesichert';
     }
+  }
+  return rows;
+}
+
+// Fehleraudit 19.10.2026: a run's ✅/❌/❓ or reason reaches Slack up to about two
+// minutes after its terminal reservation (observed 82 s to 2 min). Until then a
+// blocked row without any reason is a result still being taken over, not a
+// blocker. After the grace period it is a concrete technical reporting gap.
+export const BLOCKER_GRACE_MS = 5 * 60000;
+// A waiting phase: the relay keeps it when the Mac's own report no longer lists
+// the finished run (fleet.js currentQueue), instead of "Worker-Abgleich ausstehend".
+export const BLOCKER_GRACE_PHASE = 'Wartet · Ergebnis wird übernommen';
+const BERLIN_MINUTE = new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+export function applyBlockerGrace(rows, previousTasks = [], now = Date.now()) {
+  const previous = new Map((Array.isArray(previousTasks) ? previousTasks : []).map(row => [row?.id, row]));
+  for (const row of rows) {
+    if (row.status !== 'blocked' || row.workflow === 'sales' || row.blockedReason || row.reasonCode
+      || ['Worker meldet sich nicht mehr', 'PM-Rückfrage offen'].includes(row.phase)) continue;
+    const old = previous.get(row.id);
+    const recorded = old && (old.attemptId ?? null) === (row.attemptId ?? null) ? Date.parse(old.blockerRecordedAt) : NaN;
+    const since = Number.isFinite(recorded) && recorded <= now ? recorded : now;
+    row.blockerRecordedAt = new Date(since).toISOString();
+    if (now - since < BLOCKER_GRACE_MS) { row.status = 'queued'; row.phase = BLOCKER_GRACE_PHASE; continue; }
+    // A stable time, not a minute count: the diagnosis binds operator decisions (fleet.js taskVersion).
+    const reason = `Seit ${BERLIN_MINUTE.format(since)} kein lesbares Ergebnis (✅/❌/❓ oder Begründung) des Laufs gemeldet.`;
+    Object.assign(row, { blockedReason: reason, blockerReason: reason, reasonCode: 'completion_report_missing', responsibleRole: 'Technik',
+      nextStep: 'Endzustand und Slack-Thread des Laufs auf dem Mac prüfen (runs/<run_id>/ergebnis.json); Arbeitsstand erhalten.' });
   }
   return rows;
 }
@@ -1537,6 +1669,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   // still belongs to the exact source attempt after the producer Mac is cleared.
   applyPmQuestions(queue, questionResult.value, bindings);
   queue.push(...salesResult.value);
+  applyBlockerGrace(queue, previousTasks, now);
   applyBlockerContexts(queue, tasks, now);
   await applyPmOwners(queue, tasks, { questions: questionResult.value, routing: pmRouting, now });
   for (let index = 0; index < queue.length; index++) queue[index] = taskState.reconcileTask(queue[index]);
@@ -1593,7 +1726,8 @@ export async function syncOnce({ collect, publish, cachedSource, save }) {
 
 export function argumentsFrom(argv, env) {
   const values = { workerRoot: env.NEWSLETTER_WORKER_ROOT, relayUrl: env.MONITOR_RELAY_URL, teamId: env.MONITOR_TEAM_ID,
-    token: env.MONITOR_BRIDGE_TOKEN, workflowsFile: env.MONITOR_WORKFLOWS_FILE, fleetDirectory: env.MONITOR_HUB_FLEET_DIRECTORY,
+    token: env.MONITOR_BRIDGE_TOKEN, tokenFile: env.MONITOR_BRIDGE_TOKEN_FILE,
+    workflowsFile: env.MONITOR_WORKFLOWS_FILE, fleetDirectory: env.MONITOR_HUB_FLEET_DIRECTORY,
     interval: Number(env.MONITOR_BRIDGE_INTERVAL_SECONDS || 60), localHub: env.MONITOR_LOCAL_HUB, enrollmentConfig: env.MONITOR_ENROLLMENT_CONFIG,
     cacheFile: env.MONITOR_BRIDGE_CACHE || path.join(os.homedir(), '.cache', 'max-monitor', 'newsletter-bridge.json') };
   const keys = { '--worker-root': 'workerRoot', '--relay-url': 'relayUrl', '--team-id': 'teamId', '--workflows': 'workflowsFile', '--fleet-directory': 'fleetDirectory', '--interval': 'interval', '--cache': 'cacheFile', '--local-hub': 'localHub', '--enrollment-config': 'enrollmentConfig' };
@@ -1641,6 +1775,7 @@ export async function runSyncLoop(sync, { intervalMs, signal, once = false, now 
 
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const options = await applyEnrollmentConfiguration(argumentsFrom(argv, env));
+  if (!options.token && options.tokenFile && !options.help) options.token = readBridgeToken(options.tokenFile);
   if (options.help) {
     console.log('node scripts/newsletter-monitor-bridge.mjs --worker-root <repo> [--once|--dry-run] [--workflows <json>] [--interval 60]\nHub-Dienst: --local-hub /opt/rs-hub --enrollment-config /etc/max-monitor/enrollment.json\nRelay: MONITOR_RELAY_URL, MONITOR_TEAM_ID, MONITOR_BRIDGE_TOKEN (admin/super; nur Umgebung).');
     return;

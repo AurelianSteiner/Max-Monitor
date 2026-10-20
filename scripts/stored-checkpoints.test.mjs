@@ -50,3 +50,22 @@ test('central inventory reads only unowned descriptors and never creates a missi
   db.prepare('INSERT INTO checkpoints VALUES(?,?,?,?,?)').run('run-b','other','mac-a','mac-b',1);db.close();
   assert.deepEqual((await readStoredCheckpoints(root)).map(e=>e.run_id),['run-a']);
 });
+test('a stored run without readable text never replaces a readable reason of the same commission', () => {
+  const missing = { blockerReason: 'Der gespeicherte Vorgang enthält noch keinen lesbaren Blockergrund.', reasonCode: 'blocker_context_missing',
+    responsibleRole: 'Technik', nextStep: 'x', blockerSource: 'checkpoint' };
+  const key = 'Klaviyo-Quellenbindung: Klaviyo-Schlüssel fehlt im RS Hub (KEY_NOT_SET) für smileypack';
+  const readable = row({ blockedReason: key }); applyStoredCheckpoints([readable], [saved({ blocker: missing })]);
+  assert.equal(readable.blockedReason, key); assert.equal(readable.reasonCode, undefined);
+  assert.equal(readable.status, 'blocked'); assert.match(readable.phase, /RS Hub gesichert/);
+  const typed = { ...missing, blockerReason: 'Gesicherter Grund', reasonCode: 'technical_blocker' };
+  const replaced = row({ blockedReason: key }); applyStoredCheckpoints([replaced], [saved({ blocker: typed })]);
+  assert.equal(replaced.blockerReason, 'Gesicherter Grund'); assert.equal(replaced.reasonCode, 'technical_blocker');
+  const empty = row({ blockedReason: undefined }); applyStoredCheckpoints([empty], [saved({ blocker: missing })]);
+  assert.equal(empty.reasonCode, 'blocker_context_missing');
+  // A newer stored attempt does not keep the older claim's typed owner.
+  const newer = row({ blockerOwner: 'pm', run: { id: '20261015T164302Z-job', jobId: 'task@123', taskId: 'task' } });
+  applyStoredCheckpoints([newer], [saved({ run_id: '20261015T170058Z-job', task_id: 'task@123' })]);
+  assert.equal(newer.blockerOwner, undefined);
+  const same = row({ blockerOwner: 'pm' }); applyStoredCheckpoints([same], [saved()]);
+  assert.equal(same.blockerOwner, 'pm');
+});

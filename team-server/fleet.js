@@ -125,6 +125,7 @@ function validateHeartbeat(body) {
         accountId,
         name: string(raw.name, "account.name", 160),
         provider: string(raw.provider, "account.provider", 80),
+        email: string(raw.email, "account.email", 254, true),
         usageUpdatedAt: timestamp(raw.usageUpdatedAt, "account.usageUpdatedAt", true),
         usageError: diagnostic(raw.usageError, "account.usageError"),
       });
@@ -266,7 +267,7 @@ function validateQueue(body) {
       packageId: string(raw.packageId, "task.packageId", 160, true),
       language: ["de", "en", "it", "fr", "se", "sp"].includes(raw.language) ? raw.language : undefined,
       completedAt: timestamp(raw.completedAt, "task.completedAt", true),
-      completionSource: ["slack", "clickup", "review", "sales"].includes(raw.completionSource) ? raw.completionSource : undefined,
+      completionSource: ["slack", "register", "clickup", "review", "sales"].includes(raw.completionSource) ? raw.completionSource : undefined,
       status,
       tags: [...new Set(tags.map((tag) => string(tag, "task.tag", 80)))],
       url,
@@ -483,10 +484,12 @@ function withClarification(task, decisions = []) {
     && entry.sourceUpdatedAt === (task.updatedAt || null)
     && (!task.blockedReason || entry.diagnosticVersion === taskVersion(task)));
   const reason = task.blockedReason || "";
-  // A typed, verified stored outcome is authoritative. Legacy free-text
-  // matching must not invent a PM question merely because its cause is now visible.
-  const typed = task.blockerSource === "checkpoint" && task.reasonCode;
-  const human = task.phase === "PM-Rückfrage offen"
+  // A typed outcome is authoritative. Legacy free-text matching must not invent
+  // a PM question merely because its cause is now visible. Since the bridge types
+  // every blocked row (Fehleraudit 19.10.2026), only its unassigned codes stay
+  // open to the text heuristic; a typed PM role is a PM question.
+  const typed = task.reasonCode && !["blocker_review_required", "blocker_context_missing"].includes(task.reasonCode);
+  const human = task.phase === "PM-Rückfrage offen" || (typed && task.responsibleRole === "PM")
     || (!typed && (/(?:Gestaltung|Design|Black[- ]Week).{0,70}(?:nicht freigegeben|Freigabe fehlt|Entscheidung.{0,30}fehlt)/i.test(reason)
     || /Entscheidung.{0,70}(?:Gestaltung|Design).{0,20}fehlt/i.test(reason)
     || /(?:PM|Valentin).{0,50}als Editor einlad/i.test(reason)));

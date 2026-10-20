@@ -40,7 +40,7 @@ test('ClickUp reads every tag in one paginated OR query, deduplicates and refuse
   const calls = [];
   const fetcher = async target => {
     const url = new URL(target); const page = Number(url.searchParams.get('page')); calls.push([url.searchParams.getAll('tags[]'), page]);
-    assert.equal(url.searchParams.get('include_closed'), 'false'); assert.equal(url.searchParams.get('subtasks'), 'true');
+    assert.equal(url.searchParams.get('include_closed'), 'true'); assert.equal(url.searchParams.get('subtasks'), 'true');
     return response(page === 0 ? { tasks: [task('a'), task('b')] } : { tasks: [task('b'), task('c')], last_page: true });
   };
   const tasks = await listTasks(fetcher, '24553341', ['pre gen.', 'pre gen · läuft'], { pageSize: 2 });
@@ -209,6 +209,8 @@ test('blocked correction diagnosis comes from its own bot thread and is cached o
   assert.equal(parseBlockedReason(':warning: Technisch blockiert: Der Lauf hat ohne Ergebnis aufgehört.\n*Grund:* Bild/Farbe geändert; Konflikt\n    at checkReplacement (<input>:34:85)'), 'Bild/Farbe geändert; Konflikt');
   assert.equal(parseBlockedReason('Mensch: blockiert'), null);
   assert.match(parseBlockedReason('⛔ Blockiert: token=secret123'), /ENTFERNT/);
+  assert.equal(parseBlockedReason('⛔ Blockiert:\n*Kurzfassung*\nDer Neubau ist fertig.\n\n*Ursachen:*\n1. Hinweis zählt als Fehler'),
+    'Kurzfassung: Der Neubau ist fertig. Ursachen: 1. Hinweis zählt als Fehler');
   const make = attemptId => ({ id: 'correction:job', workflow: 'correction', status: 'blocked', attemptId,
     run: { id: attemptId, ts: '123.001', channelId: 'correction-channel' } });
   let calls = 0;
@@ -225,6 +227,14 @@ test('blocked correction diagnosis comes from its own bot thread and is cached o
   assert.equal(calls, 1); assert.equal(cached[0].blockedReason, reason);
   const changed = await addRunDetails([make('two')], { hubFetch: async () => { throw Error('temporary outage'); }, previousTasks: first });
   assert.equal(changed[0].blockedReason, undefined);
+  // The monitor's own placeholders are read again and never reused as the diagnosis.
+  for (const reasonCode of ['completion_report_missing', 'blocker_context_missing']) {
+    const placeholder = [{ ...make('one'), blockedReason: 'Seit 19.10., 11:00 kein lesbares Ergebnis', reasonCode }];
+    const retried = await addRunDetails([make('one')], { hubFetch: fetcher, previousTasks: placeholder });
+    assert.equal(retried[0].blockedReason, reason);
+    const outage = await addRunDetails([make('one')], { hubFetch: async () => { throw Error('temporary outage'); }, previousTasks: placeholder });
+    assert.equal(outage[0].blockedReason, undefined);
+  }
 });
 
 function blockedJob(workflow = 'newsletter', runId = 'current-run') {
@@ -646,7 +656,7 @@ test('installer generates a valid launchd template without including a supplied 
     const plist = await fs.readFile(plistFile, 'utf8'); const runner = await fs.readFile(path.join(output, 'service/run.sh'), 'utf8');
     assert.match(plist, /<key>StartInterval<\/key><integer>60<\/integer>/); assert.match(plist, /<key>RunAtLoad<\/key><true\/>/);
     assert.doesNotMatch(plist + runner, new RegExp(secret)); assert.doesNotMatch(plist, /MONITOR_BRIDGE_TOKEN/);
-    assert.match(runner, /security find-generic-password -w/); assert.match(runner, /--once/);
+    assert.doesNotMatch(runner, /security|find-generic-password/); assert.match(runner, /MONITOR_BRIDGE_TOKEN_FILE=.*bridge-token/); assert.match(runner, /--once/);
     execFileSync('/bin/bash', ['-n', path.join(output, 'service/run.sh')]);
     if (process.platform === 'darwin') execFileSync('/usr/bin/plutil', ['-lint', plistFile]);
   } finally { await fs.rm(directory, { recursive: true, force: true }); }

@@ -338,12 +338,13 @@ main:focus { outline: none; }
 .fleet-row { cursor: pointer; }
 .fleet-row:hover td { background: var(--hover); }
 .fleet-name { display: flex; align-items: center; gap: 9px; min-width: 0; }
-.fleet-name > span:last-child { min-width: 0; display: flex; align-items: baseline; gap: 6px; }
+.fleet-name > span:last-child { min-width: 0; display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
 .fleet-name button {
   display: block; min-width: 0; padding: 0; border: 0; background: transparent; text-align: left;
   font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.fleet-name small { flex-shrink: 0; }
+.fleet-name small { min-width: 0; }
+.fleet-name .fleet-account { color: var(--ink-2); font-size: 12px; }
 .fleet-name small, .fleet-sub { display: block; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fleet-task { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fleet-task.idle { color: var(--muted); }
@@ -658,6 +659,7 @@ dialog.wide { max-width: 1060px; }
   .fleet-row td:nth-child(4) { grid-column: 1; grid-row: 3; }
   .fleet-row td:nth-child(5) { grid-column: 2 / -1; grid-row: 3; }
   .fleet-row td:nth-child(3) { text-align: right; }
+  .fleet-name .fleet-account, .machine-account { white-space: normal; overflow-wrap: anywhere; }
   .fleet-row td:nth-child(4)::before { content: "5 h genutzt"; }
   .fleet-row td:nth-child(5)::before { content: "Woche genutzt"; }
   .fleet-row td:nth-child(4)::before, .fleet-row td:nth-child(5)::before { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; }

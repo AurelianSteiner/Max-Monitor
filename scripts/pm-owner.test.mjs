@@ -43,3 +43,16 @@ test('routing reuses only the existing customer resolver and caches display meta
   const unavailable=row();await applyPmOwners([unavailable],[],{routing:{channels:SLACK_PM_CHANNELS,resolve:async()=>{throw Error('offline');}},now});
   assert.equal(unavailable.pmOwner,undefined);assert.equal(unavailable.status,'queued');
 });
+
+test('the Slack PM replaces every generated PM-field caption of a checkpoint finding',async()=>{
+  for(const caption of ['PM nicht zugeordnet','PM-Feld leer','PM-Feld nicht eindeutig: Ben Schulte, John Koci','PM: Old Name']){
+    const current=row({status:'blocked',phase:'Blockiert · Fortschritt im RS Hub gesichert',responsibleRole:'PM',blockerSource:'checkpoint',
+      blockedReason:`Gesicherter Befund: Gutscheincode fehlt. · Zuständig: PM (${caption}) · Nächster Schritt: Gutscheincode eintragen.`});
+    await applyPmOwners([current],[],{questions:{sets:[set()]},now});
+    assert.equal(current.blockedReason,'Gesicherter Befund: Gutscheincode fehlt. · Zuständig: PM (PM: Ben & Abdou) · Nächster Schritt: Gutscheincode eintragen.');
+  }
+  const data=row({status:'blocked',phase:'Blockiert',responsibleRole:'Stammdaten (RS Hub/ClickUp)',blockerSource:'checkpoint',
+    blockedReason:'Gesicherter Befund: KEY_NOT_SET · Zuständig: Stammdaten (RS Hub/ClickUp) (PM-Feld leer) · Nächster Schritt: Schlüssel speichern.'});
+  await applyPmOwners([data],[],{questions:{sets:[set()]},now});
+  assert.match(data.blockedReason,/\(PM-Feld leer\)/,'master data is no PM question');
+});

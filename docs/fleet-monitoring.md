@@ -210,6 +210,55 @@ unterscheidet Vorbereitung und Mail-Korrektur, ihre Statuszahlen berücksichtige
 Workflow, Mac und Suche. Mac-Karten und Details nennen die blockierten Korrekturen,
 ohne sie als noch laufende Prozesse zu zählen.
 
+### Blockiergrund und Zuständigkeit (Fehleraudit 19.10.2026)
+
+Eine blockierte Zeile zeigt „Gesicherter Befund: … · Zuständig: … · Nächster
+Schritt: …“ in höchstens 500 Zeichen. Der Befund ist eine Kurzfassung (bei
+„Kurzfassung:“ deren erste zwei Sätze, sonst die ersten zwei Sätze, höchstens 240
+Zeichen) und wird nur an Satz- oder Wortgrenzen mit „…“ gekürzt; Zuständigkeit und
+nächster Schritt bleiben vollständig. Der volle Originalbefund bleibt im Checkpoint
+und im Slack-Thread.
+
+Die Zuständigkeit kommt zuerst aus dem getypten Feld `owner` der Worker-Reservierung
+bzw. der `#ai-fehler`-Metadaten (`pm`, `onboarding`, `stammdaten`, `technik`,
+`automatisch`). Ohne dieses Feld ordnet die Brücke den Grund wie der Worker zu,
+gelesen nur vor einem Abschnitt „Stand:“: Kunden-Setup → „PM und Design“ (danach neu
+beauftragen), fehlender Klaviyo-Schlüssel und RS-Hub-Zuordnungen → „Stammdaten (RS
+Hub/ClickUp)“, „PM-Entscheidung erforderlich“, „PM entscheidet“ und Angaben im
+Aufgabentitel → „PM“. Eine während der Vorbereitung geänderte Aufgabenquelle ist
+Technik (Till, 19.10.2026); eine Änderung nach der PM-Antwort ist PM-Arbeit, außer es
+änderten sich nur Klaviyo- oder Filestage-Linkfelder. Eine offene PM-Rückfrage ist
+immer PM. Für PM, Kunden-Setup und Stammdaten setzt die Brücke zusätzlich
+`blockerKind` `waiting_human`, damit das Hub-Register diese Wartezeiten nicht als
+technische Fehler zählt; ein getypter Owner `technik`/`automatisch` setzt
+`technical_failure`. Der technische Rückfall ohne Owner bleibt ohne `blockerKind`, damit
+das Register die getypte Laufbewertung des Workers übernimmt. Das PM-Feld erscheint als
+„PM: Name“, „PM-Feld leer“ oder „PM-Feld nicht eindeutig: …“ (ohne gelesene Aufgabe „PM
+nicht zugeordnet“).
+
+Eine `#ai-fehler`-Zeile übernimmt keine Blockerfelder ihrer Queue-Zeile. Ihre
+Zuständigkeit kommt aus `owner` oder einem eindeutigen `grund` (`stammdaten`;
+`technisch`, `erschoepft` und `rueckfrage_nicht_zugestellt` als Technik), sonst aus
+dem Text; `eingabe` und `mensch` entscheidet der Text. Ein im RS Hub gesicherter
+Lauf ohne lesbaren Grund ersetzt keinen lesbaren Grund derselben Aufgabe.
+
+Zwischenzustände sind keine Blockade ohne Grund: Eine frische, nicht pausierte
+Live-Reservierung eines neuen Laufs geht dem Tag „· blockiert“ des Vorlaufs vor
+(veraltete oder pausierte Reservierungen nicht). Eine neue Statusepoche mit altem
+Tag und ohne eigene Reservierung wartet als „Wartet · neuer Auftrag, noch nicht
+reserviert“; geparkte Aufträge behalten ihren Verlauf. Eine blockierte Zeile ohne
+lesbaren Grund und ohne Zuordnung steht bis zu fünf Minuten als „Wartet · Ergebnis
+wird übernommen“ in der Queue (auch im Relay, wenn der Mac den beendeten Lauf nicht
+mehr meldet); danach meldet sie „Seit <Zeitpunkt> kein lesbares Ergebnis
+… des Laufs gemeldet“ mit Zuständigkeit Technik. Der Zeitpunkt bleibt je Versuch
+fest, damit Befund und Abhak-Version stabil bleiben.
+
+Der Relay übernimmt diese Zuordnung: Eine getypte Zeile mit der Rolle „PM“ wartet als
+„Wartet · PM-Rückfrage“, andere getypte Rollen (Technik, Stammdaten, PM und Design)
+bleiben blockiert. Nur ungetypte bzw. ungeklärte Zeilen (`blocker_review_required`,
+`blocker_context_missing`) prüft er weiter am Freitext; technische Befunde bleiben
+in jedem Fall blockiert.
+
 ## Fortschritt und Entwurf laufender Newsletter
 
 Für jede laufende Aufgabe liest die Brücke die Status-Antwort des Workers im
@@ -380,8 +429,9 @@ jeweils als begrenzter `--once`-Aufruf. `MONITOR_BRIDGE_INTERVAL_SECONDS` änder
 das Intervall. Launchd startet keine zweite Instanz derselben laufenden Aufgabe.
 Die Dateien liegen unter `~/Library/LaunchAgents/` und
 `~/Library/Application Support/Max Monitor/Newsletter Bridge/<TEAM-ID>/`.
-Die generierte plist enthält keinen Token; das Startskript liest ihn bei jeder
-Ausführung aus dem Schlüsselbund. Absolute Pfade und Dateirechte `0600`/`0700`
+Die generierte plist enthält keinen Token. Die Installation übernimmt ihn einmal
+aus dem Schlüsselbund in die private Datei `bridge-token` (`0600`) im
+Dienstordner; das Startskript liest nur noch diese Datei (`MONITOR_BRIDGE_TOKEN_FILE`). Absolute Pfade und Dateirechte `0600`/`0700`
 schützen die Konfiguration. Der Installer führt keine Newsletter-Jobs aus.
 
 ```bash
@@ -410,9 +460,11 @@ Provider-Zugangsdaten werden nicht übertragen.
 
 Die Bridge liest alle Spaces des ClickUp-Workspaces und entdeckt die tatsächlich
 vorhandenen Tag-Schreibweisen. Sie fragt anschließend alle Seiten der passenden
-Aufgaben einschließlich Subtasks ab. `include_closed=false` lässt geschlossene
-ClickUp-Aufgaben aus. Abgeschlossene Pre-Gen-Schritte einer weiterhin offenen
-ClickUp-Aufgabe bleiben als `completed` sichtbar.
+Aufgaben einschließlich Subtasks ab. `include_closed=true` behält geschlossene
+ClickUp-Aufgaben als abgeschlossenen Verlauf (Live-Stand 19.10.2026); ihr
+allgemeiner Schließzeitpunkt belegt keinen Abschluss des einzelnen Schritts.
+Abgeschlossene Pre-Gen-Schritte einer weiterhin offenen ClickUp-Aufgabe bleiben
+als `completed` sichtbar.
 
 Standardmäßig werden diese Workflows erkannt:
 

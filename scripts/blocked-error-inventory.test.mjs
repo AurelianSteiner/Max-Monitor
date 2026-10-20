@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { buildBlockedErrors, collectSnapshot, createClaimReader, listClaims, RESERVATION_LAG_PHASE } from './newsletter-monitor-bridge.mjs';
+import { buildBlockedErrors, collectSnapshot, createClaimReader, listClaims, RESERVATION_LAG_PHASE, BLOCKER_GRACE_PHASE } from './newsletter-monitor-bridge.mjs';
 const { createFleetStore } = createRequire(import.meta.url)('../team-server/fleet.js');
 const channel = 'C0C8HK2NDFE';
 const now = Date.parse('2026-10-12T17:00:00Z');
@@ -248,4 +248,40 @@ test('the relay knows the bridge\'s lagging-reservation phase', t => {
   store.workerReport('TEAM1234', { schema: 1, workerId: 'mac-1', sampledAt: new Date(now).toISOString(),
     service: { running: true, lastPollAt: new Date(now).toISOString() }, activity: { state: 'idle', acceptingTasks: true, runs: [] } });
   assert.equal(store.snapshot('TEAM1234').queue.tasks[0].phase, 'Worker-Abgleich ausstehend');
+});
+
+// Fehleraudit 19.10.2026: the result grace keeps its phase when the Mac's own
+// report no longer lists the just finished run.
+test('the relay keeps the bridge\'s result-grace phase after the Mac stops reporting the run', t => {
+  const { store } = storeFor(t);
+  store.updateQueue('TEAM1234', { source, blockedErrors: [], tasks: [{ ...task('queued'), workerId: 'mac-1', attemptId: 'run-a', phase: BLOCKER_GRACE_PHASE }] });
+  store.workerReport('TEAM1234', { schema: 1, workerId: 'mac-1', sampledAt: new Date(now).toISOString(),
+    service: { running: true, lastPollAt: new Date(now).toISOString() }, activity: { state: 'idle', acceptingTasks: true, runs: [] } });
+  const [row] = store.snapshot('TEAM1234').queue.tasks;
+  assert.deepEqual([row.status, row.phase], ['queued', BLOCKER_GRACE_PHASE]);
+});
+
+test('an #ai-fehler copy names its own owner and never inherits the queue row blocker fields', () => {
+  const copy = (payload, reason, ts = '1791823000.000001') => ({ ts,
+    text: `*Klaviyo-Upload · Kunde*\n:warning: Technisch blockiert: <https://app.clickup.com/t/abc|Mail>\nGrund: ${reason}`,
+    metadata: { event_type: 'ai_newsletter_fehler', event_payload: { kind: 'lauf', worker: 'mac-1', task_id: 'abc@123-klaviyo',
+      run_id: 'attempt-1', state: 'technisch_blockiert', ...payload } } });
+  const queued = { id: 'clickup:upload:abc', title: 'Mail', workflow: 'upload', status: 'blocked', url: 'https://app.clickup.com/t/abc',
+    reasonCode: 'blocker_context_missing', responsibleRole: 'Technik', nextStep: 'Old step', blockerKind: 'technical_failure',
+    blockerOwner: 'technik', blockerSource: 'checkpoint', blockerSourceHash: 'a'.repeat(64), blockerRecordedAt: new Date(now).toISOString(), pmOwner: 'Ben Schulte' };
+  const key = 'Klaviyo-Quellenbindung: Klaviyo-Schlüssel fehlt im RS Hub (KEY_NOT_SET) für uficell; Upload wartet auf den Schlüssel.';
+  const [data] = buildBlockedErrors([copy({ grund: 'stammdaten' }, key)], channel, [queued]);
+  assert.deepEqual([data.reasonCode, data.responsibleRole, data.blockerKind], ['master_data_missing', 'Stammdaten (RS Hub/ClickUp)', 'waiting_human']);
+  for (const field of ['blockerOwner', 'blockerSource', 'blockerSourceHash', 'blockerRecordedAt']) assert.equal(data[field], undefined, field);
+  assert.equal(data.pmOwner, 'Ben Schulte'); assert.equal(data.blockedReason, key);
+  const [pm] = buildBlockedErrors([copy({ owner: 'pm', grund: 'mensch' }, 'Saved acceptance finding')], channel, [queued]);
+  assert.equal(pm.responsibleRole, 'PM');
+  const [title] = buildBlockedErrors([copy({ grund: 'eingabe' }, 'Kunde nicht eindeutig im RS Hub zugeordnet. Markt im Aufgabentitel eindeutig angeben, z. B. „· Europa“')], channel, [queued]);
+  assert.equal(title.responsibleRole, 'PM', 'eingabe has no owner of its own; the text fallback decides');
+  const [technical] = buildBlockedErrors([copy({ grund: 'erschoepft' }, 'Saved acceptance finding')], channel, [queued]);
+  assert.deepEqual([technical.responsibleRole, technical.blockerKind], ['Technik', 'technical_failure']);
+  const battery = { ts: '1791823000.000009', text: ':battery: `Pink` läuft auf Akku (29 %); Ladegerät anschließen.',
+    metadata: { event_type: 'ai_newsletter_fehler', event_payload: { kind: 'system', worker: 'pink', stage: 'strom' } } };
+  const [system] = buildBlockedErrors([battery], channel, [queued]);
+  for (const field of ['reasonCode', 'responsibleRole', 'nextStep', 'blockerKind', 'blockerReason']) assert.equal(system[field], undefined, field);
 });
