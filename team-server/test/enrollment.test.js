@@ -137,4 +137,17 @@ test("trusted enrollment safely provisions a separate ordinary token for every w
     assert.equal(fs.readFileSync(file, "utf8"), "{broken-json");
     fs.writeFileSync(file, valid, { mode: 0o600 });
   });
+
+  await t.test('onboarding reads the saved member name and fleet color through the real relay APIs', async () => {
+    const body = {workerId:'pink',deviceId:'610be10e-8a00-4e00-b000-000000000053',requireIdentity:true};
+    const first = await helper.enrollMonitorWorker(config(),body);
+    assert.deepEqual(first.workerIdentity,{name:'Pink',color:'#FF69B4',textColor:'#252214'});
+    const repeated = await helper.enrollMonitorWorker(config(),body);
+    assert.equal(repeated.token,first.token);
+    assert.equal(repeated.memberId,first.memberId);
+    const members = (await request('/members')).body.members;
+    assert.equal(members.find(member => member.id === first.memberId).name,'Pink');
+    await assert.rejects(helper.enrollMonitorWorker(config(),{...body,workerId:'unknown-new-mac'}),/Name und Farbe/);
+    assert.equal((await request('/members')).body.members.length,members.length);
+  });
 });
