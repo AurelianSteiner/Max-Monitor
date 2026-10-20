@@ -66,7 +66,7 @@ export async function applyPmOwners(rows, tasks, { questions = {}, routing, now 
     }
     // Replace only the monitor's generated PM attribution, preserving the finding.
     if (row.blockerSource === 'checkpoint' && typeof row.blockedReason === 'string') {
-      row.blockedReason = row.blockedReason.replace(/ \(PM(?:: [^)]*| nicht zugeordnet)\) · Nächster Schritt:/,
+      row.blockedReason = row.blockedReason.replace(/ \(PM(?:: [^)]*| nicht zugeordnet|-Feld [^)]*)\) · Nächster Schritt:/,
         () => ` (${row.pmOwner ? 'PM: ' + row.pmOwner : 'PM in Slack noch nicht bestätigt'}) · Nächster Schritt:`);
     }
     row.pmCheckedAt = new Date(now).toISOString();

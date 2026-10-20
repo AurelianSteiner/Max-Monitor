@@ -210,6 +210,29 @@ unterscheidet Vorbereitung und Mail-Korrektur, ihre Statuszahlen berücksichtige
 Workflow, Mac und Suche. Mac-Karten und Details nennen die blockierten Korrekturen,
 ohne sie als noch laufende Prozesse zu zählen.
 
+### Blockiergrund und Zuständigkeit (Fehleraudit 19.10.2026)
+
+Eine blockierte Zeile zeigt „Gesicherter Befund: … · Zuständig: … · Nächster
+Schritt: …“ in höchstens 500 Zeichen. Der Befund ist eine Kurzfassung (bei
+„Kurzfassung:“ deren erste zwei Sätze, sonst die ersten zwei Sätze, höchstens 240
+Zeichen) und wird nur an Satz- oder Wortgrenzen mit „…“ gekürzt; Zuständigkeit und
+nächster Schritt bleiben vollständig. Der volle Originalbefund bleibt im Checkpoint
+und im Slack-Thread.
+
+Die Zuständigkeit kommt zuerst aus dem getypten Feld `owner` der Worker-Reservierung
+bzw. der `#ai-fehler`-Metadaten (`pm`, `onboarding`, `stammdaten`, `technik`,
+`automatisch`). Ohne dieses Feld ordnet die Brücke den Grund wie der Worker zu,
+gelesen nur vor einem Abschnitt „Stand:“: Kunden-Setup → „PM und Design“ (danach neu
+beauftragen), fehlender Klaviyo-Schlüssel und RS-Hub-Zuordnungen → „Stammdaten (RS
+Hub/ClickUp)“, „PM-Entscheidung erforderlich“, „PM entscheidet“ und Angaben im
+Aufgabentitel → „PM“. Eine während der Vorbereitung geänderte Aufgabenquelle ist
+Technik (Till, 19.10.2026); eine Änderung nach der PM-Antwort ist PM-Arbeit, außer es
+änderten sich nur Klaviyo- oder Filestage-Linkfelder. Eine offene PM-Rückfrage ist
+immer PM. Für PM, Kunden-Setup und Stammdaten setzt die Brücke zusätzlich
+`blockerKind` `waiting_human`, damit das Hub-Register diese Wartezeiten nicht als
+technische Fehler zählt. Das PM-Feld erscheint als „PM: Name“, „PM-Feld leer“ oder
+„PM-Feld nicht eindeutig: …“.
+
 ## Fortschritt und Entwurf laufender Newsletter
 
 Für jede laufende Aufgabe liest die Brücke die Status-Antwort des Workers im
