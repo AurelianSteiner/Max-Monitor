@@ -8,7 +8,10 @@
     <title>Max Monitor</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./fleet-assets/dashboard.css" />
+    <link rel="stylesheet" href="./fleet-assets/planning.css" />
     <script src="./fleet-assets/consumption.js" defer></script>
+    <script src="./fleet-assets/planning-model.js" defer></script>
+    <script src="./fleet-assets/planning.js" defer></script>
     <script src="./fleet-assets/dashboard.js" defer></script>
   </head>
   <body>
@@ -110,6 +113,7 @@
             <span id="fleet-summary" class="panel-meta">—</span>
             <span id="fleet-dots" class="fleet-dots" aria-hidden="true"></span>
           </header>
+          <p class="panel-meta fleet-sort-note">Fehler zuerst · danach Woche, dann 5 h aufsteigend · 100 % Woche immer zuletzt</p>
           <div class="fleet-table-wrap">
             <table class="fleet-table">
               <thead>
@@ -134,10 +138,43 @@
             <button id="usage-next-tab" type="button" role="tab" aria-selected="true" aria-controls="usage-next" data-usage-tab="next">Nächste Aufgabe</button>
             <button id="usage-effort-tab" type="button" role="tab" aria-selected="false" aria-controls="effort-form" tabindex="-1" data-usage-tab="effort">Aufwand je Phase</button>
             <button id="usage-consumption-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-consumption" tabindex="-1" data-usage-tab="consumption">Verbrauch</button>
+            <button id="usage-planning-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-planning" tabindex="-1" data-usage-tab="planning">Planbarkeit</button>
           </div>
           <div class="consumption-refresh"><span id="consumption-updated" class="interval">Wird geladen…</span><button id="consumption-retry" class="text-button" type="button">Verbrauchswerte aktualisieren</button></div>
         </div>
         <div id="consumption-error" class="notice" role="status" hidden></div>
+        <div id="usage-planning" class="planning-panel" role="tabpanel" aria-labelledby="usage-planning-tab" tabindex="0" hidden>
+          <div class="planning-switches">
+            <div class="planning-switch" role="group" aria-label="Kapazität">
+              <button type="button" data-planning-mode="current" aria-pressed="true">Aktuelle Kapazität</button>
+              <button type="button" data-planning-mode="full" aria-pressed="false">Alles bei 0 %</button>
+            </div>
+            <div class="planning-switch" role="group" aria-label="Zeitraum">
+              <button type="button" data-planning-period="day" aria-pressed="true">Pro Tag</button>
+              <button type="button" data-planning-period="week" aria-pressed="false">Pro Woche</button>
+            </div>
+          </div>
+          <div class="planning-balance">
+            <h2>Kapazität verteilen</h2>
+            <p id="planning-message" role="status" hidden></p>
+            <div class="planning-row newsletter">
+              <div class="planning-row-head"><label for="planning-newsletter">Newsletter</label><input id="planning-newsletter-count" class="planning-count" type="number" min="0" step="1" inputmode="numeric" autocomplete="off" aria-label="Anzahl Newsletter" /></div>
+              <input id="planning-newsletter" class="planning-range" type="range" min="0" max="0" value="0" step="1" />
+            </div>
+            <div class="planning-row correction">
+              <div class="planning-row-head"><label for="planning-correction">Korrekturen</label><input id="planning-correction-count" class="planning-count" type="number" min="0" step="1" inputmode="numeric" autocomplete="off" aria-label="Anzahl Korrekturen" /></div>
+              <input id="planning-correction" class="planning-range" type="range" min="0" max="0" value="0" step="1" />
+            </div>
+            <div class="planning-row upload">
+              <div class="planning-row-head"><label for="planning-upload">Uploads</label><input id="planning-upload-count" class="planning-count" type="number" min="0" step="1" inputmode="numeric" autocomplete="off" aria-label="Anzahl Uploads" /></div>
+              <input id="planning-upload" class="planning-range" type="range" min="0" max="0" value="0" step="1" />
+            </div>
+            <div class="planning-total">
+              <span id="planning-utilization" role="status">—</span>
+              <div id="planning-meter" class="planning-meter" role="meter" aria-label="Eingeplante Kapazität" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="planning-share-newsletter"></span><span id="planning-share-correction"></span><span id="planning-share-upload"></span></div>
+            </div>
+          </div>
+        </div>
         <div id="usage-next" class="usage-panel distribution-panel" role="tabpanel" aria-labelledby="usage-next-tab" tabindex="0">
           <div class="distribution-tabs" role="tablist" aria-label="Aufgabenart">
             <button id="distribution-newsletter" type="button" role="tab" aria-selected="true" aria-controls="distribution-content" data-distribution-kind="newsletter">Pre-Gen</button>
@@ -155,10 +192,10 @@
           <div class="effort-actions"><button id="effort-save" class="primary" type="submit" hidden>Aufwand zentral speichern</button><button id="effort-discard" class="text-button" type="button" hidden>Änderungen verwerfen</button><span id="effort-status" role="status"></span></div>
         </form>
         <div id="usage-consumption" class="usage-panel consumption-panel" role="tabpanel" aria-labelledby="usage-consumption-tab" tabindex="0" hidden>
-          <header class="panel-head"><h2>Durchschnitt je Aufgabenart</h2><span id="consumption-totals" class="panel-meta">Erfassung wird geladen…</span></header>
+          <header class="panel-head"><h2>Durchschnitt der letzten 5 Tage</h2><span id="consumption-totals" class="panel-meta">Erfassung wird geladen…</span></header>
           <div class="consumption-toolbar"><label><span class="sr-only">Account für Verbrauchswerte</span><select id="consumption-account" name="consumption-account"><option value="">Alle Accounts</option></select></label></div>
           <div class="consumption-table-wrap"><table class="consumption-table"><thead><tr><th scope="col">Aufgabenart</th><th scope="col" class="num">Abgeschlossen</th><th scope="col" class="num">Ø 5 h (Punkte)</th><th scope="col" class="num">Ø Woche (Punkte)</th><th scope="col" class="num">Auswertbar<br>5 h / Woche</th><th scope="col" class="num">Messung offen</th></tr></thead><tbody id="consumption-body"></tbody></table></div>
-          <p id="consumption-empty" class="consumption-copy">Noch keine abgeschlossenen Aufgaben erfasst.</p>
+          <p id="consumption-empty" class="consumption-copy">Keine abgeschlossenen Aufgaben in den letzten 5 Tagen.</p>
         </div>
       </section>
 
@@ -167,6 +204,7 @@
           <h2>Macs <span id="machine-count" class="count">—</span></h2>
           <span class="interval" title="Macs und Worker melden sich jede Minute · keine Meldung seit 15 min: still · seit 30 min: offline">Heartbeat · 1 min</span>
         </div>
+        <p class="panel-meta fleet-sort-note">Fehler zuerst · danach Woche, dann 5 h aufsteigend · 100 % Woche immer zuletzt</p>
         <div id="machine-grid" class="machine-grid" aria-live="polite">
           <div class="empty-state">
             Verbinde deinen Team-Server, um alle Macs zu sehen.

@@ -31,6 +31,7 @@ KINDS = {"newsletter", "correction", "translation", "upload", "sales", "other"}
 DEFAULT_DB = "/var/lib/max-monitor-quota/ledger.sqlite"
 DEFAULT_FLEET = "/var/lib/max-monitor/RSMACS01/fleet.json"
 AVERAGE_SNAPSHOT_SECONDS = 12 * 3600
+AVERAGE_WINDOW_SECONDS = 5 * 86400
 
 
 def stamp(value):
@@ -665,7 +666,7 @@ class Ledger:
                 "tasks_per_week": None, "reason": "quota_allocation_not_calibrated", "mix": mix}
 
     def dashboard(self, now=None):
-        """Cumulative compressed task records and a bounded raw repair buffer."""
+        """Rolling five-day averages over retained compressed task records."""
         now = time.time() if now is None else now
         since = self.setting("tracking_since", now)
         report = self.report(min(48, max(1, (now - since) / 3600 + 1)), now)
@@ -709,10 +710,22 @@ class Ledger:
         def group(rows):
             result = []
             for key, selected in sorted(rows.items()):
+                # Completion decides which window owns the entire task, including
+                # attempts/follow-ups. Keep older compact records for history.
+                selected = [j for j in selected
+                            if (at := stamp(j.get('finished') or j.get('started'))) is not None
+                            and now - AVERAGE_WINDOW_SECONDS <= at <= now]
                 closed = [j for j in selected if j["closed"] and not j["carryover"]]
                 values = {}
-                for field in ("five_hour_pp", "weekly_pp"):
-                    measured = [j[field] for j in closed if j[field] is not None]
+                for field in ("five_hour_pp", "weekly_pp", "duration_seconds"):
+                    if field == "duration_seconds":
+                        # Preserve elapsed time across all attempts/worker changes.
+                        # Old compressed jobs already retain both timestamps.
+                        measured = [end - start for j in closed
+                                    if (start := stamp(j.get('started'))) is not None
+                                    and (end := stamp(j.get('finished'))) is not None and end > start]
+                    else:
+                        measured = [j[field] for j in closed if j[field] is not None]
                     values[field] = {"n": len(measured), "mean": statistics.mean(measured) if measured else None,
                                      "sd": statistics.pstdev(measured) if len(measured) > 1 else 0,
                                      "total": sum(measured)}
@@ -762,6 +775,7 @@ class Ledger:
             self.db.execute('DELETE FROM account_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))
         account_groups = group(by_account)
         return {"schema": 2, "generated_at": iso(now), "tracking_since": iso(since),
+                "average_window": {"days": 5, "from": iso(now - AVERAGE_WINDOW_SECONDS), "to": iso(now), "basis": "finished"},
                 "method": "observed_plateaus_empirically_gated_token_share", "estimated": True,
                 "precision": report['precision'],
                 "raw_resolution_pp": 1, "forecast_enabled": False,
@@ -818,6 +832,7 @@ class Ledger:
                     snapshot = {'schema': 1, 'captured_at': iso(now), 'tracking_since': summary['tracking_since'],
                                 'scheduled_for': iso(anchor + slot * AVERAGE_SNAPSHOT_SECONDS) if periodic else None,
                                 'revision': pending['revision'], 'reasons': reasons, 'method': summary['method'],
+                                'average_window': summary['average_window'],
                                 'estimator_version': summary['precision']['version'], 'by_kind': summary['by_kind']}
                     digest = self.archive_rows({'average_snapshots': [snapshot]}, now)
                     self.db.execute('INSERT INTO average_snapshots VALUES(?,?,?)', (digest, now, slot if periodic else None))
@@ -867,7 +882,7 @@ class Ledger:
                                       (account, window)).fetchone()
                 if row:
                     windows[window] = {'used': row['percent'], 'reset': row['reset'], 'at': row['at']}
-            costs = {g['key'][len(account)+1:]: {f: g[f] for f in ('five_hour_pp', 'weekly_pp')}
+            costs = {g['key'][len(account)+1:]: {f: g.get(f) for f in ('five_hour_pp', 'weekly_pp', 'duration_seconds')}
                      for g in groups if g['key'].startswith(account + '|')}
             workers[worker] = {'schema': 1, 'generated_at': iso(now), 'account': identifier(account)[:24],
                                'windows': windows, 'costs': costs}

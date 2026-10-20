@@ -43,6 +43,7 @@ const { EnrollmentError, enrollWorkerMember, validateEnrollment } = require("./e
 const { controlForWorker, WORKER_ID, DEVICE_ID } = require("./worker-control");
 const remoteAccess = require("./remote-access");
 const effortConfig = require('./effort-config');
+const planning = require('./planning');
 const { distribution } = require('./distribution');
 
 const PORT = process.env.PORT === undefined ? 8080 : Number(process.env.PORT);
@@ -274,6 +275,9 @@ function serveFleetAsset(req, res, pathname) {
     ["/fleet-assets/dashboard.css", ["dashboard.css", "text/css; charset=utf-8"]],
     ["/fleet-assets/dashboard.js", ["dashboard.js", "text/javascript; charset=utf-8"]],
     ["/fleet-assets/consumption.js", ["consumption.js", "text/javascript; charset=utf-8"]],
+    ["/fleet-assets/planning-model.js", ["planning-model.js", "text/javascript; charset=utf-8"]],
+    ["/fleet-assets/planning.js", ["planning.js", "text/javascript; charset=utf-8"]],
+    ["/fleet-assets/planning.css", ["planning.css", "text/css; charset=utf-8"]],
   ]);
   const asset = routes.get(pathname);
   if (req.method !== "GET" || !asset) return false;
@@ -584,7 +588,9 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && rest === '/consumption') {
     try {
       const result = effortConfig.consumption(teamDir(teamId),teamId,who.role);
-      result.distribution = distribution(result.summary, visibleFleet(teamId,who).machines);
+      const currentFleet = visibleFleet(teamId,who);
+      result.distribution = distribution(result.summary, currentFleet.machines);
+      result.planning = { evidence: planning.planningEvidence(result.summary, currentFleet) };
       return send(res,200,result);
     }
     catch { return send(res,503,{error:'Aufwandseinstellungen können gerade nicht gelesen werden.'}); }
