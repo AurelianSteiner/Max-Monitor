@@ -46,6 +46,17 @@ class AverageUpdatesTests(unittest.TestCase):
         self.assertIn('scheduled_12h', history[0]['reasons'])
         self.assertTrue(self.public.exists())
 
+    def test_duration_metrics_reach_account_scheduler_and_survive_compaction(self):
+        summary = self.ledger.dashboard(self.at)
+        row = next(r for r in summary['by_kind'] if r['key'] == 'newsletter')
+        self.assertEqual(row['duration_seconds']['n'], 1)
+        self.assertGreater(row['duration_seconds']['mean'], 0)
+        worker = summary['scheduling']['workers']['mac-1']
+        self.assertEqual(worker['costs']['newsletter']['duration_seconds'], row['duration_seconds'])
+        later = self.ledger.dashboard(self.at + 3 * 86400)
+        compact = next(r for r in later['by_kind'] if r['key'] == 'newsletter')
+        self.assertEqual(compact['duration_seconds'], row['duration_seconds'])
+
     def test_new_task_recalculates_before_minute_without_diluting_finished_average(self):
         first = self.ledger.publish_averages(self.public, self.at)
         self.ledger.ingest(self.new_task(), self.at + 5)

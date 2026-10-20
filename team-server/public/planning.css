@@ -1,0 +1,100 @@
+/* Planbarkeit shares Max Monitor's existing Graphit & Limette tokens/primitives.
+   One workspace: editable production mix beside the resulting capacity envelope. */
+.planning-panel { color: var(--ink); font-variant-numeric: tabular-nums; }
+.planning-intro { display: flex; justify-content: space-between; align-items: start; gap: 16px; margin: 28px 0 24px; }
+.planning-intro h2 { font-size: 24px; font-weight: 600; letter-spacing: -.02em; margin: 0 0 8px; }
+.planning-intro p { color: var(--ink-2); margin: 0; }
+.planning-label { color: var(--ink-2); padding: 6px 10px; background: var(--sunken); border-radius: 6px; white-space: nowrap; }
+.planning-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 20px; padding: 0 0 24px; }
+.planning-panel label { display: flex; flex-direction: column; gap: 8px; color: var(--ink-2); font-size: 12px; min-width: 0; }
+.planning-panel input[type="number"], .planning-panel select { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); font-size: 14px; }
+.planning-panel input:focus-visible, .planning-panel select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.planning-panel input[aria-invalid="true"] { border-color: var(--bad); }
+.planning-panel input::placeholder { color: var(--muted); opacity: 1; }
+.planning-panel label.planning-check { flex-direction: row; align-items: center; min-height: 40px; gap: 8px; font-size: 13px; }
+.planning-check input { accent-color: var(--primary); width: 16px; height: 16px; margin: 0; }
+.planning-workspace { display: grid; grid-template-columns: 300px minmax(0, 1fr); background: var(--surface); border-radius: 10px; box-shadow: var(--shadow); }
+.planning-editor { background: var(--sunken); border-radius: 10px 0 0 10px; padding: 24px; }
+.planning-panel h3 { font-size: 14px; font-weight: 600; margin: 0 0 20px; }
+.planning-editor label { margin-bottom: 16px; }
+.planning-editor .planning-quantity input { font-size: 24px; font-weight: 500; height: 56px; }
+.planning-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; }
+.planning-note { font-size: 12px; color: var(--muted); line-height: 1.55; }
+.planning-settings { border-top: 1px solid var(--line-strong); padding-top: 16px; margin-top: 24px; }
+.planning-panel summary { cursor: pointer; font-weight: 500; min-height: 40px; line-height: 1.5; }
+.planning-panel summary:hover { color: var(--ink); }
+.planning-settings[open] > summary { margin-bottom: 12px; }
+.planning-results { min-width: 0; padding: 24px 28px; }
+.planning-warning { color: var(--warn); padding: 0 0 12px 12px; border-left: 2px solid var(--warn); margin-bottom: 20px; }
+.planning-warning p { margin: 0 0 8px; font-size: 12px; }
+.planning-verdict h3 { font-size: 20px; margin: 0 0 8px; letter-spacing: -.02em; }
+.planning-verdict p { color: var(--ink-2); margin: 0; max-width: 60ch; }
+.planning-verdict[data-tone="good"] h3 { color: var(--good); }
+.planning-verdict[data-tone="warn"] h3 { color: var(--warn); }
+.planning-capacity { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: center; gap: 20px; padding: 28px 0 24px; border-bottom: 1px solid var(--line); }
+.planning-capacity > div { display: flex; flex-direction: column; gap: 8px; }
+.planning-big { font-size: 40px; font-weight: 550; letter-spacing: -.04em; line-height: 1.1; }
+.planning-capacity strong { font-size: 13px; font-weight: 500; }
+.planning-capacity-side { color: var(--ink-2); font-size: 12px; }
+.planning-comparison { display: flex; flex-direction: column; gap: 6px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.planning-comparison strong { font-size: 14px; font-weight: 500; }
+.planning-timeline-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding-top: 24px; }
+.planning-timeline-head h3 { margin-bottom: 12px; }
+.planning-timeline { display: flex; gap: 12px; overflow-x: auto; padding: 8px 0 12px; scrollbar-width: thin; }
+.planning-day { flex: 1 0 52px; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 11px; }
+.planning-day-count { color: var(--ink-2); font-family: var(--mono); }
+.planning-day-plot { width: 100%; max-width: 52px; height: 96px; background: var(--sunken); display: flex; align-items: end; border-radius: 4px 4px 0 0; overflow: hidden; }
+.planning-day-bar { display: flex; flex-direction: column; width: 100%; min-height: 0; }
+.planning-day-bar > span.newsletter, .planning-key.newsletter { background: #34333c; }
+.planning-day-bar > span.correction, .planning-key.correction { background: #9caf69; }
+.planning-day-bar > span.upload, .planning-key.upload { background: #d4d9c6; }
+.planning-day-bar > span.translation, .planning-day-bar > span.sales { background: #92909a; }
+.planning-day-label { white-space: nowrap; color: var(--ink-2); font-size: 10px; }
+.planning-day-hours { color: var(--muted); }
+.planning-legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 8px 0 24px; color: var(--ink-2); font-size: 11px; }
+.planning-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.planning-key { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+.planning-remaining { padding-top: 20px; border-top: 1px solid var(--line); }
+.planning-remaining h3 { margin-bottom: 16px; }
+#planning-remaining { display: flex; justify-content: space-between; gap: 20px; }
+#planning-remaining > div { display: flex; flex-direction: column; gap: 4px; color: var(--ink-2); font-size: 12px; }
+#planning-remaining strong { font-size: 22px; font-weight: 500; color: var(--ink); }
+.planning-evidence { overflow: auto; }
+.planning-evidence table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.planning-evidence th { text-align: left; font-weight: 500; padding: 8px 8px 8px 0; }
+.planning-evidence td { padding: 4px; min-width: 76px; }
+.planning-evidence small { display: block; color: var(--muted); font-size: 10px; font-weight: 400; margin-top: 4px; }
+.planning-evidence input[type="number"] { min-height: 36px; padding: 6px; font-size: 12px; }
+.planning-validation { color: var(--bad); margin: 16px 0; }
+.planning-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 20px 0; }
+.planning-actions .primary { min-height: 44px; padding: 10px 16px; border: 0; border-radius: 6px; color: var(--primary-ink); background: var(--primary); }
+.planning-actions .primary:hover { background: var(--primary-hover); }
+.planning-actions .primary:active { transform: translateY(1px); }
+#planning-status { color: var(--ink-2); font-size: 12px; }
+#planning-status[data-error="true"] { color: var(--bad); }
+.planning-method { padding: 12px 0 24px; color: var(--ink-2); max-width: 90ch; }
+.planning-method p { line-height: 1.6; font-size: 12px; }
+.planning-method a { font-size: 12px; text-underline-offset: 3px; }
+.planning-panel [hidden] { display: none !important; }
+@media (max-width: 900px) { .planning-workspace { grid-template-columns: 260px minmax(0, 1fr); } .planning-editor { padding: 20px; } .planning-results { padding: 20px; } .planning-capacity { grid-template-columns: 1fr; gap: 16px; } }
+@media (max-width: 640px) {
+  .consumption-tabs { overflow-x: auto; justify-content: start; gap: 16px; }
+  .planning-intro { flex-direction: column; margin-top: 20px; gap: 12px; }
+  .planning-intro h2 { font-size: 22px; }
+  .planning-controls { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  .planning-workspace { grid-template-columns: 1fr; }
+  .planning-editor { border-radius: 10px 10px 0 0; padding: 20px 16px; }
+  .planning-results { padding: 24px 16px; }
+  .planning-panel input[type="number"], .planning-panel select { min-height: 44px; }
+  .planning-panel label.planning-check { min-height: 44px; }
+  .planning-capacity { grid-template-columns: 1fr; }
+  .planning-capacity-side { gap: 8px; }
+  .planning-timeline-head { flex-direction: column; gap: 0; }
+  .planning-day { flex-basis: 44px; }
+  #planning-remaining { gap: 12px; }
+  #planning-remaining strong { font-size: 20px; }
+  .planning-evidence td { min-width: 68px; padding: 4px 2px; }
+  .planning-evidence th { font-size: 11px; }
+  .planning-actions { gap: 12px; }
+  .planning-actions .text-button { min-height: 44px; }
+}

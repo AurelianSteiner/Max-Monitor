@@ -711,8 +711,15 @@ class Ledger:
             for key, selected in sorted(rows.items()):
                 closed = [j for j in selected if j["closed"] and not j["carryover"]]
                 values = {}
-                for field in ("five_hour_pp", "weekly_pp"):
-                    measured = [j[field] for j in closed if j[field] is not None]
+                for field in ("five_hour_pp", "weekly_pp", "duration_seconds"):
+                    if field == "duration_seconds":
+                        # Preserve elapsed time across all attempts/worker changes.
+                        # Old compressed jobs already retain both timestamps.
+                        measured = [end - start for j in closed
+                                    if (start := stamp(j.get('started'))) is not None
+                                    and (end := stamp(j.get('finished'))) is not None and end > start]
+                    else:
+                        measured = [j[field] for j in closed if j[field] is not None]
                     values[field] = {"n": len(measured), "mean": statistics.mean(measured) if measured else None,
                                      "sd": statistics.pstdev(measured) if len(measured) > 1 else 0,
                                      "total": sum(measured)}
@@ -867,7 +874,7 @@ class Ledger:
                                       (account, window)).fetchone()
                 if row:
                     windows[window] = {'used': row['percent'], 'reset': row['reset'], 'at': row['at']}
-            costs = {g['key'][len(account)+1:]: {f: g[f] for f in ('five_hour_pp', 'weekly_pp')}
+            costs = {g['key'][len(account)+1:]: {f: g.get(f) for f in ('five_hour_pp', 'weekly_pp', 'duration_seconds')}
                      for g in groups if g['key'].startswith(account + '|')}
             workers[worker] = {'schema': 1, 'generated_at': iso(now), 'account': identifier(account)[:24],
                                'windows': windows, 'costs': costs}

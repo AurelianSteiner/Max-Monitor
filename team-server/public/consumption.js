@@ -53,6 +53,7 @@
     $('consumption-totals').textContent=summary?`${summary.closed} abgeschlossen`:'Erfassung wird geladen…';
   }
   function draw(){
+    window.MaxMonitorPlanning?.update(data, request);
     const summary=data?.summary;
     $('consumption-error').hidden=!data?.error;
     $('consumption-error').textContent=data?.error||'';
@@ -97,7 +98,7 @@
     const epoch=generation;
     busy=true;
     try {const result=await request('/consumption');if(epoch===generation){data=result;draw();}}
-    catch(e){if(epoch===generation){if(data)data.distribution=null;drawDistribution();$('consumption-error').hidden=false;$('consumption-error').textContent=`Verbrauch & Aufwand konnten nicht geladen werden: ${e.message}`;}}
+    catch(e){if(epoch===generation){if(data)data.distribution=null;window.MaxMonitorPlanning?.invalidate();drawDistribution();$('consumption-error').hidden=false;$('consumption-error').textContent=`Verbrauch & Aufwand konnten nicht geladen werden: ${e.message}`;}}
     finally{if(epoch===generation)busy=false;}
   }
   $('consumption-account').addEventListener('change',drawRows);
@@ -151,5 +152,5 @@
     finally{if(epoch===generation){saving=false;draw();}}
   });
   window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
-  window.MaxMonitorConsumption={refresh,reset(){generation++;data=null;request=null;dirty=false;draftRevision=null;busy=false;saving=false;status('');$('effort-body').replaceChildren();$('effort-save').hidden=true;$('effort-discard').hidden=true;$('consumption-error').hidden=true;$('consumption-updated').textContent='Noch keine Meldung';$('consumption-account').replaceChildren(node('option','','Alle Accounts'));drawRows();drawDistribution();}};
+  window.MaxMonitorConsumption={refresh,reset(){generation++;window.MaxMonitorPlanning?.reset();data=null;request=null;dirty=false;draftRevision=null;busy=false;saving=false;status('');$('effort-body').replaceChildren();$('effort-save').hidden=true;$('effort-discard').hidden=true;$('consumption-error').hidden=true;$('consumption-updated').textContent='Noch keine Meldung';$('consumption-account').replaceChildren(node('option','','Alle Accounts'));drawRows();drawDistribution();}};
 })();
