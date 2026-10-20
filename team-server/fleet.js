@@ -125,6 +125,7 @@ function validateHeartbeat(body) {
         accountId,
         name: string(raw.name, "account.name", 160),
         provider: string(raw.provider, "account.provider", 80),
+        email: string(raw.email, "account.email", 254, true),
         usageUpdatedAt: timestamp(raw.usageUpdatedAt, "account.usageUpdatedAt", true),
         usageError: diagnostic(raw.usageError, "account.usageError"),
       });
@@ -266,7 +267,7 @@ function validateQueue(body) {
       packageId: string(raw.packageId, "task.packageId", 160, true),
       language: ["de", "en", "it", "fr", "se", "sp"].includes(raw.language) ? raw.language : undefined,
       completedAt: timestamp(raw.completedAt, "task.completedAt", true),
-      completionSource: ["slack", "clickup", "review", "sales"].includes(raw.completionSource) ? raw.completionSource : undefined,
+      completionSource: ["slack", "register", "clickup", "review", "sales"].includes(raw.completionSource) ? raw.completionSource : undefined,
       status,
       tags: [...new Set(tags.map((tag) => string(tag, "task.tag", 80)))],
       url,

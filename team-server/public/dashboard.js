@@ -100,7 +100,6 @@
     ["clarification", "PM Rückfragen", "clarification"],
     ["blocked", "Blockiert", "blocked"],
     ["completed", "Erledigt", "completed"],
-    ["failed", "Fehler", "failed"],
   ];
   const timeFormat = new Intl.DateTimeFormat("de-DE", {
     dateStyle: "short",
@@ -211,7 +210,8 @@
     if (task.completion === "manual") return "Manuell erledigt";
     if (task.completedAt) return "Fertig";
     if (task.workflow === "sales") return "Erledigt laut Sales-Auftrag";
-    return task.completionSource === "review" ? "An Review übergeben" : "Erledigt laut ClickUp";
+    return task.completionSource === "review" ? "An Review übergeben"
+      : task.completionSource === "register" ? "Erledigt laut RS Hub" : "Erledigt laut ClickUp";
   }
   function safeLink(value) {
     try {
@@ -853,24 +853,29 @@
     const unknown = items.filter(task => task.status === "completed" && !task.completedAt).length;
     const manual = items.filter(task => task.completion === "manual").length;
     $("pipeline-summary").textContent = snapshot
-      ? `${pipelinePeriod === "today" ? productionDay(Date.now()) : "Gesamt"} · ${numberFormat.format(open)} offen · ${numberFormat.format(done - unknown - manual)} fertig${manual ? ` · ${manual} manuell erledigt` : ""}${unknown ? ` · ${unknown} ohne Abschlussdatum` : ""}`
+      ? `${pipelinePeriod === "today" ? productionDay(Date.now()) : `Gesamt · ${numberFormat.format(items.length)} Aufgaben`} · ${numberFormat.format(open)} offen · ${numberFormat.format(done)} ${pipelinePeriod === "today" ? "heute fertig" : "fertig"}${manual ? ` · davon ${manual} manuell erledigt` : ""}${unknown ? ` · davon ${unknown} ohne Abschlussdatum` : ""}`
       : "—";
     $("pipeline-summary").title = pipelinePeriod === "today"
       ? "Alle offenen Aufgaben und belegte Abschlüsse von heute · Tagesgrenze: Europe/Berlin. ClickUp-Änderungen verschieben keinen Abschluss."
-      : "Alle Aufgaben. Fertig zählt belegte Abschlüsse; manuell erledigte Aufgaben und fehlende Abschlussdaten stehen gesondert.";
+      : "Alle Aufgaben: offen und fertig ergeben zusammen Gesamt. Fertig umfasst auch manuell erledigte Aufgaben und Abschlüsse ohne bekanntes Datum; diese zählen nur mit belegtem Datum als heute fertig.";
     if (!flows.length) {
       $("pipeline").replaceChildren(node("div", "empty-state", snapshot?.queue?.source?.lastSuccessAt
         ? pipelinePeriod === "today" && tasks().length
-          ? "Heute wurden noch keine Aufgaben aktualisiert. Unter „Gesamt“ siehst du die gesamte Pipeline."
+          ? "Keine offenen Aufgaben und keine belegten Abschlüsse von heute. Unter „Gesamt“ siehst du die gesamte Pipeline."
           : "Die Queue ist leer. Neue markierte Aufgaben erscheinen hier."
         : "Queue-Quelle noch nicht verbunden."));
       return;
     }
     $("pipeline").replaceChildren(...flows.map(([name, group]) => {
       const counts = new Map(stages.map(([key]) => [key, 0]));
-      for (const task of group.tasks) counts.set(stageOf(task), (counts.get(stageOf(task)) || 0) + 1);
-      const shown = stages.filter(([key]) => (key !== "failed" || counts.get("failed") > 0)
-        && (key !== "clarification" || ["newsletter", "correction"].includes(group.value.split(":")[0]) || counts.get(key) > 0));
+      // The queue's Blockiert filter includes failures. Use the same bucket so
+      // every bar opens exactly its counted tasks, without counting failures twice.
+      for (const task of group.tasks) {
+        const key = stageOf(task) === "failed" ? "blocked" : stageOf(task);
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+      const shown = stages.filter(([key]) => key !== "clarification"
+        || ["newsletter", "correction"].includes(group.value.split(":")[0]) || counts.get(key) > 0);
       const max = Math.max(1, ...shown.map(([key]) => counts.get(key)));
       const flow = node("div", "flow");
       const head = node("div", "flow-head");
@@ -953,6 +958,22 @@
   }
   function machineAccount(machine) {
     return (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
+  }
+  function machineAccountIdentity(machine) {
+    const account = machineAccount(machine);
+    // Older Macs sent the email as the account name. Only use that fallback
+    // when it is an address; a display name does not identify the login.
+    const email = [account?.email, account?.name]
+      .filter((value) => typeof value === "string")
+      .map((value) => value.trim())
+      .find((value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value));
+    const text = !account ? "Claude · kein Account verbunden"
+      : `Claude · ${email || "E-Mail nicht gemeldet"}`;
+    const title = !account ? "Monitoring-Account auf diesem Worker-Mac verbinden"
+      : [`Claude-Monitoring-Account: ${email || "E-Mail nicht gemeldet"}`,
+        account.name && account.name !== email ? `Bezeichnung: ${account.name}` : ""]
+        .filter(Boolean).join("\n");
+    return { text, title, email };
   }
   function machineLimit(machine, account, kind) {
     if (!account || !Array.isArray(machine.limits)) return null;
@@ -1113,6 +1134,10 @@
       open.title = [label, deviceName && deviceName !== label ? `macOS: ${deviceName}` : ""].filter(Boolean).join("\n");
       identity.append(open);
       if (!machine.workerId) identity.append(node("small", "", "ohne Worker-ID"));
+      const accountIdentity = machineAccountIdentity(machine);
+      const accountLabel = node("small", "fleet-account", accountIdentity.text);
+      accountLabel.title = accountIdentity.title;
+      identity.append(accountLabel);
       name.append(signal, identity);
       nameCell.append(name);
       const active = activeTasks(machine);
@@ -1232,9 +1257,9 @@
       const failure = workerFailureReason(machine);
       if (failure) card.append(node("p", "usage-note fleet-issue", failure));
       const account = machineAccount(machine);
-      const accountLabel = node("p", account ? "machine-account" : "machine-account unbound", account
-        ? `Claude · ${account.name}` : "Kein Monitoring-Account verbunden");
-      accountLabel.title = account?.name || "Monitoring-Account auf diesem Worker-Mac verbinden";
+      const accountIdentity = machineAccountIdentity(machine);
+      const accountLabel = node("p", account ? "machine-account" : "machine-account unbound", accountIdentity.text);
+      accountLabel.title = accountIdentity.title;
       card.append(accountLabel);
       if (account) {
         const limitGroup = node("div", "machine-limits");
@@ -1752,7 +1777,8 @@
     return field;
   }
   function machineDetails(machine) {
-    const account = (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
+    const account = machineAccount(machine);
+    const accountIdentity = machineAccountIdentity(machine);
     const grid = node("div", "detail-grid");
     const [battery, source] = batteryText(machine);
     const batteryField = detailField("Akku", `${battery}${source ? ` · ${source}` : ""}`);
@@ -1785,7 +1811,10 @@
         "Version",
         machine.appVersion || machine.workerVersion || "Unbekannt",
       ),
-      detailField("Monitoring-Account", account ? `Claude · ${account.name}` : "Auf diesem Worker-Mac unter Queue & Macs → Monitoring-Account verbinden", true),
+      detailField("Claude-Monitoring-Account", account ? accountIdentity.text
+        : "Auf diesem Worker-Mac unter Queue & Macs → Monitoring-Account verbinden", true),
+      ...(account && account.name !== accountIdentity.email
+        ? [detailField("Account-Bezeichnung", account.name, true)] : []),
       detailField("Kontingente geprüft", exact(machine.usageUpdatedAt)),
       detailField(
         "Always On",

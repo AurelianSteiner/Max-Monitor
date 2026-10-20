@@ -16,7 +16,7 @@ while [ "$#" -gt 0 ]; do
     --help)
       echo 'install-newsletter-monitor.sh [--check|--uninstall|--generate-only] [--output-dir <Testverzeichnis>]'
       echo 'Konfiguration: NEWSLETTER_WORKER_ROOT, MONITOR_RELAY_URL, MONITOR_TEAM_ID; optional MONITOR_NODE_PATH, MONITOR_WORKFLOWS_FILE, MONITOR_BRIDGE_INTERVAL_SECONDS.'
-      echo 'Token: macOS-Schlüsselbund, Dienst "MaxMonitor Newsletter Bridge", Account = Team-ID.'
+      echo 'Token: einmaliger Import aus macOS-Schlüsselbund (Dienst "MaxMonitor Newsletter Bridge", Account = Team-ID), danach lokale Datei mit Modus 0600.'
       exit 0 ;;
     *) echo "Unbekannter Parameter: $1" >&2; exit 1 ;;
   esac
@@ -37,7 +37,7 @@ if [ "$monitor_mode" = uninstall ]; then
   /bin/launchctl bootout "gui/$monitor_uid/$monitor_label" >/dev/null 2>&1 || true
   /bin/rm -f "$monitor_plist" "$monitor_service_dir/run.sh"
   /bin/rmdir "$monitor_service_dir" >/dev/null 2>&1 || true
-  echo 'Newsletter-Monitor-Dienst entfernt. Queue, Protokolle und Schlüsselbund-Eintrag bleiben erhalten.'
+  echo 'Newsletter-Monitor-Dienst entfernt. Queue, Protokolle und gespeicherter Token bleiben erhalten.'
   exit 0
 fi
 
@@ -50,13 +50,6 @@ export MONITOR_INSTALL_LABEL="$monitor_label" MONITOR_INSTALL_NODE="$monitor_nod
 export MONITOR_INSTALL_BRIDGE="$monitor_script_dir/newsletter-monitor-bridge.mjs"
 export MONITOR_INSTALL_MODE="$monitor_mode" MONITOR_INSTALL_OUTPUT_DIR="$monitor_output_dir"
 
-if [ "$monitor_mode" != generate ]; then
-  /usr/bin/security find-generic-password -s 'MaxMonitor Newsletter Bridge' -a "$MONITOR_TEAM_ID" >/dev/null 2>&1 || {
-    echo 'Schlüsselbund-Eintrag fehlt: Dienst "MaxMonitor Newsletter Bridge", Account = MONITOR_TEAM_ID. In Schlüsselbundverwaltung anlegen; Token nicht ins Repo oder in die plist schreiben.' >&2
-    exit 1
-  }
-fi
-
 "$monitor_node" --input-type=module <<'JS'
 import fs from 'node:fs';
 import path from 'node:path';
@@ -65,6 +58,7 @@ import { pathToFileURL } from 'node:url';
 const env = process.env;
 if (Number(process.versions.node.split('.')[0]) < 20) throw new Error('Node 20 oder neuer erforderlich.');
 const { relayEndpoint, validateWorkflows } = await import(pathToFileURL(env.MONITOR_INSTALL_BRIDGE));
+const { prepareBridgeToken, bridgeTokenFile } = await import(pathToFileURL(path.join(path.dirname(env.MONITOR_INSTALL_BRIDGE), 'monitor-bridge-credentials.mjs')));
 relayEndpoint(env.MONITOR_RELAY_URL, env.MONITOR_TEAM_ID);
 const workerRoot = path.resolve(env.NEWSLETTER_WORKER_ROOT);
 const require = createRequire(import.meta.url);
@@ -78,20 +72,24 @@ const nodePath = path.resolve(env.MONITOR_INSTALL_NODE);
 const values = [workerRoot, nodePath, env.MONITOR_RELAY_URL, env.MONITOR_INSTALL_BRIDGE,
   env.MONITOR_WORKFLOWS_FILE, env.MONITOR_HUB_FLEET_DIRECTORY, env.MONITOR_BRIDGE_CACHE].filter(Boolean);
 if (values.some(value => /[\r\n\0]/.test(value))) throw new Error('Konfiguration enthält Steuerzeichen.');
-if (env.MONITOR_INSTALL_MODE === 'check') { console.log('Konfiguration und Schlüsselbund-Eintrag geprüft; keine Änderungen.'); process.exit(0); }
+if (env.MONITOR_INSTALL_MODE === 'check') {
+  prepareBridgeToken(env.MONITOR_INSTALL_SERVICE_DIR);
+  console.log('Konfiguration und lokaler Monitor-Token geprüft; kein Schlüsselbundzugriff.'); process.exit(0);
+}
 if (env.MONITOR_INSTALL_OUTPUT_DIR && env.MONITOR_INSTALL_MODE !== 'generate') throw new Error('--output-dir ist nur mit --generate-only erlaubt.');
 const output = env.MONITOR_INSTALL_OUTPUT_DIR ? path.resolve(env.MONITOR_INSTALL_OUTPUT_DIR) : null;
 const serviceDir = output ? path.join(output, 'service') : env.MONITOR_INSTALL_SERVICE_DIR;
 const plistFile = output ? path.join(output, `${env.MONITOR_INSTALL_LABEL}.plist`) : env.MONITOR_INSTALL_PLIST;
+const tokenFile = bridgeTokenFile(serviceDir);
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 const xml = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
 const settings = { NEWSLETTER_WORKER_ROOT: workerRoot, MONITOR_RELAY_URL: env.MONITOR_RELAY_URL, MONITOR_TEAM_ID: env.MONITOR_TEAM_ID,
+  MONITOR_BRIDGE_TOKEN_FILE: tokenFile,
   ...(env.MONITOR_WORKFLOWS_FILE ? { MONITOR_WORKFLOWS_FILE: path.resolve(env.MONITOR_WORKFLOWS_FILE) } : {}),
   ...(env.MONITOR_HUB_FLEET_DIRECTORY ? { MONITOR_HUB_FLEET_DIRECTORY: env.MONITOR_HUB_FLEET_DIRECTORY } : {}),
   ...(env.MONITOR_BRIDGE_CACHE ? { MONITOR_BRIDGE_CACHE: path.resolve(env.MONITOR_BRIDGE_CACHE) } : {}),
 };
 const runner = `#!/bin/zsh\nset -eu\n${Object.entries(settings).map(([key, value]) => `export ${key}=${quote(value)}`).join('\n')}\n` +
-  `export MONITOR_BRIDGE_TOKEN="$(/usr/bin/security find-generic-password -w -s 'MaxMonitor Newsletter Bridge' -a "$MONITOR_TEAM_ID")"\n` +
   `exec ${quote(nodePath)} ${quote(env.MONITOR_INSTALL_BRIDGE)} --once\n`;
 const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -105,6 +103,7 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <key>StandardErrorPath</key><string>${xml(path.join(serviceDir, 'stderr.log'))}</string>
 </dict></plist>\n`;
 fs.mkdirSync(serviceDir, { recursive: true, mode: 0o700 });
+if (env.MONITOR_INSTALL_MODE === 'install') prepareBridgeToken(serviceDir, { importLegacy: true, teamId: env.MONITOR_TEAM_ID });
 fs.mkdirSync(path.dirname(plistFile), { recursive: true, mode: 0o700 });
 fs.writeFileSync(path.join(serviceDir, 'run.sh'), runner, { mode: 0o700 });
 fs.writeFileSync(plistFile, plist, { mode: 0o600 });

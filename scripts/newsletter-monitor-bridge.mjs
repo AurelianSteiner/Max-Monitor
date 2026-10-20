@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { readBridgeToken } from './monitor-bridge-credentials.mjs';
 import { cleanupErrorCopies, createErrorCleanupWriter } from './error-copy-cleanup.mjs';
 import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
 import { applyPmOwners, createPmRoutingReader } from './pm-owner.mjs';
@@ -139,7 +140,8 @@ export async function listTasks(hubFetch, workspaceId, variants, { maxPages = 20
   // paginated query keeps the minute cadence within the shared Hub token's limit.
   for (let page = 0; page < maxPages; page += 1) {
     const url = new URL(`https://api.clickup.com/api/v2/team/${encodeURIComponent(workspaceId)}/task`);
-    for (const [key, value] of Object.entries({ page, subtasks: true, include_closed: false })) url.searchParams.set(key, String(value));
+    // Workflow history remains part of Gesamt after the parent task is closed.
+    for (const [key, value] of Object.entries({ page, subtasks: true, include_closed: true })) url.searchParams.set(key, String(value));
     for (const tag of variants) url.searchParams.append('tags[]', tag);
     const result = await requestJson(hubFetch, url, 'ClickUp');
     if (!Array.isArray(result.tasks)) throw new Error('ClickUp: Aufgabenliste fehlt.');
@@ -318,14 +320,14 @@ function claimDetails(kind, state, paused, text, reactions) {
   const link = /<([^|>]+)\|([^>]+)>/.exec(text.split('\n')[1] || '');
   let url;
   try { const candidate = new URL(link?.[1]); if (candidate.protocol === 'https:' && !candidate.username && !candidate.password && candidate.href.length <= 2000) url = candidate.href; } catch { /* Optional task link. */ }
-  // Completed corrections replace the parent text and need no separate reaction.
+  // All worker kinds now replace the parent text on successful completion.
   // Only the terminal label of this exact claim can confirm completion.
   const terminalLine = text.split('\n')[1] || '';
-  const doneLabel = kind === 'correction' && state === 'final' && /^(?:✅|:white_check_mark:)\s*Fertig:/u.test(terminalLine);
+  const doneLabel = ['final', 'released'].includes(state) && /^(?:✅|:white_check_mark:)\s*Fertig:/u.test(terminalLine);
   return { doneLabel, ...claimOutcome(kind, state, paused, doneLabel, reactions),
     ...(kind === 'correction' ? { figmaUrl: [...text.matchAll(/<([^|>]+)(?:\|[^>]+)?>/g)]
       .map(match => figmaLink(match[1])).find(Boolean) } : {}),
-    url, company: kind === 'correction' ? displayText(text.split('\n')[0].replace(/^\*?Korrektur\s*·\s*/, '').replace(/[*`]/g, ''), 200) : undefined,
+    url, company: displayText((/^[*]?[^\n·]+\s·\s(.+?)[*]?$/u.exec(text.split('\n')[0])?.[1] || (kind === 'correction' ? text.split('\n')[0] : '')).replace(/[*`]/g, ''), 200),
     title: displayText((link?.[2] || text.split('\n')[0].replace(/[*`]/g, '')).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 300) };
 }
 
@@ -431,15 +433,17 @@ export function readHubReservations(runtimeDir, { now = Date.now(), lookbackDays
 // progress replies, its reactions and the time a terminal post was written.
 export function mergeHubClaims(slackClaims, hubClaims) {
   if (!Array.isArray(hubClaims)) return slackClaims;
+  const identity = claim => JSON.stringify([claim.taskId, claim.jobId, claim.workflow, claim.runId]);
   const posted = new Map();
   for (const claim of slackClaims) {
-    const old = posted.get(claim.runId);
-    if (!old || compareSlackTs(claim.ts, old.ts) > 0) posted.set(claim.runId, claim);
+    const key = identity(claim);
+    const old = posted.get(key);
+    if (!old || compareSlackTs(claim.ts, old.ts) > 0) posted.set(key, claim);
   }
-  const owned = new Set(hubClaims.map(claim => claim.runId));
-  const merged = slackClaims.filter(claim => !owned.has(claim.runId));
+  const owned = new Set(hubClaims.map(identity));
+  const merged = slackClaims.filter(claim => !owned.has(identity(claim)));
   for (const hub of hubClaims) {
-    const slack = posted.get(hub.runId);
+    const slack = posted.get(identity(hub));
     if (!slack) { merged.push(hub); continue; }
     const live = LIVE_CLAIM_STATES.has(hub.state);
     const settled = !live && !LIVE_CLAIM_STATES.has(slack.state);
@@ -721,7 +725,7 @@ export function contentKind(task, claims = []) {
 
 export function completionEvidence(claims) {
   const latest = claims.filter(claim => claim.state !== 'withdrawn')
-    .sort((a, b) => Number(b.ts) - Number(a.ts))[0];
+    .sort((a, b) => compareSlackTs(b.ts, a.ts))[0];
   if (!latest || latest.completionTimestampKnown === false || !['final', 'released'].includes(latest.state) || latest.outcome !== 'completed') return {};
   const time = Number(latest.heartbeat) * 1000;
   if (!Number.isFinite(time) || time <= 0) return {};
@@ -742,14 +746,35 @@ export function selectCurrentClaim(matches, now, staleMinutes = 30) {
 
 export function retainCompletionDates(rows, previousTasks = [], claims = []) {
   const previousById = new Map(previousTasks.map(task => [task.id, task]));
+  const latestFor = row => {
+    const workflow = row.workflow === 'upload' ? 'klaviyo' : row.workflow === 'translation' ? row.id.split(':')[1] : row.workflow;
+    const taskId = row.id.split(':').at(-1);
+    return claims.filter(claim => claim.state !== 'withdrawn' && (row.workflow === 'correction'
+      ? claim.workflow === 'correction' && `correction:${claim.jobId}` === row.id
+      : claim.taskId === taskId && claim.workflow === workflow)).sort((a, b) => compareSlackTs(b.ts, a.ts))[0];
+  };
   for (const row of rows) {
     const previous = previousById.get(row.id);
     if (row.status !== 'completed' || row.completedAt || previous?.status !== 'completed'
-      || previous.completionSource !== 'slack' || !previous.completedAt) continue;
-    const workflow = row.workflow === 'upload' ? 'klaviyo' : row.workflow === 'translation' ? row.id.split(':')[1] : row.workflow;
-    const taskId = row.id.split(':').at(-1);
-    if (!claims.some(claim => claim.taskId === taskId && claim.workflow === workflow))
+      || previous.completionSource !== 'slack' || !previous.completedAt
+      || (row.attemptId && row.attemptId !== previous.attemptId)) continue;
+    const latest = latestFor(row);
+    // A register-only replay of the same successful attempt cannot erase an
+    // already verified Slack date after that post leaves the history window.
+    if (!latest || (latest.runId === previous.attemptId && latest.runId === row.attemptId
+      && ['final', 'released'].includes(latest.state) && latest.outcome === 'completed'))
       Object.assign(row, { completedAt: previous.completedAt, completionSource: previous.completionSource });
+  }
+  // The 60-day claim query is a transport window, not an expiry date for
+  // verified production history. A newer source row or attempt always wins.
+  const ids = new Set(rows.map(row => row.id));
+  for (const previous of previousTasks) {
+    if (ids.has(previous.id) || previous.status !== 'completed' || previous.completionSource !== 'slack'
+      || !Number.isFinite(Date.parse(previous.completedAt))) continue;
+    const latest = latestFor(previous);
+    if (latest && (latest.runId !== previous.attemptId || latest.outcome !== 'completed')) continue;
+    rows.push({ ...previous });
+    ids.add(previous.id);
   }
   return rows;
 }
@@ -818,21 +843,29 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       const starts = (workflow.startStatuses ?? []).map(normalizeStatus);
       // Like the worker: the start status is the order, a tag never is.
       const ordered = starts.includes(sourceStatus);
-      if (!ordered && !workflowMatches(workflow, tags)) continue;
+      const matches = claims.filter(claim => claim.taskId === task.id && claim.workflow === (workflow.claimWorkflow ?? workflow.id)
+        && !(ordered && task.statusSince && (!LIVE_CLAIM_STATES.has(claim.state) || (claim.paused && claim.portable))
+          && jobIdentity(claim.jobId).epoch && jobIdentity(claim.jobId).epoch !== String(task.statusSince)));
+      const claim = selectCurrentClaim(matches, now, staleMinutes);
+      // Tags are transient: moving to upload/review may remove every Pre-Gen
+      // tag. The exact successful reservation remains workflow history.
+      const finished = claim?.outcome === 'completed'
+        && (!ordered || (task.statusSince && jobIdentity(claim.jobId).epoch === String(task.statusSince)));
+      if (!ordered && !workflowMatches(workflow, tags) && !finished) continue;
       const normalized = new Set(tags.map(normalizeTag));
       let status = 'queued';
       for (const name of ['queued', 'running', 'failed', 'blocked', 'completed']) {
         if ((workflow.stateTags?.[name] ?? []).some(tag => normalized.has(normalizeTag(tag)))) status = name;
       }
+      if (finished) status = 'completed';
       if ((workflow.claimWorkflow ?? workflow.id) === 'klaviyo' && admission.manualUpload(task) && status !== 'completed') continue;
+      // A closed source is no longer an open production order. Its generic
+      // closing time does not prove when this individual workflow finished.
+      if (task.status?.type === 'closed') status = 'completed';
       // In its start status only reservations of the current order (same epoch as
       // the worker's job ID) describe it. A live older attempt still holds its place
       // and a paused one bound to its Mac still blocks the order; a centrally saved
       // (portable) pause of an older epoch no longer describes it (F29, Till 16.10.2026).
-      const matches = claims.filter(claim => claim.taskId === task.id && claim.workflow === (workflow.claimWorkflow ?? workflow.id)
-        && !(ordered && task.statusSince && (!LIVE_CLAIM_STATES.has(claim.state) || (claim.paused && claim.portable))
-          && jobIdentity(claim.jobId).epoch && jobIdentity(claim.jobId).epoch !== String(task.statusSince)));
-      const claim = selectCurrentClaim(matches, now, staleMinutes);
       const active = claim && ['claiming', 'running'].includes(claim.state) ? [claim] : [];
       const fresh = active.find(claim => now - claim.heartbeat * 1000 <= staleMinutes * 60000);
       const pausedTag = tags.some(name => / · pausiert$/i.test(name) && Object.values(workflow.stateTags || {}).flat().some(tag => normalizeTag(tag) === normalizeTag(name)));
@@ -861,12 +894,15 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       const url = taskUrl(task);
       const name = displayText(task.name, 300, task.id);
       const title = workflow.titleSuffix ? `${displayText(name, 300 - workflow.titleSuffix.length - 3)} · ${workflow.titleSuffix}` : name;
-      const evidence = status === 'completed' ? completionEvidence(matches) : {};
+      // Downstream review also completes Pre-Gen, even without a finished tag.
+      // Resolve that state before attaching the exact attempt's completion date.
+      const evidence = status === 'completed' || taskState.preGenFinished({ workflow: workflow.queueWorkflow ?? workflow.id, sourceStatus: taskStatus(task) })
+        ? completionEvidence(matches) : {};
       rows.push({ id: `clickup:${workflow.id}:${task.id}`, title, url, workflow: workflow.queueWorkflow ?? workflow.id, status,
         ...languagePackage(task, tasks, workflow),
         contentKind: contentKind(task, matches),
         ...evidence,
-        completionSource: evidence.completionSource || (status === 'completed' ? 'clickup' : undefined),
+        completionSource: evidence.completionSource || (status === 'completed' ? finished ? 'register' : 'clickup' : undefined),
         sourceStatus: displayText(typeof task.status === 'string' ? task.status : task.status?.status, 120),
         company: task.folder?.hidden ? undefined : displayText(task.folder?.name, 200),
         figmaUrl: taskFigmaLink(task, (workflow.claimWorkflow ?? workflow.id) === 'newsletter') || ((workflow.claimWorkflow ?? workflow.id) === 'newsletter' ? figmaLink(figmaBoardUrl) : undefined),
@@ -874,6 +910,40 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30),
         // Internal only: addRunDetails reads progress and renders of this attempt, then removes it.
         run: claim ? { id: claim.runId, jobId: claim.jobId, workerId: claim.workerId, ts: threadOf(claim), taskId: task.id, channelId: claim.channelId, heartbeat: threadBeat(claim) } : undefined });
+    }
+  }
+  // A completed mail may have no automation tags left at all, so ClickUp's
+  // tag/start-status inventory cannot return it. Keep its source-bound success
+  // visible under the same workflow+ClickUp ID, as with correction history.
+  const sourceIds = new Set(tasks.map(task => task.id));
+  for (const workflow of workflows) {
+    const groups = new Map();
+    for (const claim of claims) {
+      if (claim.workflow !== (workflow.claimWorkflow ?? workflow.id) || sourceIds.has(claim.taskId)) continue;
+      if (!groups.has(claim.taskId)) groups.set(claim.taskId, []);
+      groups.get(claim.taskId).push(claim);
+    }
+    for (const [taskId, matches] of groups) {
+      const claim = selectCurrentClaim(matches, now, staleMinutes);
+      if (claim?.outcome !== 'completed') continue;
+      let sourceUrl;
+      try {
+        const url = new URL(claim.url);
+        // History without a current ClickUp row still needs an exact source
+        // binding in the worker receipt; a title or run ID alone is insufficient.
+        if (url.protocol !== 'https:' || url.hostname !== 'app.clickup.com' || url.username || url.password
+          || decodeURIComponent(url.pathname) !== `/t/${taskId}`) continue;
+        sourceUrl = url.href;
+      } catch { continue; }
+      const evidence = completionEvidence(matches);
+      const title = displayText(claim.title, 300, taskId);
+      rows.push({ id: `clickup:${workflow.id}:${taskId}`, title: workflow.titleSuffix ? `${title} · ${workflow.titleSuffix}` : title,
+        url: sourceUrl, workflow: workflow.queueWorkflow ?? workflow.id,
+        contentKind: contentKind({ name: title }, matches), company: claim.company,
+        status: 'completed', phase: 'Abgeschlossen', progress: 100, workerId: claim.workerId, attemptId: claim.runId,
+        ...evidence, completionSource: evidence.completionSource || 'register',
+        updatedAt: evidence.completedAt || new Date(claim.heartbeat * 1000).toISOString(),
+        run: { id: claim.runId, jobId: claim.jobId, workerId: claim.workerId, ts: threadOf(claim), taskId, channelId: claim.channelId, heartbeat: threadBeat(claim) } });
     }
   }
   // Revisions come from the approval workflow. They can run while the old
@@ -1324,7 +1394,10 @@ export async function readLocalSales(directory, now = Date.now()) {
       const paused = job.status === 'paused' || (['reserved', 'running', 'delivery'].includes(job.status) && job.monitor?.paused === true);
       const status = Object.hasOwn(statuses, job.status) ? paused ? 'queued' : statuses[job.status] : undefined;
       const stamp = job.observed_at || job.updated_at || job.created_at;
-      const finished = job.completed_at || job.finished_at || job.done_at || job.delivered_at;
+      // sales-hub writes updated_at when it confirms the three delivered PDFs
+      // and enters done. observed_at is a later, independent monitor heartbeat.
+      const finished = job.completed_at || job.finished_at || job.done_at || job.delivered_at
+        || (job.status === 'done' ? job.updated_at : undefined);
       const finishedTime = typeof finished === 'number' ? finished : Date.parse(finished);
       const seen = typeof stamp === 'number' ? stamp : Date.parse(stamp);
       if (!status || !/^[a-z0-9][a-z0-9._-]{0,79}$/i.test(job.worker)
@@ -1593,7 +1666,8 @@ export async function syncOnce({ collect, publish, cachedSource, save }) {
 
 export function argumentsFrom(argv, env) {
   const values = { workerRoot: env.NEWSLETTER_WORKER_ROOT, relayUrl: env.MONITOR_RELAY_URL, teamId: env.MONITOR_TEAM_ID,
-    token: env.MONITOR_BRIDGE_TOKEN, workflowsFile: env.MONITOR_WORKFLOWS_FILE, fleetDirectory: env.MONITOR_HUB_FLEET_DIRECTORY,
+    token: env.MONITOR_BRIDGE_TOKEN, tokenFile: env.MONITOR_BRIDGE_TOKEN_FILE,
+    workflowsFile: env.MONITOR_WORKFLOWS_FILE, fleetDirectory: env.MONITOR_HUB_FLEET_DIRECTORY,
     interval: Number(env.MONITOR_BRIDGE_INTERVAL_SECONDS || 60), localHub: env.MONITOR_LOCAL_HUB, enrollmentConfig: env.MONITOR_ENROLLMENT_CONFIG,
     cacheFile: env.MONITOR_BRIDGE_CACHE || path.join(os.homedir(), '.cache', 'max-monitor', 'newsletter-bridge.json') };
   const keys = { '--worker-root': 'workerRoot', '--relay-url': 'relayUrl', '--team-id': 'teamId', '--workflows': 'workflowsFile', '--fleet-directory': 'fleetDirectory', '--interval': 'interval', '--cache': 'cacheFile', '--local-hub': 'localHub', '--enrollment-config': 'enrollmentConfig' };
@@ -1641,6 +1715,7 @@ export async function runSyncLoop(sync, { intervalMs, signal, once = false, now 
 
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const options = await applyEnrollmentConfiguration(argumentsFrom(argv, env));
+  if (!options.token && options.tokenFile && !options.help) options.token = readBridgeToken(options.tokenFile);
   if (options.help) {
     console.log('node scripts/newsletter-monitor-bridge.mjs --worker-root <repo> [--once|--dry-run] [--workflows <json>] [--interval 60]\nHub-Dienst: --local-hub /opt/rs-hub --enrollment-config /etc/max-monitor/enrollment.json\nRelay: MONITOR_RELAY_URL, MONITOR_TEAM_ID, MONITOR_BRIDGE_TOKEN (admin/super; nur Umgebung).');
     return;
