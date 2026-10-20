@@ -55,7 +55,7 @@ const output = path.resolve(process.argv[2] || 'build/planning-review');
     assert.ok(baseMaximum > 0);
     await page.screenshot({ path: path.join(output, 'planning-1440-before.png'), fullPage: true });
     await page.locator('[name="newsletters"]').fill('500');
-    await page.locator('#planning-verdict h3').filter({ hasText: 'übersteigt' }).waitFor();
+    await page.locator('#planning-verdict h3').filter({ hasText: 'nicht abgedeckt' }).waitFor();
     await page.locator('[name="newsletters"]').fill('-1');
     await page.locator('#planning-validation').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#planning-maximum').innerText(), '—');

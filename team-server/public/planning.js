@@ -97,9 +97,11 @@
     $('planning-warning').replaceChildren(...warnings.map(w => el('p', '', w)));
     const ready = current.ready;
     $('planning-verdict').dataset.tone = !ready ? 'unknown' : current.fits ? 'good' : 'warn';
-    $('planning-verdict').replaceChildren(el('h3', '', !ready ? 'Planung noch unvollständig' : current.fits ? 'Dein Mix passt ins Modell' : 'Dein Mix übersteigt die Kapazität'),
+    $('planning-verdict').replaceChildren(el('h3', '', !ready ? 'Planung noch unvollständig' : current.fits ? 'Dein Mix passt ins Modell' : 'Dein Mix ist im Modell nicht abgedeckt'),
       el('p', '', !ready ? 'Ergänze die Messbasis oder prüfe die Hinweise. Die Werte darunter sind eine Teilrechnung.'
-        : current.fits ? 'Bestehende Arbeit, Folgeschritte und Reserve sind berücksichtigt.' : `Voraussichtlicher Engpass: ${bottlenecks[current.bottleneck]}. Reduziere die Menge oder prüfe ein Ausbau-Szenario.`));
+        : current.fits ? 'Bestehende Arbeit, Folgeschritte und Reserve sind berücksichtigt.' : current.bottleneck === 'evidence' || current.bottleneck === 'Messbasis'
+          ? 'Für weitere Kapazität fehlen Messwerte. Ergänze die Messbasis oder prüfe ausdrücklich eigene Annahmen.'
+          : `Voraussichtlicher Engpass: ${bottlenecks[current.bottleneck]}. Reduziere die Menge oder prüfe ein Ausbau-Szenario.`));
     $('planning-maximum').textContent = ready ? `${current.limited ? '≥ ' : '≈ '}${numbers.format(current.maximum)}` : '—';
     $('planning-package-detail').textContent = `je ${numbers.format(config.correctionsPerNewsletter)} Korrekturen + ${numbers.format(config.uploadsPerNewsletter)} Uploads · weitere Aufgaben bereits abgezogen`;
     const workdays = current.daily.filter(d => d.hours > 0).length;
