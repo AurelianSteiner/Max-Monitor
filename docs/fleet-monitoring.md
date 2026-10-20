@@ -230,8 +230,11 @@ Technik (Till, 19.10.2026); eine Änderung nach der PM-Antwort ist PM-Arbeit, au
 änderten sich nur Klaviyo- oder Filestage-Linkfelder. Eine offene PM-Rückfrage ist
 immer PM. Für PM, Kunden-Setup und Stammdaten setzt die Brücke zusätzlich
 `blockerKind` `waiting_human`, damit das Hub-Register diese Wartezeiten nicht als
-technische Fehler zählt. Das PM-Feld erscheint als „PM: Name“, „PM-Feld leer“ oder
-„PM-Feld nicht eindeutig: …“.
+technische Fehler zählt; ein getypter Owner `technik`/`automatisch` setzt
+`technical_failure`. Der technische Rückfall ohne Owner bleibt ohne `blockerKind`, damit
+das Register die getypte Laufbewertung des Workers übernimmt. Das PM-Feld erscheint als
+„PM: Name“, „PM-Feld leer“ oder „PM-Feld nicht eindeutig: …“ (ohne gelesene Aufgabe „PM
+nicht zugeordnet“).
 
 Eine `#ai-fehler`-Zeile übernimmt keine Blockerfelder ihrer Queue-Zeile. Ihre
 Zuständigkeit kommt aus `owner` oder einem eindeutigen `grund` (`stammdaten`;
