@@ -9,7 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   DEFAULT_WORKFLOWS, START_STATUSES, buildQueue, parseClaim, listStatusTasks, readStatusEpochs, collectSnapshot,
   parseRegisterClaim, readHubReservations, mergeHubClaims, hubRuntimeDirectory, parseObservedWorkers, readHubFleet, addRunDetails,
-  applyBlockerGrace, BLOCKER_GRACE_MS,
+  applyBlockerGrace, BLOCKER_GRACE_MS, BLOCKER_GRACE_PHASE,
 } from './newsletter-monitor-bridge.mjs';
 
 const now = Date.parse('2026-10-16T09:00:00Z');
@@ -329,7 +329,8 @@ test('a just finished attempt without any result waits five minutes before it is
     text: '*Korrektur · Kunde*\n<https://app.clickup.com/t/T|Herbst>' }));
   const rows = () => buildQueue([order], [finished], DEFAULT_WORKFLOWS, { now }).map(row => { delete row.run; return row; });
   const [first] = applyBlockerGrace(rows(), [], now);
-  assert.deepEqual([first.status, first.phase, first.reasonCode, first.blockedReason], ['queued', 'Ergebnis wird übernommen', undefined, undefined]);
+  assert.deepEqual([first.status, first.phase, first.reasonCode, first.blockedReason], ['queued', BLOCKER_GRACE_PHASE, undefined, undefined]);
+  assert.equal(BLOCKER_GRACE_PHASE, 'Wartet · Ergebnis wird übernommen');
   assert.equal(first.blockerRecordedAt, new Date(now).toISOString());
   const [waiting] = applyBlockerGrace(rows(), [first], now + BLOCKER_GRACE_MS - 1000);
   assert.equal(waiting.status, 'queued'); assert.equal(waiting.blockerRecordedAt, first.blockerRecordedAt);
@@ -361,7 +362,7 @@ test('the snapshot applies the result grace before the blocker context', async (
     state: 'final', text: '*Korrektur · Kunde*\n<https://app.clickup.com/t/T|Herbst>' }))];
   const first = await collectSnapshot({ now, config, hubFetch, fleetReader: async () => [], reservationReader });
   const row = first.tasks.find(entry => entry.workflow === 'correction');
-  assert.deepEqual([row.status, row.phase, row.reasonCode], ['queued', 'Ergebnis wird übernommen', undefined]);
+  assert.deepEqual([row.status, row.phase, row.reasonCode], ['queued', BLOCKER_GRACE_PHASE, undefined]);
   const later = await collectSnapshot({ now: now + 6 * 60000, config, hubFetch, fleetReader: async () => [], reservationReader, previousTasks: first.tasks });
   const blocked = later.tasks.find(entry => entry.workflow === 'correction');
   assert.equal(blocked.status, 'blocked'); assert.equal(blocked.reasonCode, 'completion_report_missing');

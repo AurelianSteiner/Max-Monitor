@@ -244,8 +244,9 @@ Live-Reservierung eines neuen Laufs geht dem Tag „· blockiert“ des Vorlaufs
 (veraltete oder pausierte Reservierungen nicht). Eine neue Statusepoche mit altem
 Tag und ohne eigene Reservierung wartet als „Wartet · neuer Auftrag, noch nicht
 reserviert“; geparkte Aufträge behalten ihren Verlauf. Eine blockierte Zeile ohne
-lesbaren Grund und ohne Zuordnung steht bis zu fünf Minuten als „Ergebnis wird
-übernommen“ in der Queue; danach meldet sie „Seit <Zeitpunkt> kein lesbares Ergebnis
+lesbaren Grund und ohne Zuordnung steht bis zu fünf Minuten als „Wartet · Ergebnis
+wird übernommen“ in der Queue (auch im Relay, wenn der Mac den beendeten Lauf nicht
+mehr meldet); danach meldet sie „Seit <Zeitpunkt> kein lesbares Ergebnis
 … des Laufs gemeldet“ mit Zuständigkeit Technik. Der Zeitpunkt bleibt je Versuch
 fest, damit Befund und Abhak-Version stabil bleiben.
 

@@ -1523,6 +1523,9 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
 // blocked row without any reason is a result still being taken over, not a
 // blocker. After the grace period it is a concrete technical reporting gap.
 export const BLOCKER_GRACE_MS = 5 * 60000;
+// A waiting phase: the relay keeps it when the Mac's own report no longer lists
+// the finished run (fleet.js currentQueue), instead of "Worker-Abgleich ausstehend".
+export const BLOCKER_GRACE_PHASE = 'Wartet · Ergebnis wird übernommen';
 const BERLIN_MINUTE = new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 export function applyBlockerGrace(rows, previousTasks = [], now = Date.now()) {
   const previous = new Map((Array.isArray(previousTasks) ? previousTasks : []).map(row => [row?.id, row]));
@@ -1533,7 +1536,7 @@ export function applyBlockerGrace(rows, previousTasks = [], now = Date.now()) {
     const recorded = old && (old.attemptId ?? null) === (row.attemptId ?? null) ? Date.parse(old.blockerRecordedAt) : NaN;
     const since = Number.isFinite(recorded) && recorded <= now ? recorded : now;
     row.blockerRecordedAt = new Date(since).toISOString();
-    if (now - since < BLOCKER_GRACE_MS) { row.status = 'queued'; row.phase = 'Ergebnis wird übernommen'; continue; }
+    if (now - since < BLOCKER_GRACE_MS) { row.status = 'queued'; row.phase = BLOCKER_GRACE_PHASE; continue; }
     // A stable time, not a minute count: the diagnosis binds operator decisions (fleet.js taskVersion).
     const reason = `Seit ${BERLIN_MINUTE.format(since)} kein lesbares Ergebnis (✅/❌/❓ oder Begründung) des Laufs gemeldet.`;
     Object.assign(row, { blockedReason: reason, blockerReason: reason, reasonCode: 'completion_report_missing', responsibleRole: 'Technik',

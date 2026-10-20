@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { buildBlockedErrors, collectSnapshot, createClaimReader, listClaims, RESERVATION_LAG_PHASE } from './newsletter-monitor-bridge.mjs';
+import { buildBlockedErrors, collectSnapshot, createClaimReader, listClaims, RESERVATION_LAG_PHASE, BLOCKER_GRACE_PHASE } from './newsletter-monitor-bridge.mjs';
 const { createFleetStore } = createRequire(import.meta.url)('../team-server/fleet.js');
 const channel = 'C0C8HK2NDFE';
 const now = Date.parse('2026-10-12T17:00:00Z');
@@ -248,6 +248,17 @@ test('the relay knows the bridge\'s lagging-reservation phase', t => {
   store.workerReport('TEAM1234', { schema: 1, workerId: 'mac-1', sampledAt: new Date(now).toISOString(),
     service: { running: true, lastPollAt: new Date(now).toISOString() }, activity: { state: 'idle', acceptingTasks: true, runs: [] } });
   assert.equal(store.snapshot('TEAM1234').queue.tasks[0].phase, 'Worker-Abgleich ausstehend');
+});
+
+// Fehleraudit 19.10.2026: the result grace keeps its phase when the Mac's own
+// report no longer lists the just finished run.
+test('the relay keeps the bridge\'s result-grace phase after the Mac stops reporting the run', t => {
+  const { store } = storeFor(t);
+  store.updateQueue('TEAM1234', { source, blockedErrors: [], tasks: [{ ...task('queued'), workerId: 'mac-1', attemptId: 'run-a', phase: BLOCKER_GRACE_PHASE }] });
+  store.workerReport('TEAM1234', { schema: 1, workerId: 'mac-1', sampledAt: new Date(now).toISOString(),
+    service: { running: true, lastPollAt: new Date(now).toISOString() }, activity: { state: 'idle', acceptingTasks: true, runs: [] } });
+  const [row] = store.snapshot('TEAM1234').queue.tasks;
+  assert.deepEqual([row.status, row.phase], ['queued', BLOCKER_GRACE_PHASE]);
 });
 
 test('an #ai-fehler copy names its own owner and never inherits the queue row blocker fields', () => {
