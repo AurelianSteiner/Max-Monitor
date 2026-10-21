@@ -81,6 +81,14 @@ class MountedHistoryTests(unittest.TestCase):
 
 @unittest.skipUnless(can_mount(), 'requires Linux CAP_SYS_ADMIN and squashfs-tools')
 class AutomaticMountedHistoryTests(unittest.TestCase):
+    def setUp(self):
+        # Exercise actual SquashFS/overlay mounts and recovery independently
+        # of the production reserve on the shared CI filesystem. Unit tests
+        # separately verify rejection when capacity is below that reserve.
+        disk = patch.object(auto.shutil, 'disk_usage', return_value=type('Disk', (), {'total':100*1024**3,'free':80*1024**3})())
+        disk.start()
+        self.addCleanup(disk.stop)
+
     def fixture(self, root):
         source=root/'source';source.mkdir(mode=0o700)
         (source/'data').write_bytes(b'full original text, including all records\n'*100000)

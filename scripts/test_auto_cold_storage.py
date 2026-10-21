@@ -13,6 +13,11 @@ import install_cold_storage as installer
 
 class AutomaticStorageTests(unittest.TestCase):
     def setUp(self):
+        # Capacity policy has explicit low-space tests below. Other fixture
+        # scenarios must not depend on the runner's unrelated disk occupancy.
+        disk = patch.object(auto.shutil, 'disk_usage', return_value=type('Disk', (), {'total':100*1024**3,'free':80*1024**3})())
+        disk.start()
+        self.addCleanup(disk.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
