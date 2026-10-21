@@ -91,6 +91,7 @@ def unit_text():
 def plan(source):
     source = Path(source)
     return [(source / "quota_ledger.py", Path("/opt/max-monitor-quota/quota_ledger.py")),
+            (source / "sales_usage_backfill.py", Path("/opt/max-monitor-quota/sales_usage_backfill.py")),
             (source / "quota_usage.py", Path("/opt/max-monitor-quota/quota_usage.py")),
             (source / "quota_routing.py", Path("/opt/max-monitor-quota/quota_routing.py")),
             (source / "quota_worker.py", Path("/opt/max-monitor-quota/quota_worker.py")),

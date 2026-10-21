@@ -481,6 +481,32 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(q['windows']['seven_day'], {'used': 30, 'reset': RESET, 'at': NOW})
 
 class WorkerTests(unittest.TestCase):
+    def test_finished_sales_recovers_session_and_subagents_without_active_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            root = home / 'runs/sales-123.456-abcd'
+            root.mkdir(parents=True)
+            session = '12345678-1234-1234-1234-123456789abc'
+            (root / 'stream.jsonl').write_text('\n'.join(json.dumps(e) for e in [
+                {'type': 'system', 'subtype': 'init', 'session_id': session},
+                {'type': 'assistant', 'timestamp': ledger_module.iso(NOW)}]) + '\n')
+            sub = home / '.claude/projects/exact-project' / session / 'subagents/agent-a.jsonl'
+            sub.parent.mkdir(parents=True)
+            sub.write_text('')
+            unrelated = home / '.claude/projects/exact-project/other/subagents/agent-b.jsonl'
+            unrelated.parent.mkdir(parents=True)
+            unrelated.write_text('')
+            state = home / 'worker.sqlite'
+            with sqlite3.connect(state) as db:
+                db.execute('CREATE TABLE runs(run_id,task_id,task_name,run_dir,state,started_at,finished_at,queued_at)')
+            with patch.object(worker_module.Path, 'home', return_value=home):
+                rows = worker_module.run_inventory({'paths': {'state_db': str(state), 'runs_dir': str(home / 'runs')}}, 120, NOW + 100)
+            self.assertEqual(len(rows), 2)
+            self.assertEqual({r['task_id'] for r in rows}, {'sales:123.456'})
+            self.assertEqual({r['session'] for r in rows}, {session})
+            self.assertEqual({r['started'] for r in rows}, {ledger_module.iso(NOW)})
+            self.assertEqual({r['state'] for r in rows}, {'unverified'})
+
     def test_inventory_includes_phase_and_subagent_streams_in_the_same_logical_task(self):
         import sqlite3
         with tempfile.TemporaryDirectory() as directory:

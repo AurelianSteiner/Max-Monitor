@@ -107,6 +107,34 @@ policy_supported:policySupported,distribution_supported:distributionSupported,ru
     return config
 
 
+def sales_stream_identity(filename):
+    """Recover only exact session/time metadata after the active receipt is gone."""
+    session, started = None, None
+    try:
+        if Path(filename).is_symlink():
+            return session, started
+        with open(filename, "rb") as stream:
+            # Init and the first timestamp precede the large tool-result history.
+            while stream.tell() < 2 * 1024 * 1024:
+                line = stream.readline(MAX_LINE + 1)
+                if not line or len(line) > MAX_LINE:
+                    break
+                try:
+                    event = json.loads(line)
+                except (ValueError, UnicodeDecodeError):
+                    continue
+                candidate = event.get('session_id')
+                if isinstance(candidate, str) and re.fullmatch(r'[a-f0-9-]{36}', candidate):
+                    session = session or candidate
+                if timestamp(event.get('timestamp')) is not None:
+                    started = started or event['timestamp']
+                if session and started:
+                    break
+    except OSError:
+        pass
+    return session, started
+
+
 def run_inventory(config, hours, now):
     filename = Path(config["paths"]["state_db"]).resolve()
     db = sqlite3.connect(filename.as_uri() + "?mode=ro", uri=True, timeout=5)
@@ -155,13 +183,14 @@ def run_inventory(config, hours, now):
             customer = text(urlsplit(url or "").hostname)
         except (OSError, ValueError):
             pass
+        session_id, stream_started = sales_stream_identity(stream) if sales else (None, None)
         started = active.get("startedAt")
-        started = datetime.fromtimestamp(started / 1000, timezone.utc).isoformat() if isinstance(started, (int, float)) else None
+        started = datetime.fromtimestamp(started / 1000, timezone.utc).isoformat() if isinstance(started, (int, float)) else stream_started
         result.append({"run_id": directory.name, "task_id": "sales:" + sales[1] if sales else directory.name,
                        "title": "Sales · " + customer if sales and customer else directory.name,
                        "customer": customer, "kind": "sales" if sales else "other",
                        "started": started, "finished": None, "state": "running" if active else "unverified",
-                       "stream": str(stream), "session": active.get('sessionId')})
+                       "stream": str(stream), "session": active.get('sessionId') or session_id})
     # Slicing, filing, translations and reviews are part of the same customer
     # job. Include their streams without counting them as extra logical tasks.
     children = []
@@ -303,6 +332,12 @@ def send(config, payload):
             "-o", "IdentitiesOnly=yes", "-o", "Compression=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
             "-o", 'UserKnownHostsFile="' + os.path.expanduser(hub["known_hosts_file"]).replace('"', '\\"') + '"',
             host, "python3 /opt/max-monitor-quota/quota_ledger.py ingest"]
+    if config.get('backfill_db'):
+        destination = config['backfill_db']
+        if not re.fullmatch(r'/var/lib/max-monitor-quota/backfills/[a-zA-Z0-9_-]+/ledger.sqlite', destination):
+            raise ValueError('Invalid isolated Sales backfill destination')
+        args[-1] += ' --db ' + destination
+        payload = {**payload, 'sales_replay': True}
     result = subprocess.run(args, input=json.dumps(payload), text=True, capture_output=True, timeout=45, check=True)
     answer = json.loads(result.stdout)
     if answer.get("ok") is not True:
@@ -351,7 +386,8 @@ def collect(config, cache, hours=72, sender=send, now=None):
         temporary.replace(policy_path)
     STAGE = "inventory"
     inventory = [r for r in run_inventory(config, hours, now)
-                 if not r.get("finished") or (timestamp(r["finished"]) or 0) >= since]
+                 if (not r.get("finished") or (timestamp(r["finished"]) or 0) >= since)
+                 and (not config.get('sales_only') or r.get('kind') == 'sales')]
     errors = 0
     sent = 0
     # First announce every job, including jobs without Claude usage. This never
@@ -449,12 +485,18 @@ def main():
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--hours", type=int, default=72)
     parser.add_argument("--cache", default=str(Path.home() / ".local/share/max-monitor-quota/cursors.sqlite"))
+    parser.add_argument("--sales-backfill-db", help="Isolated Hub ledger; export only Sales with a separate cursor")
     args = parser.parse_args()
     if args.install:
         result = install()
     else:
         STAGE = "configuration"
-        result = collect(configuration(), args.cache, args.hours)
+        config = configuration()
+        if args.sales_backfill_db:
+            if Path(args.cache) == Path.home() / ".local/share/max-monitor-quota/cursors.sqlite":
+                parser.error('Sales backfill requires a separate --cache')
+            config.update(sales_only=True, backfill_db=args.sales_backfill_db)
+        result = collect(config, args.cache, args.hours)
     print(json.dumps(result, ensure_ascii=False))
 
 

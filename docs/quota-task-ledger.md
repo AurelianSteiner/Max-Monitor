@@ -1,5 +1,38 @@
 # Verbrauch & Aufwand
 
+## Sales-Abschluss und Nachziehen vorhandener Messdaten
+
+Der Mac-Beobachter liest die exakte Claude-Sitzung und den ersten Zeitstempel aus
+dem Anfang des Sales-Streams, auch wenn die aktive Laufdatei nach dem Abschluss
+bereits entfernt wurde. Damit bleiben die zugehörigen Unteragenten auffindbar.
+Der bestätigte Abschluss derselben zentralen Sales-Auftrags-ID schließt außerdem
+bereits erfasste, verwaiste Unterläufe. Später begonnene Versuche bleiben offen.
+
+Für historische Lücken arbeitet `sales_usage_backfill.py` ausschließlich auf einer
+SQLite-Sicherung. Geprüfte Roharchive aller parallelen Aufgaben werden dort
+wiederhergestellt, damit sich der Nenner der Verbrauchszuordnung nicht verändert.
+Danach werden vorhandene Sales-Streams der Macs über denselben Hub-Zugang mit
+eigenem Cursor nachgeliefert. Es gibt keine neuen Claude-Aufrufe.
+
+```sh
+python3 /opt/max-monitor-quota/sales_usage_backfill.py prepare \
+  --directory /var/lib/max-monitor-quota/backfills/sales-YYYYMMDD
+# Je Mac über Max Monitor; eigener Cursor, keine Änderung am normalen Cursor:
+python3 ~/.local/share/max-monitor-quota/quota_worker.py --once --hours 120 \
+  --cache ~/.local/share/max-monitor-quota/sales-backfill-YYYYMMDD.sqlite \
+  --sales-backfill-db /var/lib/max-monitor-quota/backfills/sales-YYYYMMDD/ledger.sqlite
+python3 /opt/max-monitor-quota/sales_usage_backfill.py finish \
+  --directory /var/lib/max-monitor-quota/backfills/sales-YYYYMMDD
+```
+
+Importiert werden nur vollständig belegte Sales-Aufgabensummen mit unveränderter,
+erneut bestätigter Abschlussidentität. Bereits vollständige Messungen bleiben
+erhalten; unvollständige Werte werden nur ohne Tokenverlust ersetzt. Der
+Tracking-Start, Produktionsaufträge und vorhandene Originalbelege bleiben erhalten.
+Ein Replay-Flag wird vom normalen Live-Ledger abgewiesen. Vorherige Datenbanken,
+ersetzte Messwerte und das Importergebnis bleiben als Rückfallbeleg erhalten.
+Fehlende Quoten werden weiterhin als unbekannt behandelt.
+
 ## Durchschnittswerte bei neuen Aufgaben und alle zwölf Stunden
 
 Der bestehende Hub-Beobachter berechnet sämtliche Aufgabenarten neu, sobald neue

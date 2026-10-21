@@ -243,6 +243,19 @@ class Ledger:
             self.averages_changed('queue_changed')
             self.meta('average_queue_signature', signature)
         self.meta("task_context", context)
+        # A completed Sales job closes every recorded phase, including subagent
+        # streams that disappeared from inventory with the active receipt.
+        reconciled = 0
+        for key, facts in context.items():
+            finished = stamp(facts.get('finished'))
+            if not key.startswith('task:sales:') or facts.get('state') != 'completed' or finished is None:
+                continue
+            reconciled += self.db.execute("""UPDATE runs SET state='completed',finished=?
+                WHERE kind='sales' AND task_id=? AND (started IS NULL OR started<=?)
+                AND state IN ('running','queued','unverified')""",
+                (finished, key[5:], finished)).rowcount
+        if reconciled:
+            self.averages_changed('task_changed')
         self.meta("last_fleet_sample", iso(now))
         self.db.commit()
 
@@ -257,6 +270,8 @@ class Ledger:
         saved_context = self.db.execute("SELECT value FROM metadata WHERE key='task_context'").fetchone()
         context = json.loads(saved_context[0]) if saved_context else {}
         since = self.setting("tracking_since", 0)
+        if payload.get('sales_replay') and not self.setting('sales_backfill_staging'):
+            raise ValueError('Sales replay requires an isolated backfill ledger')
         packet = decode_packet(payload['usage_packet'], worker) if payload.get('usage_packet') else None
         with self.db:
             reasons = set()
@@ -286,6 +301,10 @@ class Ledger:
                 task_id = clean(run.get("task_id"), 300)
                 kind = run.get("kind") if run.get("kind") in KINDS else "other"
                 known = context.get("run:" + run_id) or (context.get("task:" + task_id) if kind == "sales" else None) or {}
+                if (kind == 'sales' and stamp(run.get('started')) is not None
+                        and stamp(known.get('finished')) is not None
+                        and stamp(run['started']) > stamp(known['finished'])):
+                    known = {**known, 'finished': None, 'state': None}
                 if not run_id or not task_id:
                     continue
                 finished = stamp(known.get("finished") or run.get("finished"))
@@ -293,7 +312,7 @@ class Ledger:
                     continue
                 job = kind + ":" + task_id
                 compact = self.db.execute("SELECT finished FROM compact_jobs WHERE job=?", (job,)).fetchone()
-                if compact and finished is not None and finished <= compact[0] and now - compact[0] > 48 * 3600:
+                if (not payload.get('sales_replay') or kind != 'sales') and compact and finished is not None and finished <= compact[0] and now - compact[0] > 48 * 3600:
                     continue
                 fields = 'job,title,customer,started,finished,state,evidence_errors,pending_scan'
                 prior = self.db.execute('SELECT ' + fields + ' FROM runs WHERE worker=? AND run_id=?', (worker, run_id)).fetchone()
@@ -665,16 +684,17 @@ class Ledger:
         return {"schema": SCHEMA, "accounts": [{"account": a, "tasks_per_week": None} for a in selected],
                 "tasks_per_week": None, "reason": "quota_allocation_not_calibrated", "mix": mix}
 
-    def dashboard(self, now=None):
+    def dashboard(self, now=None, replay_sales=False):
         """Rolling five-day averages over retained compressed task records."""
         now = time.time() if now is None else now
         since = self.setting("tracking_since", now)
-        report = self.report(min(48, max(1, (now - since) / 3600 + 1)), now)
+        report = self.report(max(1, (now - since) / 3600 + 1) if replay_sales
+                             else min(48, max(1, (now - since) / 3600 + 1)), now)
         archived = {r["job"]: json.loads(zlib.decompress(r["payload"])) for r in self.db.execute("SELECT * FROM compact_jobs")}
         jobs = dict(archived)
         terminal = {"fertig", "completed", "failed", "abgebrochen", "zeitlimit", "blockiert", "technisch_blockiert", "abgebrochen_neustart"}
         for j in report["jobs"]:
-            if j["job"] in archived and stamp(j["started"]) is not None and stamp(j["started"]) < now - 48 * 3600:
+            if (not replay_sales or j['kind'] != 'sales') and j["job"] in archived and stamp(j["started"]) is not None and stamp(j["started"]) < now - 48 * 3600:
                 continue  # Never replace a full archived result with a partial window.
             closed = bool(j["finished"]) and not j["in_progress"] and bool(terminal.intersection(j["states"]))
             carryover = not j["started"] or stamp(j["started"]) < since
@@ -754,7 +774,7 @@ class Ledger:
         cutoff = now - 48 * 3600
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            old_jobs = [r[0] for r in self.db.execute("SELECT job FROM compact_jobs WHERE finished<?", (cutoff,))
+            old_jobs = [] if replay_sales else [r[0] for r in self.db.execute("SELECT job FROM compact_jobs WHERE finished<?", (cutoff,))
                         if jobs[r[0]]["closed"]]
             archived_rows = {"events": [], "runs": [], "usage_features": [], "tool_usage": []}
             for job in old_jobs:
@@ -763,7 +783,7 @@ class Ledger:
                 archived_rows['usage_features'].extend(dict(r) for r in self.db.execute(
                     'SELECT * FROM usage_features WHERE event_id IN (SELECT id FROM events WHERE job=?)', (job,)))
                 archived_rows['tool_usage'].extend(dict(r) for r in self.db.execute('SELECT * FROM tool_usage WHERE job=?', (job,)))
-            archived_rows["samples"] = [dict(r) for r in self.db.execute("SELECT * FROM samples WHERE at<?", (cutoff - 1800,))]
+            archived_rows["samples"] = [] if replay_sales else [dict(r) for r in self.db.execute("SELECT * FROM samples WHERE at<?", (cutoff - 1800,))]
             archived_rows["account_resets"] = [dict(r) for r in self.db.execute('SELECT * FROM account_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))]
             self.archive_rows(archived_rows, now)
             for job in old_jobs:
@@ -771,7 +791,8 @@ class Ledger:
                 self.db.execute('DELETE FROM tool_usage WHERE job=?', (job,))
                 self.db.execute("DELETE FROM events WHERE job=?", (job,))
                 self.db.execute("DELETE FROM runs WHERE job=?", (job,))
-            self.db.execute("DELETE FROM samples WHERE at<?", (cutoff - 1800,))
+            if not replay_sales:
+                self.db.execute("DELETE FROM samples WHERE at<?", (cutoff - 1800,))
             self.db.execute('DELETE FROM account_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))
         account_groups = group(by_account)
         return {"schema": 2, "generated_at": iso(now), "tracking_since": iso(since),

@@ -120,6 +120,8 @@ jobs:
 
       - name: Test quota accounting and replay safety
         run: python3 -m unittest discover -s scripts -p test_quota_tracker.py -v
+      - name: Test isolated Sales usage recovery
+        run: python3 -m unittest discover -s scripts -p test_sales_usage_backfill.py -v
 
       - name: Check localization consistency
         run: python3 scripts/check_l10n.py
