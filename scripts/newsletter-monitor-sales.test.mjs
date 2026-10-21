@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { readLocalSales, collectSnapshot, syncOnce } from './newsletter-monitor-bridge.mjs';
+import { readLocalSales, salesProgress, collectSnapshot, syncOnce } from './newsletter-monitor-bridge.mjs';
 
 const require = createRequire(import.meta.url);
 const { createFleetStore } = require('../team-server/fleet.js');
@@ -22,6 +22,59 @@ async function fixture(t, jobs) {
   }
   return directory;
 }
+
+const event = (stage, mail = 0, state = 'done', offset = 0) => ({ stage, mail, state, at: new Date(now - 60000 + offset).toISOString() });
+
+test('Sales progress follows completed work across three mails and V9 reviews, not elapsed time', () => {
+  const events = ['shop_research', 'brand_system', 'briefings'].map(stage => event(stage));
+  events.push(...['ideas', 'opener', 'mail_build'].map(stage => event(stage, 1)),
+    event('opener_review', 1), event('reader_review', 2, 'start', 1000));
+  const value = job({ monitor: { events, elapsed_seconds: 1 } });
+  assert.deepEqual(salesProgress(value), { progress: 44, step: 'Leserprüfung · Mail 2' });
+  value.monitor.elapsed_seconds = 86400;
+  assert.equal(salesProgress(value).progress, 44);
+  // Old review events must not add a second set of weights to a V9 build.
+  value.monitor.events.push(event('fact_check'), event('one_sentence'), event('customer_review'));
+  assert.equal(salesProgress(value).progress, 44);
+  value.monitor.events.push(event('reader_review', 2, 'done', 2000), event('acceptance', 0, 'done', 3000));
+  assert.deepEqual(salesProgress(value), { progress: 50, step: 'Endabnahme und Kundenblick abgeschlossen' });
+});
+
+test('Sales delivery retains sub-100 progress until the three-PDF completion is confirmed', () => {
+  assert.deepEqual(salesProgress(job({ status: 'reserved' })), { progress: 0, step: 'Reserviert' });
+  assert.deepEqual(salesProgress(job()), { progress: 5, step: 'Vorbereitung' });
+  assert.deepEqual(salesProgress(job({ monitor: { phase: 'validation' } })), { progress: 5, step: 'Ergebnisvalidierung' });
+  for (let uploaded = 0; uploaded <= 3; uploaded++) {
+    const files = Array.from({ length: 3 }, (_, i) => ({ uploaded: i < uploaded }));
+    assert.deepEqual(salesProgress(job({ status: 'delivery', files })),
+      { progress: 95 + uploaded, step: 'PDF-Auslieferung und Slack-Prüfung' });
+  }
+  assert.deepEqual(salesProgress(job({ status: 'done' })), { progress: 100, step: 'Fertig' });
+  assert.equal(salesProgress(job({ monitor: { events: [null, event('unknown'), event('shop_research', 4),
+    { ...event('shop_research'), at: 'invalid' }] } })).progress, 5);
+});
+
+test('live Sales progress survives relay storage and refresh without hiding pauses or stale workers', async t => {
+  const monitor = { events: [event('shop_research'), event('brand_system', 0, 'start', 1000)] };
+  const directory = await fixture(t, [job({ monitor }), job({ monitor: { ...monitor, paused: true } }),
+    job({ monitor, observed_at: now - 31 * 60000 })]);
+  const store = createFleetStore(path.join(directory, 'relay'), () => now);
+  store.updateQueue('SALESTEST', { tasks: await readLocalSales(directory, now), source: { name: 'Sales' } });
+  let saved = store.snapshot('SALESTEST').queue.tasks;
+  assert.equal(saved[0].progress, 20);
+  assert.equal(saved[0].step, 'Designsystem');
+  assert.equal(saved[1].progress, 20);
+  assert.equal(saved[1].step, undefined);
+  assert.match(saved[1].phase, /Pausiert/);
+  assert.equal(saved[2].step, undefined);
+  assert.equal(saved[2].phase, 'Worker-Meldung ausstehend');
+  await fs.writeFile(path.join(directory, ts(0), 'job.json'), JSON.stringify(job({ monitor: {
+    events: [event('shop_research'), event('brand_system'), event('briefings', 0, 'start', 1000)] } })));
+  store.updateQueue('SALESTEST', { tasks: await readLocalSales(directory, now), source: { name: 'Sales' } });
+  saved = createFleetStore(path.join(directory, 'relay'), () => now).snapshot('SALESTEST').queue.tasks;
+  assert.equal(saved[0].progress, 28);
+  assert.equal(saved[0].step, 'Themen und Briefings');
+});
 
 test('Sales counts include HTTP, all lifecycle states and old terminal jobs through the real relay', async t => {
   const directory = await fixture(t, [job({ url: 'http://cairo.de/' }), job(), job({ status: 'delivery' }),
