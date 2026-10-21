@@ -174,6 +174,73 @@ test('portable PM dispatch remains waiting while the central checkpoint publicat
   }
 });
 
+// Fehleraudit 21.10.2026 (Teaworld 19.10., Kamelur 20.10.): 29 of 34 saved answers
+// were taken over within 1.8 min; two stayed unclaimed for about two hours unnoticed.
+test('a complete saved answer left unclaimed for 15 min is a technical stall naming the owner Mac', () => {
+  const answeredAt = Date.parse('2026-10-19T12:58:16Z');
+  const stalled = (overrides = {}) => set('newsletter', { workerId: 'macworker-5-schwarz',
+    questions: [{ id: 'Q1', title: 'Ersatzprodukt?', status: 'accepted', revision: 1, answer: { value: 'Govinda' } }], ...overrides });
+  const job = { setId: 's1', questionId: 'Q1', sourceVersion: 'v1', revision: 1, state: 'queued', createdAt: answeredAt };
+  const current = () => row('newsletter', { workerId: 'macworker-5-schwarz' });
+  for (const minutes of [15, 16, 111]) {
+    const next = current();
+    applyPmQuestions([next], { sets: [stalled()], jobs: [job] }, new Map(), { now: answeredAt + minutes * 60000 });
+    assert.equal(next.status, 'blocked', `${minutes} min`); assert.equal(next.phase, 'Blockiert · PM-Antwort nicht übernommen');
+    assert.equal(next.reasonCode, 'continuation_stalled'); assert.equal(next.responsibleRole, 'Technik');
+    // A stable answer time, not a minute count: the diagnosis binds operator decisions (fleet.js taskVersion).
+    assert.equal(next.blockedReason, 'Gespeicherte PM-Antwort seit 19.10., 14:58 nach über 15 min nicht übernommen (Besitzer: Schwarz). Antwort: Q1: Govinda');
+    assert.equal(next.blockerReason, next.blockedReason); assert.match(next.nextStep, /^Auf Schwarz /);
+    assert.doesNotMatch(`${next.blockedReason} ${next.nextStep}`, /macworker-5-schwarz/);
+    assert.equal(next.updatedAt, '2026-10-19T13:13:16.000Z'); assert.equal(next.attemptId, 'run1');
+  }
+  for (const minutes of [0.2, 1.8, 14.9]) {
+    const next = current();
+    applyPmQuestions([next], { sets: [stalled()], jobs: [job] }, new Map(), { now: answeredAt + minutes * 60000 });
+    assert.equal(next.status, 'queued', `${minutes} min`); assert.equal(next.phase, 'Wartet auf Fortsetzung');
+    assert.equal(next.reasonCode, 'continuation_pending'); assert.equal(next.responsibleRole, 'Produktion');
+  }
+  // The newest answer of the set starts the clock (Bos Food: Q1 waited 26 h for Q2).
+  const late = { ...job, questionId: 'Q2', createdAt: answeredAt + 26 * 3600000 };
+  const both = stalled({ questions: [...stalled().questions, { id: 'Q2', title: 'Herkunft?', status: 'accepted', revision: 1, answer: { value: 'EU' } }] });
+  const fresh = current(); applyPmQuestions([fresh], { sets: [both], jobs: [job, late] }, new Map(), { now: late.createdAt + 5 * 60000 });
+  assert.equal(fresh.reasonCode, 'continuation_pending');
+  // An unknown answer time never escalates.
+  const undated = current(); applyPmQuestions([undated], { sets: [stalled()], jobs: [{ ...job, createdAt: undefined }] }, new Map(), { now: answeredAt + 3600000 });
+  assert.equal(undated.reasonCode, 'continuation_pending');
+});
+
+test('an old answer still waiting for a person or already taken over is no stall', () => {
+  const answeredAt = Date.parse('2026-10-19T12:58:16Z'), now = answeredAt + 26 * 3600000;
+  const job = { setId: 's1', questionId: 'Q1', sourceVersion: 'v1', revision: 1, state: 'queued', createdAt: answeredAt };
+  const accepted = { id: 'Q1', title: 'Produkt behalten?', status: 'accepted', revision: 1, answer: { value: 'Ja' } };
+  // Partial answer: the remaining question stays a PM decision.
+  const partial = row('newsletter');
+  applyPmQuestions([partial], { sets: [set('newsletter', { questions: [accepted, { id: 'Q2', title: 'Herkunftsangabe?', status: 'open', revision: 1 }] })], jobs: [job] }, new Map(), { now });
+  assert.equal(partial.status, 'queued'); assert.equal(partial.phase, 'Wartet · PM-Rückfrage'); assert.equal(partial.reasonCode, 'pm_decision_pending');
+  // The worker claims only when every set of the order is settled (pm-questions.js sameTaskReady).
+  for (const sibling of [set('translation', { id: 's2', language: 'FR', runId: 'other', questions: [{ id: 'Q1', title: 'Code?', status: 'open', revision: 1 }] }),
+    set('translation', { id: 's2', language: 'FR', runId: 'other', questions: [{ id: 'Q1', status: 'conflict', revision: 2 }] })]) {
+    const waiting = row('translation', { id: 'clickup:translation-en:t1' });
+    applyPmQuestions([waiting], { sets: [set('translation', { language: 'EN', questions: [accepted] }), sibling], jobs: [job] }, new Map(), { now });
+    assert.equal(waiting.reasonCode, 'continuation_pending', sibling.questions[0].status);
+  }
+  const conflict = row('newsletter');
+  applyPmQuestions([conflict], { sets: [set('newsletter', { questions: [accepted, { id: 'Q2', status: 'conflict', revision: 2 }] })], jobs: [job] }, new Map(), { now });
+  assert.equal(conflict.reasonCode, 'continuation_pending');
+  // A started claim or dispatch is progress of the continuation itself.
+  for (const state of ['running', 'uncertain', 'dispatched']) {
+    const claimed = row('newsletter');
+    applyPmQuestions([claimed], { sets: [set('newsletter', { questions: [accepted, { ...accepted, id: 'Q2' }] })],
+      jobs: [job, { ...job, questionId: 'Q2', state, runId: 'run1', dispatchRunId: 'run1' }] }, new Map(), { now });
+    assert.equal(claimed.reasonCode, 'continuation_pending', state);
+  }
+  // A test or archived journal of the same order never holds a production answer back.
+  const unrelated = row('newsletter');
+  applyPmQuestions([unrelated], { sets: [set('newsletter', { questions: [accepted] }), set('newsletter', { id: 's2', mode: 'test', runId: 'x', questions: [{ id: 'Q9', status: 'open', revision: 1 }] }),
+    set('newsletter', { id: 's3', archivedAt: 1, runId: 'y', questions: [{ id: 'Q8', status: 'open', revision: 1 }] })], jobs: [job] }, new Map(), { now });
+  assert.equal(unrelated.reasonCode, 'continuation_stalled'); assert.match(unrelated.blockedReason, /Besitzer: mac1\)/);
+});
+
 test('archived journals cannot replace an active decision or revive a retired question', () => {
   const old=set('klaviyo',{id:'archived',archivedAt:1234});
   const only=row();applyPmQuestions([only],{sets:[old]});assert.equal(only.status,'blocked');

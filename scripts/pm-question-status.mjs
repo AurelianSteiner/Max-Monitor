@@ -3,6 +3,33 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const displayText = (value, limit) => String(value || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, limit).trim();
+// Fehleraudit 21.10.2026: 29 of 34 saved PM answers were taken over within 1.8 min.
+// A complete answer still unclaimed after 15 min (Teaworld, Kamelur: about 2 h
+// unnoticed) is a technical stall on the owner Mac, not production waiting.
+export const CONTINUATION_STALL_MS = 15 * 60000;
+const BERLIN_MINUTE = new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+// Visible worker names are the central colour names, never technical IDs.
+const WORKER_NAMES = (() => { try { return require('../team-server/worker-identities.json'); } catch { return {}; } })();
+const workerName = id => WORKER_NAMES[id]?.name || id || 'unbekannter Mac';
+// Questions only a person can still settle. While one exists in any set of the
+// order, the worker may not claim the saved answer (pm-questions.js sameTaskReady).
+const UNSETTLED = ['open', 'waiting', 'conflict', 'failed'];
+
+// Answer time of a complete set whose saved answer is still unclaimed after
+// CONTINUATION_STALL_MS; the newest answer starts the clock. A started claim or
+// dispatch is progress, an unknown answer time never escalates.
+function stalledAnswer(set, sets, jobs, now) {
+  const own = jobs.filter(job => job.setId === set.id);
+  if (own.some(job => ['running', 'uncertain', 'dispatched'].includes(job.state))
+    || sets.some(other => (other.id === set.id || other.mode === set.mode && !other.archivedAt && other.taskId === set.taskId)
+      && other.questions.some(q => UNSETTLED.includes(q.status)))) return null;
+  const answered = own.filter(job => job.state === 'queued' && job.sourceVersion === set.sourceVersion
+    && set.questions.some(q => q.id === job.questionId && q.status === 'accepted' && q.revision === job.revision))
+    .map(job => job.createdAt);
+  if (!answered.length || !answered.every(Number.isFinite)) return null;
+  const at = Math.max(...answered);
+  return now - at >= CONTINUATION_STALL_MS ? at : null;
+}
 
 export function readPmQuestions(file, openDatabase = file => new (require('node:sqlite').DatabaseSync)(file, { readOnly: true })) {
   if (!fs.existsSync(file)) return { sets: [], jobs: [] };
@@ -14,7 +41,7 @@ export function readPmQuestions(file, openDatabase = file => new (require('node:
   } finally { db.close(); }
 }
 
-export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}, bindings = new Map()) {
+export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}, bindings = new Map(), { now = Date.now() } = {}) {
   for (const row of rows) {
     const run = row.run || bindings.get(row.id);
     if (!['blocked', 'failed'].includes(row.status) || !run || (row.attemptId && row.attemptId !== run.id)) continue;
@@ -51,6 +78,21 @@ export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}, bindings =
       row.responsibleRole = technical ? 'Technik' : 'PM';
       row.nextStep = displayText('Die geänderte Quelle mit dem gespeicherten Stand abgleichen; anschließend die vorhandene Antwort im selben Auftrag fortsetzen.', 300);
       row.updatedAt = new Date(Math.max(Date.parse(row.updatedAt), Number(sourceChange.at) || 0)).toISOString();
+      continue;
+    }
+    const stalledAt = !open.length && stalledAnswer(set, sets, jobs, now);
+    if (stalledAt) {
+      const owner = workerName(set.workerId);
+      const saved = set.questions.filter(q => q.answer).map(q => `${q.id}: ${q.answer.value}`).join(' · ');
+      // A stable answer time, not a minute count: the diagnosis binds operator decisions (fleet.js taskVersion).
+      row.status = 'blocked';
+      row.phase = 'Blockiert · PM-Antwort nicht übernommen';
+      row.blockedReason = displayText(`Gespeicherte PM-Antwort seit ${BERLIN_MINUTE.format(stalledAt)} nach über ${CONTINUATION_STALL_MS / 60000} min nicht übernommen (Besitzer: ${owner}).${saved ? ` Antwort: ${saved}` : ''}`, 500);
+      row.blockerReason = row.blockedReason;
+      row.reasonCode = 'continuation_stalled';
+      row.responsibleRole = 'Technik';
+      row.nextStep = displayText(`Auf ${owner} prüfen, warum der Fragen-Worker die gespeicherte Antwort nicht übernimmt; Antwort und Arbeitsstand erhalten.`, 300);
+      row.updatedAt = new Date(Math.max(Date.parse(row.updatedAt), stalledAt + CONTINUATION_STALL_MS)).toISOString();
       continue;
     }
     row.blockedReason = displayText(open.map(q => `${q.id}: ${q.title}`).join(' · '), 500) || undefined;

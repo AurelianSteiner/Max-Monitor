@@ -494,6 +494,15 @@ erhaltenen Antwort. Technische Figma-Abweichungen bleiben bis zum belegten
 Abgleich blockiert; geänderte fachliche Vorgaben warten auf den PM. Ein alter
 Checkpoint darf daraus keine neue angeblich unbeantwortete Produktfrage oder
 unzugeordnete technische Blockade machen.
+Ist ein Fragensatz vollständig beantwortet und hat der Besitzer-Mac die
+gespeicherte Antwort 15 Minuten nach der letzten Antwort noch nicht übernommen,
+zeigt Max Monitor „Blockiert · PM-Antwort nicht übernommen“ (Technik) mit
+Antwortzeit und Farbnamen des Besitzer-Macs (Fehleraudit 21.10.2026). Im
+Normalfall übernimmt der Worker eine Antwort in unter zwei Minuten. Eine
+Teilantwort, eine noch offene, widersprüchliche oder fehlgeschlagene Frage in
+einem Fragensatz desselben Auftrags und eine bereits begonnene Übernahme bleiben
+gewöhnliches Warten. Max Monitor schreibt dazu nichts nach Slack und greift nicht
+in die Fortsetzung ein.
 Ist eine EN-Mail unter derselben ClickUp-ID bereits im Review, blendet die Ansicht
 ihren unreservierten alten Übersetzungs-Tag-Eintrag aus. Die abgeschlossene Mail
 bleibt erhalten; aktive oder blockierte Übersetzungen werden nicht ausgeblendet.

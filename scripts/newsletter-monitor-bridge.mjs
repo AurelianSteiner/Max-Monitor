@@ -1667,7 +1667,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   if (checkpointResult.status === 'fulfilled') applyStoredCheckpoints(queue, checkpointResult.value, bindings);
   // A stored terminal upload may first become blocked here. Its open question
   // still belongs to the exact source attempt after the producer Mac is cleared.
-  applyPmQuestions(queue, questionResult.value, bindings);
+  applyPmQuestions(queue, questionResult.value, bindings, { now });
   queue.push(...salesResult.value);
   applyBlockerGrace(queue, previousTasks, now);
   applyBlockerContexts(queue, tasks, now);
