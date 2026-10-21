@@ -832,6 +832,7 @@
     renderQueue(items);
     renderEvents(attention);
     refreshOpenTask();
+    refreshMachineWork(devices);
     if (scrollPosition) window.scrollTo({ ...scrollPosition, behavior: "instant" });
   }
   function openQueue(status, workflowValue = "", period = "all") {
@@ -1960,13 +1961,57 @@
     }
     openTask = { id: task.id, mail: keep.mail ?? task.previews?.[0]?.title, signature: taskSignature(task) };
   }
-  // One line per accepted task: ClickUp titles often contain " · " themselves.
+  // Each accepted task keeps its own reported progress, including a real 0 %.
   function workingOn(machine) {
     const field = detailField("Arbeitet an", idleLabel(machine), true);
+    field.classList.add("machine-work");
+    field.dataset.workerId = machine.workerId || "";
+    field.dataset.deviceId = machine.deviceId || "";
     const active = activeTasks(machine);
-    if (active.length) field.querySelector("strong").replaceChildren(...active.map((task) =>
-      node("span", "detail-line", `${task.status === "queued" ? "Reserviert: " : ""}${task.title || task.id}`)));
+    field.dataset.signature = JSON.stringify([idleLabel(machine), active.map(task =>
+      [task.id, task.title, task.status, task.progress, task.step, task.phase])]);
+    if (!active.length) return field;
+    field.querySelector("strong").remove();
+    const list = node("ul", "machine-tasks");
+    for (const task of active) {
+      const item = node("li", "machine-task");
+      const head = node("div", "machine-task-heading");
+      head.append(node("strong", "machine-task-title", task.title || task.id));
+      const reserved = task.status === "queued";
+      const progress = Number.isFinite(task.progress) ? Math.min(100, Math.max(0, task.progress)) : null;
+      if (!reserved && progress !== null) {
+        head.append(node("span", "machine-task-percent", `${progress} %`));
+        const track = node("div", "usage-track");
+        track.setAttribute("role", "progressbar");
+        track.setAttribute("aria-label", `Fortschritt: ${task.title || task.id}`);
+        track.setAttribute("aria-valuemin", "0");
+        track.setAttribute("aria-valuemax", "100");
+        track.setAttribute("aria-valuenow", String(progress));
+        const fill = node("div", "usage-fill");
+        fill.style.width = `${progress}%`;
+        track.append(fill);
+        item.append(head, track);
+      } else {
+        item.append(head, node("span", "machine-task-state", reserved
+          ? "Reserviert · startet gleich" : "Fortschritt noch nicht gemeldet"));
+      }
+      if (task.step || task.phase) item.append(node("span", "machine-task-step", task.step || task.phase));
+      list.append(item);
+    }
+    field.append(list);
     return field;
+  }
+  // Update only the work list so an open Mac dialog keeps its scroll and focus.
+  function refreshMachineWork(devices) {
+    if (!$("detail-dialog").open) return;
+    const field = $("detail-body").querySelector(".machine-work");
+    if (!field) return;
+    const machine = devices.find(entry => field.dataset.deviceId
+      ? entry.deviceId === field.dataset.deviceId
+      : field.dataset.workerId && entry.workerId === field.dataset.workerId);
+    if (!machine) return;
+    const next = workingOn(machine);
+    if (next.dataset.signature !== field.dataset.signature) field.replaceWith(next);
   }
   function machineDetails(machine) {
     const account = machineAccount(machine);

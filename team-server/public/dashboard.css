@@ -600,6 +600,13 @@ dialog .form-hint { font-size: 12px; margin: 10px 0; }
 .detail-grid strong { font-weight: 500; overflow-wrap: anywhere; }
 .detail-grid .detail-line { display: block; }
 .detail-grid .detail-line + .detail-line { margin-top: 4px; }
+.machine-tasks { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 16px; }
+.machine-task { display: grid; gap: 4px; min-width: 0; }
+.machine-task-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.machine-task-title { min-width: 0; }
+.machine-task-percent { flex-shrink: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+.machine-task .usage-fill { background: var(--st-running); transition: none; }
+.machine-task-state, .machine-task-step { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .detail-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 #detail-body > .usage-line { font-size: 12px; margin-top: 10px; }
 #detail-body > .button { margin-top: 16px; margin-right: 8px; }
