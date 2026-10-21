@@ -201,6 +201,13 @@
     return ["newsletter", "upload", "translation"].includes(task.workflow)
       ? `${task.workflow}:${task.contentKind || "unknown"}` : task.workflow;
   }
+  function taskKindBadge(task) {
+    const kind = task.workflow || "";
+    const label = node("span", "workflow-name task-kind", workflowNames[kind] || kind || "Aufgabenart unbekannt");
+    label.dataset.workflow = kind;
+    label.title = `Aufgabenart: ${label.textContent}`;
+    return label;
+  }
   function matchesWorkflow(task, filter) {
     return !filter || task.workflow === filter || workflowKey(task) === filter;
   }
@@ -1289,6 +1296,7 @@
       if (failure) current.title = machineAttentionReasons(machine).join("\n");
       if (active.length && !failure) current.title = active.map((task) => task.title || task.id).join("\n");
       taskCell.append(current);
+      if (active.length) taskCell.append(taskKindBadge(active[0]));
       if (failure && active.length) taskCell.append(node("span", "fleet-sub", `Zuletzt: ${active[0].title || active[0].id}`));
       else if (active[0]?.status === "queued") taskCell.append(node("span", "fleet-sub", "reserviert · startet gleich"));
       const load = machineLoad(machine);
@@ -1451,6 +1459,7 @@
       const current = node("span", "machine-current", active.length
         ? `${active[0].status === "queued" ? "Reserviert: " : ""}${active[0].title || active[0].id}` : idleLabel(machine));
       current.title = current.textContent;
+      if (active.length) current.prepend(taskKindBadge(active[0]), " ");
       const detail = node("button", "text-button", "Details ↗");
       detail.setAttribute("aria-label", `Details für ${label}`);
       detail.addEventListener("click", () => machineDetails(machine));
@@ -1931,12 +1940,13 @@
     field.dataset.deviceId = machine.deviceId || "";
     const active = activeTasks(machine);
     field.dataset.signature = JSON.stringify([idleLabel(machine), active.map(task =>
-      [task.id, task.title, task.status, task.progress, task.step, task.phase])]);
+      [task.id, task.title, task.workflow, task.status, task.progress, task.step, task.phase])]);
     if (!active.length) return field;
     field.querySelector("strong").remove();
     const list = node("ul", "machine-tasks");
     for (const task of active) {
       const item = node("li", "machine-task");
+      item.append(taskKindBadge(task));
       const head = node("div", "machine-task-heading");
       head.append(node("strong", "machine-task-title", task.title || task.id));
       const reserved = task.status === "queued";

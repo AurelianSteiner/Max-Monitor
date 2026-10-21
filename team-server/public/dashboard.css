@@ -514,6 +514,8 @@ button.task-title { max-width: 100%; padding: 0; border: 0; background: none; fo
 .workflow-name[data-workflow="upload"] { background: #efe7fb; color: #6737a0; }
 .workflow-name[data-workflow="sales"] { background: #fde9f0; color: #9d315d; }
 .workflow-name[data-workflow="worker-errors"] { background: #fce8e7; color: #a02e2f; }
+.task-kind { width: fit-content; flex-shrink: 0; vertical-align: middle; }
+.fleet-row .task-kind { margin-top: 4px; }
 .phase { display: block; margin-top: 3px; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .phase.blocked-reason { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; white-space: normal; overflow-wrap: anywhere; }
 .progress { display: flex; align-items: center; gap: 8px; min-width: 0; }
