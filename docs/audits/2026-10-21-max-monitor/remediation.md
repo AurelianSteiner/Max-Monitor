@@ -2,7 +2,7 @@
 
 Die 19 technischen Punkte aus dem Audit sind im Branch `codex/audit-technical-fixes` korrigiert oder als bereits korrigierter Hauptstand durch Regressionstests abgesichert. Die beiden zusätzlichen technischen Vertragsbeobachtungen zu Schlüssellängen und abgelaufenen Account-Aufträgen sind ebenfalls behoben. Die fachliche Frage F11 bleibt separat in [Offene Entscheidungen](open-decisions.md).
 
-Die Änderungen basieren auf Hauptstand `aa3f426a60b7ea2a4a76218bad5231df166f5daa`. Der ältere Audit-Checkout und seine fremden lokalen Änderungen wurden nicht verändert. Die Korrekturen wurden lokal und mit künstlichen Daten in isolierten Ablagen getestet. Ein Produktionsrollout ist nicht erfolgt.
+Die Änderungen basieren auf Hauptstand `aa3f426a60b7ea2a4a76218bad5231df166f5daa`. Der ältere Audit-Checkout und seine fremden lokalen Änderungen wurden nicht verändert. Die erste Abnahme erfolgte lokal und mit künstlichen Daten in isolierten Ablagen. Der anschließende Produktionsrollout ist in [Live-Ausrollung und Abnahme](rollout.md) dokumentiert.
 
 ## Korrekturen und Nachweise
 
@@ -50,7 +50,7 @@ Die nativen Regressionen kompilieren die unveränderten aktuellen Methoden aus d
 
 Die Linux-Auslassungen betreffen Mount-Prüfungen für Cold Storage mit `CAP_SYS_ADMIN` und SquashFS. Eine Prüfung mit echten Providerkonten, geschlossenem Worker-Deckel und ausgerolltem Produktionsstand steht außerhalb dieser lokalen Abnahme.
 
-Alle geprüften geänderten Quelldateien sind mit SHA-256 in [verification.json](verification.json) erfasst. Die technische Umsetzung ist für die Integration vorbereitet; Live-Dienste und Worker benötigen anschließend einen eigenen Rollout mit frischem Readback.
+Alle damals geprüften geänderten Quelldateien sind mit SHA-256 in [verification.json](verification.json) erfasst. Die anschließende Integration und Live-Ausrollung mit eigenem Readback stehen in [Live-Ausrollung und Abnahme](rollout.md) und [live-verification.json](live-verification.json).
 
 Die Textbelege enthalten die Ergebnisabschnitte der Logs. Die vollständigen Protokolle sind zusätzlich lokal archiviert; Pfade und SHA-256 stehen in `verification.json`.
 

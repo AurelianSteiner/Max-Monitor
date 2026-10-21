@@ -1,0 +1,284 @@
+{
+  "schema": 1,
+  "deployed": true,
+  "verifiedAt": "2026-10-21T16:52:38.577629+00:00",
+  "runtime": {
+    "sourceRevision": "2a3090fa59a190ae26157595606bba9fbe7051c9",
+    "fileCount": 51,
+    "sha256Readback": true,
+    "sourceFiles": {
+      "Config/runtime-release-files.json": "a646ebd4c15b1a9b950003d27c4a14ad788b06773ff26ff515671c1bef2fabdb",
+      "scripts/blocker-context.mjs": "5c2dc937c2b2d5e159771d55f340657195cd004e3b63edb69d365405f3598581",
+      "scripts/check-worker-control.mjs": "9e1c8c3a4e577acb1a591d78f63c9a19266c371a4569c8c629fef7918b884feb",
+      "scripts/enroll-monitor-worker.mjs": "a67217484b0b2e4096e4744057d58b8ae3b0f3345ae5be7a25a1e7d06a9b7154",
+      "scripts/error-copy-cleanup.mjs": "836f77e64411b5d749ed42c3082a6e2916a9d4cb99bf91c2d748375b220de9a0",
+      "scripts/install-monitor-hub.mjs": "c32ec193243472055a37b249e9a12624ce232da6ed1a2890b99ebb44cc63d36d",
+      "scripts/install-monitor-hub.sh": "0ee2e363cdd8b53a3f03f03cab8053179ebb16f5ed0c9944a88a7967094eecfb",
+      "scripts/install-quota-observer.mjs": "ad9c005a53585a342b3ba2d7a51722fb1127f08f1804b66f39870cba0fe01a05",
+      "scripts/install-worker-admin.sh": "d693731f6bd678669e75e27148a9d8fb0a37b9e12e0ba327fb04e7004cf94787",
+      "scripts/install-worker-observer.mjs": "737a0b3f9e1117db2a8474bf9ddd57fd24b6a55b82bc20be59fcd821fb1e49af",
+      "scripts/member-remote.py": "767e0834ac03239db77ec92055589e9c604513dfef49d5618846a7040930c9a9",
+      "scripts/monitor-bridge-credentials.mjs": "b1296be51608fb9f7866c7ea94d749e3b4a5a851338201b524f73f92da8e6b80",
+      "scripts/newsletter-monitor-bridge.mjs": "04e819d6a201a84950fc3eb4d2b53e4edb8f8b005e4298db506db143ea3326d8",
+      "scripts/pm-owner.mjs": "69a3d012db13b8f828c0a7cacccfa50ec843f5b552ab03e0b99c970ba8accd48",
+      "scripts/pm-question-status.mjs": "c354c6f7905dd80130500afc0882d95267677063ad437b4530d0043f22175285",
+      "scripts/quota_usage.py": "23cf7619d99f9f26e90fa017c1b072eb88b66dae6d8dd4c4e350ccb9373934db",
+      "scripts/quota_worker.py": "510c5c607a5e346848163834874594f3d57c636bf8b378a1d1d597c771ec77d5",
+      "scripts/report-monitor-worker.mjs": "3b6a749dc4802a350ab23ec6d3edc38825d6778a883ee29236c77391e34238ab",
+      "scripts/setup-mac-monitor.mjs": "1ecfc0023be4bad6a637b9993d65cce80d59760648a5ec8c5c5268039237593b",
+      "scripts/setup-worker-remote.sh": "e1263b49b505ec9c13e4d3876266f45491cf524380e5b96d175b422827a26e23",
+      "scripts/status-reconciliation.mjs": "828a02d86c8d7e681548aeaadfd39ef06057a525f369cab772629ca4276ba8dd",
+      "scripts/task-state.cjs": "f226731ce23c25d4d173b87f7f89ac7e84490312007612e700df7aee746188af",
+      "scripts/worker-admin-hub.mjs": "2680171f3654da85a9b71aa26ef53ef5adb4626c271df90ef839c7868b126da6",
+      "scripts/worker-admin.mjs": "02c30a892da480eb59b23a770a75580faadfa84c9d8a818c82726e8b4a1abdf0",
+      "scripts/worker-diagnose.py": "5c6ed6d45a197f7bf74faf699f30937bac60fb8966bdecd8ea5c6fea438cc30c",
+      "scripts/worker-remote-hub.mjs": "97e405a3552b63f1789d359a5c509da1fe7d421ee30dcac04d1fa6c0be9fa3bc",
+      "scripts/worker-remote.mjs": "4295e90c4ccb4ea2ca0df583199d9d26aca1913b43342c14447ac1289dde6bce",
+      "scripts/worker-wallpaper.mjs": "83abba8a81fa645c914fa9b139b3ebf458869c9e8b3f411b7346543ad8e81ab5",
+      "team-server/account-provisioning.js": "e2592a7eb3e48b015568cfa8497398f00f6f44bee8c035728a5b79391316fbd1",
+      "team-server/claude-accounts.js": "519fac2020327dfece0c0e0c2efa0eefaf3b0056e5034380f369add40885f106",
+      "team-server/distribution.js": "dea2c45ffc9c387c7bc85570e10cb855f92611d5c839d5416dfbaac09a85af01",
+      "team-server/effort-config.js": "09f29e2d5ce603cba89a89397e0cd636a20d3796e5c779f133d4d77b49c64bf1",
+      "team-server/enrollment.js": "6ed5a9a06bf9db3631e0c6472025b8559b5ccee7f4b4dc8dfa61983c461e9a88",
+      "team-server/fleet.js": "a09872fe93729caef5b1b408589290fbf27f22b4afe7b0a6d4737763c65b802b",
+      "team-server/integration-contract.js": "96cdb203b530372d670e7cbf3984f4c40a1f724dbb442df2011fb64fd7eb2e26",
+      "team-server/planning.js": "6d5b547a5c12056e35854990af204e888116bc68677eb4a89102b6cdeecde921",
+      "team-server/package.json": "19d1df2b08cd7fbda84f75d365c528f7cf5a4eec68ebce013d1c363ff9b3931e",
+      "team-server/public/consumption.js": "650d326998456ea42117f39218202cbfdc8be01a12bc75cfbef41dcf4edefde5",
+      "team-server/public/dashboard.css": "524d4b382df01cb2ca61c7d5fc52df1e441298e91413100fb1a0007696e3f9a3",
+      "team-server/public/dashboard.html": "06baa4baca5f5c8761dc4dd67c0176423552573430e855e349124a248d4731ba",
+      "team-server/public/dashboard.js": "79c048a8eb0784eda911a71927caea62f8b0fdd949a8731cf4d67a286e85e3a3",
+      "team-server/public/planning-model.js": "2068a1f2b9262777f22e3ad926a78628ab543210044e7ec2b2ffb48d494e9392",
+      "team-server/public/planning.js": "9f1d5716a20cbfef015e027ea54aa08a8cc98a774c4197483e88935c03ba076a",
+      "team-server/public/planning.css": "85bae52de3a62a23f64498f900fee27404a5e5b75a1e9138328b4930ebe795c9",
+      "team-server/quota-scores.js": "9dadd5456f4491e39d7cb57fbbea96ff06956914be95f69a2b6219140a1c7509",
+      "team-server/remote-access.js": "7edc920c53a5c2c39477a16c1da99e5777dd1366c0bcf612886a3969cec8cac4",
+      "team-server/server.js": "294a466df2970efd3a295bc37740a5e433749d50033684faf64904fd7cdf5403",
+      "team-server/skill-versions.js": "2aaa65f2c8d0a1e9255f018966b056fa20b60b66cba7e6d8b9d09f1a71908377",
+      "team-server/worker-control.js": "93cbd9176e3d9554b7a774574871bc0379d6be50a620316ef62b8a010404d4f8",
+      "team-server/worker-identities.json": "31bfbac0d51dff40ceeefb168381619c4a016fb412e9f7b338b619140c28a7da",
+      "team-server/worker-reports.js": "8e9938091c6e87231f7c8e4405106a962bbba049c104f7092b34ab45b1425694"
+    },
+    "servicesActive": true,
+    "queueSourceFresh": true
+  },
+  "native": {
+    "version": "2.16.2",
+    "sourceRevision": "2a9150c2a346d460664a9e7a944e7e2c5b0d4d2c",
+    "architectures": [
+      "x86_64",
+      "arm64"
+    ],
+    "files": {
+      "Max-Monitor-2.16.2.dmg": {
+        "sha256": "01d45ffa74a729aefab986a1dc02fbc1482ade9396d186ec89adef2bc7051842",
+        "size": 5844201
+      },
+      "Max-Monitor-worker.zip": {
+        "sha256": "969fef4e28d659a7c4c3273b8d2c05605b1cabf2f5015af32324e2dcea84d2dc",
+        "size": 5209629
+      }
+    },
+    "codesignStrict": true,
+    "mountedDmgVerified": true,
+    "publicDownloadsVerified": true,
+    "publicFeedSignatureVerifiedWithOriginalKey": true
+  },
+  "workers": [
+    {
+      "name": "Blau",
+      "appVersion": "2.16.2",
+      "devicePreserved": true,
+      "signingPreserved": true,
+      "workerPidPreservedDuringAppSwap": true,
+      "activeBeforeAppSwap": 0,
+      "activeAfterAppSwap": 0,
+      "normalMaintenanceOk": true,
+      "normalMaintenanceAt": "2026-10-21T16:52:15.861235+00:00",
+      "bindingVerification": "preferences_preserved",
+      "localCredentialStoreReady": true,
+      "legacyKeychainReadsAtStartup": 0,
+      "singleGuiAndPidRetained": true
+    },
+    {
+      "name": "Gelb",
+      "appVersion": "2.16.2",
+      "devicePreserved": true,
+      "signingPreserved": true,
+      "workerPidPreservedDuringAppSwap": true,
+      "activeBeforeAppSwap": 3,
+      "activeAfterAppSwap": 3,
+      "normalMaintenanceOk": true,
+      "normalMaintenanceAt": "2026-10-21T16:51:58.988046+00:00",
+      "bindingVerification": "preferences_preserved",
+      "localCredentialStoreReady": true,
+      "legacyKeychainReadsAtStartup": 0,
+      "singleGuiAndPidRetained": true
+    },
+    {
+      "name": "Gr\u00fcn",
+      "appVersion": "2.16.2",
+      "devicePreserved": true,
+      "signingPreserved": true,
+      "workerPidPreservedDuringAppSwap": true,
+      "activeBeforeAppSwap": 6,
+      "activeAfterAppSwap": 6,
+      "normalMaintenanceOk": true,
+      "normalMaintenanceAt": "2026-10-21T16:51:54.449159+00:00",
+      "bindingVerification": "preferences_preserved",
+      "localCredentialStoreReady": true,
+      "legacyKeychainReadsAtStartup": 0,
+      "singleGuiAndPidRetained": true
+    },
+    {
+      "name": "Lila",
+      "appVersion": "2.16.2",
+      "devicePreserved": true,
+      "signingPreserved": true,
+      "workerPidPreservedDuringAppSwap": true,
+      "activeBeforeAppSwap": 6,
+      "activeAfterAppSwap": 6,
+      "normalMaintenanceOk": true,
+      "normalMaintenanceAt": "2026-10-21T16:52:01.797296+00:00",
+      "bindingVerification": "preferences_preserved",
+      "localCredentialStoreReady": true,
+      "legacyKeychainReadsAtStartup": 0,
+      "singleGuiAndPidRetained": true
+    },
+    {
+      "name": "Orange",
+      "appVersion": "2.16.2",
+      "devicePreserved": true,
+      "signingPreserved": true,
+      "workerPidPreservedDuringAppSwap": true,
+      "activeBeforeAppSwap": 0,
+      "activeAfterAppSwap": 0,
+      "normalMaintenanceOk": true,
+      "normalMaintenanceAt": "2026-10-21T16:51:01.462940+00:00",
+      "bindingVerification": "preferences_preserved",
+      "localCredentialStoreReady": true,
+      "legacyKeychainReadsAtStartup": 0,
+      "singleGuiAndPidRetained": true
+    },
+    {
+      "name": "Pink",
+      "appVersion": "2.16.2",
+      "devicePreserved": true,
+      "signingPreserved": true,
+      "workerPidPreservedDuringAppSwap": true,
+      "activeBeforeAppSwap": 0,
+      "activeAfterAppSwap": 0,
+      "normalMaintenanceOk": true,
+      "normalMaintenanceAt": "2026-10-21T16:52:09.686021+00:00",
+      "bindingVerification": "preferences_preserved",
+      "localCredentialStoreReady": true,
+      "legacyKeychainReadsAtStartup": 0,
+      "singleGuiAndPidRetained": true
+    },
+    {
+      "name": "Rot",
+      "appVersion": "2.16.2",
+      "devicePreserved": true,
+      "signingPreserved": true,
+      "workerPidPreservedDuringAppSwap": true,
+      "activeBeforeAppSwap": 0,
+      "activeAfterAppSwap": 0,
+      "normalMaintenanceOk": true,
+      "normalMaintenanceAt": "2026-10-21T16:51:51.636009+00:00",
+      "bindingVerification": "preferences_preserved",
+      "localCredentialStoreReady": true,
+      "legacyKeychainReadsAtStartup": 0,
+      "singleGuiAndPidRetained": true
+    },
+    {
+      "name": "Schwarz",
+      "appVersion": "2.16.2",
+      "devicePreserved": true,
+      "signingPreserved": true,
+      "workerPidPreservedDuringAppSwap": true,
+      "activeBeforeAppSwap": 0,
+      "activeAfterAppSwap": 0,
+      "normalMaintenanceOk": true,
+      "normalMaintenanceAt": "2026-10-21T16:52:18.342112+00:00",
+      "bindingVerification": "preferences_preserved",
+      "localCredentialStoreReady": true,
+      "legacyKeychainReadsAtStartup": 0,
+      "singleGuiAndPidRetained": true
+    },
+    {
+      "name": "T\u00fcrkis",
+      "appVersion": "2.16.2",
+      "devicePreserved": true,
+      "signingPreserved": true,
+      "workerPidPreservedDuringAppSwap": true,
+      "activeBeforeAppSwap": 0,
+      "activeAfterAppSwap": 0,
+      "normalMaintenanceOk": true,
+      "normalMaintenanceAt": "2026-10-21T16:52:35.812560+00:00",
+      "bindingVerification": "preferences_preserved",
+      "localCredentialStoreReady": true,
+      "legacyKeychainReadsAtStartup": 0,
+      "singleGuiAndPidRetained": true
+    }
+  ],
+  "runningWork": {
+    "verifiedSameRunIdsAndPidsDuringSwap": 15,
+    "newsletterWorkersRestartedForAppRollout": false
+  },
+  "tests": {
+    "node": {
+      "pass": 524,
+      "fail": 0
+    },
+    "swift": {
+      "pass": 208,
+      "fail": 0
+    },
+    "pythonMac": {
+      "pass": 131,
+      "skipLinuxMounts": 6,
+      "fail": 0
+    },
+    "linuxMounts": {
+      "pass": 6,
+      "skip": 0,
+      "fail": 0
+    },
+    "nativeProductionMethods": {
+      "groups": 5,
+      "fail": 0
+    },
+    "productionCredentialStorage": {
+      "checks": 70,
+      "realKeychainCalls": 0
+    },
+    "separateProcessesAndDifferentSignatures": true,
+    "githubCI": "https://github.com/AurelianSteiner/Max-Monitor/actions/runs/39638414161",
+    "liveBrowser": {
+      "checks": 13,
+      "verifiedAssets": 6,
+      "viewports": [
+        "1440x900",
+        "1024x768",
+        "390x844"
+      ],
+      "errors": [],
+      "writes": []
+    }
+  },
+  "openBusinessDecisions": [
+    "F11"
+  ],
+  "operationalFollowup": {
+    "worker": "Orange",
+    "finding": "Task retrieval recorded Hub transport timeouts while native reports and monitor maintenance succeeded.",
+    "observedLegacySshMultiplexSetting": true,
+    "resolution": "Readback required: maintenance connection closed during the guarded repair attempt; reverse SSH then refused connection. Local wake/WLAN check requested.",
+    "attemptedSetting": false,
+    "profileChangeConfirmed": false,
+    "idleRestartConfirmed": false,
+    "requiredCloseout": "Read profile and service state, then verify a newly successful real task poll and fresh central telemetry."
+  },
+  "evidenceDirectory": "/Users/tillticktucktim/.codex/visualizations/2026/10/21/01a15f26-39e4-7d33-ab0f-bc3b38d20108/audit-rollout",
+  "overallAcceptance": "pending_orange_connectivity"
+}
