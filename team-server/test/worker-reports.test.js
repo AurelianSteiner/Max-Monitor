@@ -55,6 +55,38 @@ test('local active runs replace old completed tags in the live queue without inv
   } finally { fs.rmSync(directory, { recursive:true,force:true }); }
 });
 
+test('Sales process telemetry retains the exact attempt progress and step from the Hub', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sales-live-progress-'));
+  try {
+    const store = createFleetStore(directory, () => now);
+    const task = { id: 'sales:1791753740.123456', title: 'Sales · shop.de', workflow: 'sales', status: 'running',
+      workerId: 'mac-1', attemptId: 'sales-attempt', sourceStatus: 'running', progress: 44, step: 'Leserprüfung · Mail 2', updatedAt: new Date(now).toISOString() };
+    store.updateQueue('TEAM1234', { source: { name: 'Sales' }, tasks: [task] });
+    const run = { id: task.id, runId: task.attemptId, title: task.title, workflow: 'sales', status: 'running', step: 'building' };
+    const observe = current => store.workerReport('TEAM1234', { ...report(), activity: { state: 'busy', acceptingTasks: false, runs: [current] } });
+    observe(run);
+    let current = store.snapshot('TEAM1234').queue.tasks[0];
+    assert.equal(current.progress, 44);
+    assert.equal(current.step, 'Leserprüfung · Mail 2');
+    observe({ ...run, runId: 'sales-1791753740.123456' });
+    current = store.snapshot('TEAM1234').queue.tasks[0];
+    assert.equal(current.progress, 44);
+    assert.equal(current.step, 'Leserprüfung · Mail 2');
+    observe({ ...run, progress: 50, step: 'Endabnahme und Kundenblick' });
+    current = store.snapshot('TEAM1234').queue.tasks[0];
+    assert.equal(current.progress, 50);
+    assert.equal(current.step, 'Endabnahme und Kundenblick');
+    observe({ ...run, step: 'Pausiert · Claude-Kontingent' });
+    current = store.snapshot('TEAM1234').queue.tasks[0];
+    assert.equal(current.status, 'paused');
+    assert.match(current.step, /^Pausiert/);
+    observe({ ...run, runId: 'new-sales-attempt' });
+    current = store.snapshot('TEAM1234').queue.tasks[0];
+    assert.equal(current.progress, undefined);
+    assert.equal(current.step, 'building');
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
 test('blocked corrections survive idle reports and restart, but a newer live attempt clears the old diagnosis', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'blocked-corrections-'));
   let clock = now;

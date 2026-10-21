@@ -1402,6 +1402,61 @@ export async function readLocalHubFleet(hub, { fleetDirectory = path.join(hub.hu
   return parseObservedWorkers(rows, { maxTasksOf });
 }
 
+// Same completed-stage weights as the worker's src/sales-progress.js (Slack).
+// Time spent or a running review never advances the percentage.
+export function salesProgress(job) {
+  if (job.status === 'reserved') return { progress: 0, step: 'Reserviert' };
+  if (job.status === 'done') return { progress: 100, step: 'Fertig' };
+  const monitor = job.monitor || {};
+  const phases = { ideas: 6, opener: 8, mail_build: 10 };
+  const labels = { shop_research: 'Shop-Recherche', brand_system: 'Designsystem', briefings: 'Themen und Briefings',
+    ideas: 'Ideenentwicklung', opener: 'Aufmacher-Gestaltung', mail_build: 'Newsletter-Gestaltung', build: 'Gestaltung',
+    art_director: 'Art-Direction-Prüfung', fixes: 'Korrekturen', customer_review: 'Kundenblick',
+    one_sentence: 'Ein-Satz-Prüfung', opener_review: 'Aufmacher-Abnahme', reader_review: 'Leserprüfung',
+    acceptance: 'Endabnahme und Kundenblick', fact_check: 'Faktenprüfung', desktop_mobile: 'Desktop- und Mobilprüfung',
+    pdf_export: 'PDF-Export', pdf_review: 'PDF-Sichtprüfung', result_validation: 'Ergebnisvalidierung' };
+  const events = (Array.isArray(monitor.events) ? monitor.events : []).filter(event => event
+    && Object.hasOwn(labels, event.stage) && Number.isInteger(event.mail) && event.mail >= 0 && event.mail <= 3
+    && ['start', 'done', 'blocked'].includes(event.state) && Number.isFinite(Date.parse(event.at)));
+  const v9 = events.some(event => ['opener_review', 'reader_review', 'acceptance'].includes(event.stage));
+  const weights = { shop_research: 15, brand_system: 8, briefings: 7, art_director: 9,
+    ...(v9 ? { opener_review: 3, reader_review: 3, acceptance: 5 } : { customer_review: 3, one_sentence: 3, fact_check: 5 }),
+    desktop_mobile: 5, pdf_export: 4, pdf_review: 4 };
+  const latest = new Map();
+  for (const event of events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)))
+    latest.set(event.stage + ':' + event.mail, event);
+  let progress = 5;
+  for (const [stage, weight] of Object.entries(weights)) {
+    if (latest.get(stage + ':0')?.state === 'done') progress += weight;
+    else if (!['shop_research', 'brand_system', 'briefings'].includes(stage))
+      progress += weight * [1, 2, 3].filter(mail => latest.get(stage + ':' + mail)?.state === 'done').length / 3;
+  }
+  const splitStages = Object.keys(phases);
+  for (const mail of [1, 2, 3]) {
+    const split = splitStages.some(stage => latest.has(stage + ':' + mail) || latest.has(stage + ':0'));
+    if (split) {
+      for (const [stage, weight] of Object.entries(phases))
+        if ((latest.get(stage + ':' + mail) || latest.get(stage + ':0'))?.state === 'done') progress += weight / 3;
+    } else if ((latest.get('build:' + mail) || latest.get('build:0'))?.state === 'done') progress += 24 / 3;
+  }
+  const active = [...latest.values()].filter(event => event.state === 'start' && (event.stage !== 'build'
+    || !splitStages.some(stage => latest.has(stage + ':' + event.mail) || latest.has(stage + ':0'))))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const current = active.at(-1);
+  const last = [...latest.values()].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
+  let step = current ? labels[current.stage] : last ? labels[last.stage] + ' abgeschlossen' : 'Vorbereitung';
+  if (current?.mail) {
+    const mails = [...new Set(active.filter(event => event.stage === current.stage && event.mail).map(event => event.mail))].sort();
+    step += ' · Mail ' + mails.join(', ');
+  }
+  if (monitor.phase === 'validation') step = 'Ergebnisvalidierung';
+  if (job.status === 'delivery' || monitor.phase === 'delivery') {
+    progress = Math.max(progress, 95) + Math.min(3, (job.files || []).filter(file => file?.uploaded === true).length);
+    step = 'PDF-Auslieferung und Slack-Prüfung';
+  }
+  return { progress: Math.min(98, Math.round(progress)), step };
+}
+
 export async function readLocalSales(directory, now = Date.now()) {
   const rows = [];
   const statuses = { reserved: 'queued', running: 'running', delivery: 'running', paused: 'queued', blocked: 'blocked', done: 'completed' };
@@ -1451,10 +1506,12 @@ export async function readLocalSales(directory, now = Date.now()) {
       const blockedReason = status === 'blocked' ? displayText(job.reason, 500, 'Sales-Lauf ist blockiert') : undefined;
       // Job state is authoritative. A missing heartbeat must never remove accepted work.
       const awaitingWorker = ['queued', 'running'].includes(status) && now - seen > 30 * 60000;
+      const progress = salesProgress(job);
       rows.push({ id: `sales:${name}`, title: `Sales · ${url.hostname}`, url: url.href, workflow: 'sales', status,
         sourceStatus: job.status, workerId: job.worker, attemptId: displayText(job.owner, 200),
         phase: paused ? 'Pausiert · wartet außerhalb der Worker-Plätze' : awaitingWorker ? 'Worker-Meldung ausstehend' : phases[job.status],
-        ...(blockedReason ? { blockedReason } : {}), ...(status === 'completed' ? { progress: 100, ...(Number.isFinite(finishedTime) ? { completedAt: new Date(finishedTime).toISOString(), completionSource: 'sales' } : {}) } : {}),
+        progress: progress.progress, step: paused || awaitingWorker ? undefined : progress.step,
+        ...(blockedReason ? { blockedReason } : {}), ...(status === 'completed' ? { ...(Number.isFinite(finishedTime) ? { completedAt: new Date(finishedTime).toISOString(), completionSource: 'sales' } : {}) } : {}),
         updatedAt: new Date(seen).toISOString() });
     } catch {
       throw new Error(`Sales-Job ${name} konnte nicht vollständig gelesen werden; bisheriger Queue-Stand bleibt erhalten.`);

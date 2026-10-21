@@ -517,7 +517,13 @@ Sales-Jobs werden im zentralen Hub-Modus aus `sales-newsletter/<Slack-ts>/job.js
 gelesen, einschließlich HTTP-Shopadressen. `reserved` erscheint als Wartet,
 `running` und `delivery` als Läuft, `blocked` als Blockiert,
 `done` als Fertig mit 100 %. Abgebrochene Versuche (`aborted`) werden nicht
-angezeigt und zählen zu keiner Statusgruppe. Blockiergründe und
+angezeigt und zählen zu keiner Statusgruppe. Laufende Sales-Aufträge zeigen
+denselben Prozentwert und Arbeitsschritt wie Slack, aus den abgeschlossenen
+Schritten im gespeicherten `monitor.events` einschließlich der V9-Prüfungen.
+Laufzeit erhöht den Wert nicht; erst der bestätigte Abschluss erreicht 100 %.
+Die Werte erscheinen in der Queue, im Auftragsdetail und beim zugeordneten Mac
+und werden mit dem regulären Live-Abgleich aktualisiert. Pausen und ausstehende
+Worker-Meldungen bleiben als solche erkennbar. Blockiergründe und
 der aktuelle Versuch bleiben zugeordnet. Eine verspätete Worker-Meldung entfernt
 keinen Auftrag; nach 30 Minuten erscheint „Worker-Meldung ausstehend“, bis der
 Hub einen neuen Jobstatus speichert. Nicht lesbare oder unvollständige Sales-Daten

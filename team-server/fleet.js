@@ -545,13 +545,22 @@ function currentQueue(state, liveReports) {
       if (!taskState.reportMayReplace(previous, run, report.sampledAt)) continue;
       const conflict = activeOwners.has(run.id) && activeOwners.get(run.id) !== report.workerId;
       activeOwners.set(run.id, report.workerId);
+      // Sales observers also use the legacy sales-<message> process ID instead
+      // of an owner. For a running job on its recorded Mac the Hub remains the
+      // source of completed-stage details; explicit new attempt IDs stay separate.
+      const sameSalesAttempt = run.workflow === "sales" && previous?.workflow === "sales"
+        && previous.workerId === report.workerId && (previous.attemptId === run.runId
+          || run.runId === run.id.replace(/^sales:/, "sales-") && previous.status === "running"
+            && ["running", "delivery"].includes(previous.sourceStatus));
       tasks.set(run.id, { ...previous, ...run, ...CLEARED_BLOCKER_CONTEXT, blockedReason: undefined, errorUrl: undefined,
         completion: undefined, completedAt: undefined, workerId: conflict ? null : report.workerId,
         status: paused ? "paused" : run.status,
         phase: conflict ? "Mehrere Worker melden denselben Auftrag" : paused ? "Pausiert · automatische Fortsetzung"
           : run.status === "queued" ? "Reserviert" : "In Bearbeitung",
         updatedAt: report.sampledAt,
-        progress: run.progress ?? (["running", "queued", "paused"].includes(previous?.status) ? previous.progress : undefined) });
+        step: sameSalesAttempt && !paused && run.progress === undefined ? previous.step ?? run.step : run.step,
+        progress: run.progress ?? (["running", "queued", "paused"].includes(previous?.status)
+          && (run.workflow !== "sales" || sameSalesAttempt) ? previous.progress : undefined) });
     }
   }
   // Slack is diagnostic history, not an additional task inventory. Enrich only
