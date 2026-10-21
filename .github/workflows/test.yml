@@ -31,6 +31,9 @@ jobs:
       - name: Run swift test
         run: swift test
 
+      - name: Credential lifecycle across signed builds
+        run: bash scripts/test-credential-persistence.sh
+
       - name: Verify account rotation, ordered persistence, power observation and callback parsing
         run: python3 scripts/test-audit-native.py
 

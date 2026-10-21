@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged, nativeSourceKey, readWorker, workerArtifactBundle, workerArtifactManifest, main, buildCause, storedMonitorPreferences } from './setup-mac-monitor.mjs';
+import { setup, optionsFrom, validateEnrollment, appStatus, run, nativeCodeUnchanged, nativeSourceKey, readWorker, workerArtifactBundle, workerArtifactManifest, main, buildCause, storedMonitorPreferences, requireUnlockedLoginKeychain } from './setup-mac-monitor.mjs';
 import { createHash } from 'node:crypto';
 
 const DEVICE_ID = '610be10e-8a00-4e00-b000-000000000051';
@@ -259,7 +259,7 @@ test('worker artifact download verifies content, preserves tampered caches, and 
 });
 
 test('artifact re-signing uses only the installed certificate and preserves ad-hoc installations', async t => {
-  for (const kind of ['certificate','adhoc','missing-private-key']) {
+  for (const kind of ['certificate','adhoc','adhoc-published-certificate','missing-private-key']) {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(),'monitor-existing-signer-'));
     t.after(()=>fs.rm(dir,{recursive:true,force:true}));
     const content=Buffer.from('pinned archive'), leaf='A'.repeat(40);
@@ -269,7 +269,7 @@ test('artifact re-signing uses only the installed certificate and preserves ad-h
     await appBundle(installedAppPath,'original app');
     await fs.writeFile(manifestPath,JSON.stringify(manifest));
     const calls=[];let signed=false;
-    const requirement=kind==='adhoc' ? 'identifier "xyz.fi5h.Usage4Claude" and cdhash H"abcd"'
+    const requirement=kind.startsWith('adhoc') ? 'identifier "xyz.fi5h.Usage4Claude" and cdhash H"abcd"'
       : `identifier "xyz.fi5h.Usage4Claude" and certificate leaf = H"${leaf}"`;
     const runner=async(command,args)=>{
       calls.push({command,args});
@@ -278,9 +278,9 @@ test('artifact re-signing uses only the installed certificate and preserves ad-h
       if(command==='/usr/bin/ditto'){await appBundle(path.join(args.at(-1),'Max Monitor.app'),'candidate');return '';}
       if(command==='/usr/bin/security')assert.fail('valid-only or label lookup must not select a different identity');
       if(command==='/usr/bin/codesign'){
-        if(args.includes('-r-'))return `designated => ${args.at(-1)===installedAppPath || signed ? requirement : 'identifier "xyz.fi5h.Usage4Claude"'}\n`;
+        if(args.includes('-r-'))return `designated => ${args.at(-1)===installedAppPath || signed ? requirement : kind==='adhoc-published-certificate' ? `identifier "xyz.fi5h.Usage4Claude" and certificate leaf = H"${'B'.repeat(40)}"` : 'identifier "xyz.fi5h.Usage4Claude"'}\n`;
         if(args.includes('--sign')){
-          assert.equal(args[args.indexOf('--sign')+1],leaf);
+          assert.equal(args[args.indexOf('--sign')+1],kind==='adhoc-published-certificate' ? '-' : leaf);
           assert.notEqual(args.at(-1),installedAppPath);
           if(kind==='missing-private-key')throw new Error('identity unavailable');
           signed=true;
@@ -293,7 +293,7 @@ test('artifact re-signing uses only the installed certificate and preserves ad-h
     const action=workerArtifactBundle(REVISION,runner,{manifestPath,cacheRoot:path.join(dir,'cache'),installedAppPath});
     if(kind==='missing-private-key')await assert.rejects(action,{code:'MONITOR_SIGNING_IDENTITY_UNAVAILABLE'});
     else assert.ok(await action);
-    assert.equal(signed,kind==='certificate');
+    assert.equal(signed,kind==='certificate'||kind==='adhoc-published-certificate');
     assert.equal(await fs.readFile(path.join(installedAppPath,'Contents','marker'),'utf8'),'original app');
     assert.ok(!calls.some(c=>c.command==='/usr/bin/osascript'||c.command==='/usr/bin/open'));
   }
@@ -838,6 +838,35 @@ test('unreadable signing requirements and an unexpected certificate on an ad-hoc
     assert.equal(await f.marker(),'previous app');
     assert.deepEqual(f.state.runningApps,[old]);
     assert.ok(!f.calls.some(c => ['/usr/bin/ditto','/usr/bin/osascript'].includes(c.command)));
+  }
+});
+
+test('completed private local storage permits maintenance without opening a locked legacy keychain', {skip:process.platform!=='darwin'}, async t => {
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),'monitor-local-storage-'));
+  t.after(()=>fs.rm(home,{recursive:true,force:true}));
+  const base=path.join(home,'Library/Application Support/xyz.fi5h.Usage4Claude');
+  await fs.mkdir(base,{recursive:true,mode:0o700});
+  await fs.writeFile(path.join(base,'credentials.key'),Buffer.alloc(32),{mode:0o600});
+  await fs.writeFile(path.join(base,'credentials.ready'),'1\n',{mode:0o600});
+  await fs.writeFile(path.join(base,'credentials.vault'),'synthetic encrypted fixture',{mode:0o600});
+  const runner=async (command,args)=>{
+    assert.equal(command,'/usr/bin/python3');
+    assert.ok(!args[1].includes('SecKeychainUnlock'));
+    return execFileSync(command,['-c',args[1].replaceAll('pathlib.Path.home()',`pathlib.Path(${JSON.stringify(home)})`)],{encoding:'utf8'});
+  };
+  await requireUnlockedLoginKeychain(runner);
+  for(const corrupt of ['key-mode','key-size','marker','vault-mode','base-mode','key-symlink']) {
+    await fs.chmod(base,0o700);
+    await fs.rm(path.join(base,'credentials.key'));
+    await fs.writeFile(path.join(base,'credentials.key'),Buffer.alloc(corrupt==='key-size'?31:32),{mode:corrupt==='key-mode'?0o644:0o600});
+    await fs.writeFile(path.join(base,'credentials.ready'),corrupt==='marker'?'0\n':'1\n');
+    await fs.chmod(path.join(base,'credentials.vault'),corrupt==='vault-mode'?0o644:0o600);
+    if(corrupt==='base-mode')await fs.chmod(base,0o755);
+    if(corrupt==='key-symlink'){
+      await fs.rename(path.join(base,'credentials.key'),path.join(home,'other.key'));
+      await fs.symlink(path.join(home,'other.key'),path.join(base,'credentials.key'));
+    }
+    await assert.rejects(requireUnlockedLoginKeychain(runner),{code:'MONITOR_KEYCHAIN_UNAVAILABLE'},corrupt);
   }
 });
 

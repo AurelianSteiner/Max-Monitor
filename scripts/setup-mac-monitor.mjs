@@ -511,8 +511,10 @@ export async function workerArtifactBundle(revision, runner = run, {
         // Only the existing exact identity below may repair a mismatch.
       }
     }
-    // An existing ad-hoc app keeps the pinned artifact's ad-hoc signature.
-    // An unrelated local certificate must not change its access identity.
+    // Preserve an existing ad-hoc installation even when the publisher's
+    // verified archive uses a certificate. This needs no private signing key.
+    if (!/\bcertificate\b/.test(requirement) && /\bcertificate\b/.test(await signingRequirement(bundle,runner)))
+      localIdentity = '-';
   } else {
     const identities = await runner('/usr/bin/security',['find-identity','-v','-p','codesigning'],{label:'Lokale App-Signatur lesen'});
     localIdentity = identities.match(/\b([A-F0-9]{40}) "Claude Max Monitor Signing"/i)?.[1];
@@ -562,7 +564,12 @@ export async function requireUnlockedLoginKeychain(runner = run) {
   try {
     state = parseJson(await runner('/usr/bin/python3',['-c',
       '# monitor-keychain-state: metadata only; no credential, ACL, create or unlock API\n' +
-      'import ctypes,json,pathlib\n' +
+      'import ctypes,json,pathlib,stat,os\n' +
+      'base=pathlib.Path.home()/"Library/Application Support/xyz.fi5h.Usage4Claude"\n' +
+      'key=base/"credentials.key"; ready=base/"credentials.ready"; vault=base/"credentials.vault"\n' +
+      'private=lambda p,mode: not p.is_symlink() and p.exists() and p.stat().st_uid==os.getuid() and stat.S_IMODE(p.stat().st_mode)==mode\n' +
+      'if base.is_dir() and private(base,0o700) and all(p.is_file() and private(p,0o600) for p in [key,ready,vault]) and key.stat().st_size==32 and ready.read_bytes()==b"1\\n":\n' +
+      ' print(json.dumps({"available":True,"unlocked":True,"localStorage":True})); raise SystemExit(0)\n' +
       'p=pathlib.Path.home()/"Library/Keychains/login.keychain-db"\n' +
       'if not p.exists(): p=pathlib.Path.home()/"Library/Keychains/login.keychain"\n' +
       'lib=ctypes.CDLL("/System/Library/Frameworks/Security.framework/Security")\n' +

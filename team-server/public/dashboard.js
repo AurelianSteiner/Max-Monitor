@@ -113,6 +113,14 @@
     timeZone: "Europe/Berlin",
   });
   const numberFormat = new Intl.NumberFormat("de-DE");
+  // Round only for presentation; quota decisions and sorting keep the measured value.
+  function displayPercent(value) {
+    return Number.isFinite(value) && value >= 0 && value <= 100 ? Math.max(0, Math.round(value)) : null;
+  }
+  function percentText(value) {
+    const percent = displayPercent(value);
+    return percent === null ? "—" : `${numberFormat.format(percent)} %`;
+  }
   const dayFormat = new Intl.DateTimeFormat("de-DE", { dateStyle: "short", timeZone: "Europe/Berlin" });
   function setSync(text, state) {
     $("sync-status").textContent = text;
@@ -359,7 +367,7 @@
       machine.batteryPercent <= 15 &&
       machine.powerSource !== "ac"
     )
-      reasons.push(`Akku niedrig: ${machine.batteryPercent} %`);
+      reasons.push(`Akku niedrig: ${percentText(machine.batteryPercent)}`);
     return reasons;
   }
   function machineDisplayStatus(machine) {
@@ -1061,7 +1069,7 @@
       limit.dataset.tone = percentTone(measurement?.percent,limitStale(measurement,stale));
       limit.title = limitTitle(measurement,stale);
       const line = node("div", "usage-line");
-      line.append(node("span", "", `${label} genutzt`), node("strong", "", window ? `${numberFormat.format(window.percent)} %` : "—"));
+      line.append(node("span", "", `${label} genutzt`), node("strong", "", percentText(window?.percent)));
       limit.append(line,usageTrack(measurement?.percent),limitReset(measurement,stale));
       limits.append(limit);
     }
@@ -1155,7 +1163,7 @@
     const source = machine.isCharging ? "lädt"
       : ["ac", "AC", "AC Power", "mains"].includes(machine.powerSource) ? "Netzteil"
         : machine.powerSource === "battery" ? "Akku" : "";
-    return [`${machine.batteryPercent} %`, source];
+    return [percentText(machine.batteryPercent), source];
   }
   // Quotas report usage; battery reports remaining charge. Unknown is never zero.
   function percentTone(value, stale = false, remaining = false) {
@@ -1181,9 +1189,10 @@
   }
   function limitTitle(limit, stale) {
     const value = limit?.percent;
-    if (!Number.isFinite(value)) return "Noch keine Kontingent-Messung";
-    return `${value} % genutzt · ${limitStale(limit, stale) ? "Messung veraltet"
-      : value >= 100 ? "Limit ausgeschöpft" : `${100 - value} % verfügbar`}`;
+    const displayed = displayPercent(value);
+    if (displayed === null) return "Noch keine Kontingent-Messung";
+    return `${percentText(value)} genutzt · ${limitStale(limit, stale) ? "Messung veraltet"
+      : value >= 100 ? "Limit ausgeschöpft" : `${percentText(100 - displayed)} verfügbar`}`;
   }
   function usageTrack(value) {
     const track = node("div", "usage-track");
@@ -1212,7 +1221,7 @@
     const wrap = node("div", `meter${value == null ? " unknown" : ""}${outdated && value != null ? " stale" : ""}`);
     wrap.dataset.tone = percentTone(value, outdated);
     wrap.title = limitTitle(limit, stale);
-    const number = node("b", "", value == null ? "—" : `${value} %`);
+    const number = node("b", "", percentText(value));
     number.dataset.tone = wrap.dataset.tone;
     wrap.append(usageTrack(value), number);
     const reset = limitReset(limit, stale);
@@ -1441,7 +1450,7 @@
           limit.dataset.tone = percentTone(value, outdated);
           limit.title = limitTitle(measurement, stale);
           const line = node("div", "usage-line");
-          const number = node("strong", "", value == null ? "—" : `${value} %`);
+          const number = node("strong", "", percentText(value));
           number.dataset.tone = limit.dataset.tone;
           line.append(node("span", "", `${name} genutzt`), number);
           limit.append(line, usageTrack(value));
@@ -1669,7 +1678,7 @@
         const fill = node("div", "usage-fill");
         fill.style.width = `${Math.min(100, Math.max(0, task.progress))}%`;
         track.append(fill);
-        assignment.append(track, node("span", "", `${task.progress} %`));
+        assignment.append(track, node("span", "", percentText(task.progress)));
       }
       assigned.append(assignment);
       // The worker's live step replaces the generic "In Bearbeitung".
@@ -1873,7 +1882,7 @@
       detailField(
         "Fortschritt",
         Number.isFinite(task.progress)
-          ? `${task.progress} %`
+          ? percentText(task.progress)
           : "Nicht gemeldet",
       ),
       detailField(
@@ -1954,9 +1963,9 @@
       const head = node("div", "machine-task-heading");
       head.append(node("strong", "machine-task-title", task.title || task.id));
       const reserved = task.status === "queued";
-      const progress = Number.isFinite(task.progress) ? Math.min(100, Math.max(0, task.progress)) : null;
+      const progress = displayPercent(task.progress);
       if (!reserved && progress !== null) {
-        head.append(node("span", "machine-task-percent", `${progress} %`));
+        head.append(node("span", "machine-task-percent", percentText(progress)));
         const track = node("div", "usage-track");
         track.setAttribute("role", "progressbar");
         track.setAttribute("aria-label", `Fortschritt: ${task.title || task.id}`);
@@ -2089,7 +2098,7 @@
           "",
           `${claudeAccountIdentity((machine.accounts || []).find(a => a.accountId === limit.accountId) || {name:limit.accountName}).name} · ${limit.label || limit.kind}`,
         ),
-        node("strong", "", limit.percent == null ? "—" : `${limit.percent} % genutzt`),
+        node("strong", "", limit.percent == null ? "—" : `${percentText(limit.percent)} genutzt`),
       );
       line.querySelector("strong").dataset.tone = percentTone(limit.percent, outdated);
       line.title = limitTitle(limit, outdated);
