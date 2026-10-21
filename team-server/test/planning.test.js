@@ -18,6 +18,17 @@ test('current planning rejects expired or unknown reset windows until a new samp
   }
   assert.equal(cap(fixture(1), 'current').available, true);
 });
+test('an explicitly unused provider window has full headroom before its reset clock starts', () => {
+  const source = fixture(1);
+  source.accounts[0].windows.five_hour.reset = null;
+  assert.equal(cap(source, 'current').available, true);
+  assert.equal(cap(source, 'current').budgets.fiveHour, 100);
+  source.accounts[0].windows.five_hour.used = 1;
+  assert.equal(cap(source, 'current').available, false, 'a used window still requires a known future reset');
+  source.accounts[0].windows.five_hour.used = 0;
+  source.accounts[0].windows.five_hour.at = NOW / 1000 - 901;
+  assert.equal(cap(source, 'current').available, false, 'unused cannot make old evidence fresh');
+});
 function assertFits(c, mix) {
   for (const window of ['fiveHour', 'weekly']) assert.ok(model.KINDS.reduce((n, k) => n + mix[k] * c.costs[k][window], 0) <= c.budgets[window] + 1e-7);
 }

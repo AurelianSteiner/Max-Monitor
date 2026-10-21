@@ -16,7 +16,9 @@
         const value = account.windows?.[window];
         if (mode === 'full') budgets[key] += 100;
         else if (Number.isFinite(value?.used) && value.used >= 0 && value.used <= 100
-          && fresh(value.at * 1000, now, 900000) && Number.isFinite(value.reset) && value.reset * 1000 > now) budgets[key] += 100 - value.used;
+          && fresh(value.at * 1000, now, 900000)
+          && (Number.isFinite(value.reset) && value.reset * 1000 > now
+            || value.used === 0 && value.reset === null)) budgets[key] += 100 - value.used;
         else available = false;
       }
     }
