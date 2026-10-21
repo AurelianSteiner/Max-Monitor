@@ -23,3 +23,10 @@ test('malformed usage cannot become an account or percentage; metadata is allowl
   }
   assert.equal(publicClaudeAccounts(accepted,now+11*60000).accounts[0].stale,true);
 });
+test('emails preserve exact account names independently of aliases and the monitoring login',()=>{
+  const value=data();value.accounts[0].email='first.last+team@example.test';value.accounts[1].email='till2@example.test';
+  const accepted=validateClaudeAccounts(value);
+  assert.equal(accepted.accounts[0].name,'first.last+team');assert.equal(accepted.accounts[1].name,'till2');
+  assert.equal(accepted.accounts[1].email,'till2@example.test');
+  value.accounts[0].email='not an email';assert.throws(()=>validateClaudeAccounts(value));
+});

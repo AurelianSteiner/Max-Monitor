@@ -12,7 +12,9 @@ function validateClaudeAccounts(raw) {
     ids.add(a.id);
     const kinds = new Set();
     const date = value => value == null ? undefined : typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : fail();
-    return { id:a.id, name:a.name.trim(), status:a.status, updatedAt:date(a.updatedAt), blockedUntil:date(a.blockedUntil),
+    const email = typeof a.email === 'string' ? a.email.trim() : undefined;
+    if (a.email != null && (!email || email.length > 254 || /[\x00-\x1f\x7f]|sk-ant-/i.test(email) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) fail();
+    return { id:a.id, name:email ? email.slice(0,email.indexOf('@')) : a.name.trim(), ...(email ? {email} : {}), status:a.status, updatedAt:date(a.updatedAt), blockedUntil:date(a.blockedUntil),
       windows:a.windows.map(w => {
         if (!['session','weekly'].includes(w?.kind) || kinds.has(w.kind) || typeof w.percent !== 'number'
           || !Number.isFinite(w.percent) || w.percent < 0 || w.percent > 100) fail();

@@ -333,7 +333,7 @@
       reasons.push("Claude-Kontingente veraltet");
     for (const limit of limits.filter((item) => item.percent >= 100)) {
       const label = [
-        limit.accountName || limit.accountId,
+        claudeAccountIdentity((machine.accounts || []).find(a => a.accountId === limit.accountId) || {name:limit.accountName}).name,
         limit.label || limit.kind,
       ]
         .filter(Boolean)
@@ -990,24 +990,26 @@
     }
     const label=workerName(machine.workerId,machine.name),form=node('form','account-setup-form');
     const intro=node('p','form-hint',action==='connect-figma'?`Figma wird auf ${label} geprüft und bei Bedarf im Browser verbunden.`:`Der zusätzliche Claude-Account wird auf ${label} eingerichtet. Die bestehende Anmeldung bleibt erhalten.`);
-    const name=node('input'),token=node('input');
-    name.id='claude-account-name';name.name='accountName';name.autocomplete='off';name.maxLength=160;name.placeholder='Zum Beispiel Team 2…';
+    const name=node('input'),primaryEmail=node('input'),token=node('input');
+    name.id='claude-account-name';name.name='email';name.type='email';name.required=true;name.autocomplete='off';name.spellcheck=false;name.maxLength=160;name.placeholder='Zum Beispiel till2@ruegamer-steiner.de…';
+    primaryEmail.id='claude-primary-email';primaryEmail.name='primaryEmail';primaryEmail.type='email';primaryEmail.required=true;primaryEmail.autocomplete='off';primaryEmail.spellcheck=false;primaryEmail.maxLength=160;primaryEmail.value=machineAccountIdentity(machine).email||'';
     token.id='claude-account-token';token.name='oauthToken';token.type='password';token.autocomplete='off';token.spellcheck=false;token.required=action==='add-account';token.placeholder='sk-ant-oat01-…';
-    const nameLabel=node('label','','Account-Name (optional)');nameLabel.htmlFor=name.id;
+    const nameLabel=node('label','','E-Mail des zusätzlichen Claude-Accounts');nameLabel.htmlFor=name.id;
+    const primaryLabel=node('label','','E-Mail des bisherigen Claude-Accounts');primaryLabel.htmlFor=primaryEmail.id;
     const tokenLabel=node('label','','OAuth-Token');tokenLabel.htmlFor=token.id;
     const status=node('p','account-setup-status');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
     const submit=node('button','button primary',action==='connect-figma'?'Figma verbinden':'Account hinzufügen');submit.type='submit';
     const privacy=node('p','form-hint','Der Token wird nur auf dem ausgewählten Mac gespeichert. Figma wird anschließend automatisch geprüft.');
-    const nameField=node('div','account-field'),tokenField=node('div','account-field');nameField.append(nameLabel,name);tokenField.append(tokenLabel,token);
-    form.append(intro,...(action==='add-account'?[nameField,tokenField,privacy]:[]),status,submit);
-    const messages={queued:`Wartet auf ${label}…`,installing:'Claude-Token wird auf dem Mac geprüft und gespeichert…',figma_check:'Figma-Verbindung wird auf dem Mac geprüft…',ready:'Bereit · Claude eingerichtet und Figma verbunden.',figma_login_required:`Claude ist eingerichtet. Figma-Anmeldung auf ${label} im geöffneten Browser bestätigen.`,expired:'Die Übertragung ist abgelaufen. Bitte erneut hinzufügen.',invalid_token:'Claude hat den Token nicht bestätigt. Vollständigen Token prüfen.',invalid_name:'Account-Name ungültig.',accounts_full:'Auf diesem Mac sind bereits zwei Accounts eingerichtet.',primary_missing:'Der bestehende Claude-Token fehlt auf dem Mac.',duplicate_account:'Dieser Token ist bereits eingerichtet.',keychain_locked:`Schlüsselbund auf ${label} entsperren und erneut versuchen.`,environment_override:'Auf dem Mac überschreibt eine Umgebungsvariable die Account-Auswahl.',configuration_error:'Claude-Einrichtung auf diesem Mac prüfen.',busy:'Auf dem Mac läuft bereits eine Account-Einrichtung.',failed:'Einrichtung nicht abgeschlossen. Den Mac prüfen und erneut versuchen.'};
+    const nameField=node('div','account-field'),primaryField=node('div','account-field'),tokenField=node('div','account-field');nameField.append(nameLabel,name);primaryField.append(primaryLabel,primaryEmail,node('small','form-hint','Bitte die E-Mail der bisherigen Claude-Anmeldung auf diesem Mac prüfen.'));tokenField.append(tokenLabel,token);
+    form.append(intro,...(action==='add-account'?[primaryField,nameField,tokenField,privacy]:[]),status,submit);
+    const messages={queued:`Wartet auf ${label}…`,installing:'Claude-Token wird auf dem Mac geprüft und gespeichert…',figma_check:'Figma-Verbindung wird auf dem Mac geprüft…',ready:'Bereit · Claude eingerichtet und Figma verbunden.',figma_login_required:`Claude ist eingerichtet. Figma-Anmeldung auf ${label} im geöffneten Browser bestätigen.`,expired:'Die Übertragung ist abgelaufen. Bitte erneut hinzufügen.',invalid_token:'Claude hat den Token nicht bestätigt. Vollständigen Token prüfen.',invalid_name:'Bitte gültige E-Mail-Adressen für beide Claude-Accounts angeben.',accounts_full:'Auf diesem Mac sind bereits zwei Accounts eingerichtet.',primary_missing:'Der bestehende Claude-Token fehlt auf dem Mac.',duplicate_account:'Dieser Token ist bereits eingerichtet.',keychain_locked:`Schlüsselbund auf ${label} entsperren und erneut versuchen.`,environment_override:'Auf dem Mac überschreibt eine Umgebungsvariable die Account-Auswahl.',configuration_error:'Claude-Einrichtung auf diesem Mac prüfen.',busy:'Auf dem Mac läuft bereits eine Account-Einrichtung.',failed:'Einrichtung nicht abgeschlossen. Den Mac prüfen und erneut versuchen.'};
     form.addEventListener('submit',async event=>{
       event.preventDefault();submit.disabled=true;status.dataset.state='working';
       let secret=token.value.replace(/\s/g,'');
       try {
         if(action==='add-account' && !/^sk-ant-oat01-[\w-]{80,}$/.test(secret))throw Error('Bitte einen vollständigen OAuth-Token einfügen.');
         status.textContent='Wird sicher an den ausgewählten Mac übertragen…';
-        const envelope=await encryptedAccount(machine,action==='add-account'?{token:secret,name:name.value.trim()||'Claude 2'}:{},action);
+        const envelope=await encryptedAccount(machine,action==='add-account'?{token:secret,name:name.value.trim(),primaryEmail:primaryEmail.value.trim()}:{},action);
         secret=null;token.value='';
         const route=`/workers/${encodeURIComponent(machine.workerId)}/claude-accounts`;
         const result=await consumptionRequest(route,'POST',envelope);let order=result.order;
@@ -1040,7 +1042,8 @@
     const stale = account.stale || !snapshot || Date.now()-Date.parse(account.updatedAt)>10*60000;
     const selected = machine.claudeAccounts?.selectedAccountId === account.id;
     const heading = node("div", "worker-account-heading");
-    const name = node("strong", "", account.name); name.title = account.name;
+    const identity = claudeAccountIdentity(account);
+    const name = node("strong", "", identity.name); name.title = identity.email || identity.name;
     heading.append(name);
     if (selected && account.status==='ready' && !stale) heading.append(node("span", "worker-account-selected", "Nächster Start"));
     column.append(heading);
@@ -1076,21 +1079,22 @@
     for(const account of machine.claudeAccounts.accounts) grid.append(workerAccountColumn(machine,account,compact));
     return grid;
   }
-  function machineAccountIdentity(machine) {
-    if(machine.claudeAccounts?.accounts?.length===2) return {text:"2 Claude-Accounts · automatische Auswahl",title:"Lokale Account-Bezeichnungen; Kontingente direkt aus Claude Code",email:null};
-    const account = machineAccount(machine);
+  function claudeAccountIdentity(account) {
     // Older Macs sent the email as the account name. Only use that fallback
     // when it is an address; a display name does not identify the login.
     const email = [account?.email, account?.name]
       .filter((value) => typeof value === "string")
       .map((value) => value.trim())
       .find((value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value));
-    const text = !account ? "Claude · kein Account verbunden"
-      : `Claude · ${email || "E-Mail nicht gemeldet"}`;
+    return { email, name: email ? email.slice(0, email.indexOf('@')) : "E-Mail nicht hinterlegt" };
+  }
+  function machineAccountIdentity(machine) {
+    if(machine.claudeAccounts?.accounts?.length===2) return {text:"2 Claude-Accounts · automatische Auswahl",title:"Accountnamen aus den E-Mail-Adressen; Kontingente direkt aus Claude Code",email:null};
+    const account = machineAccount(machine);
+    const { email, name } = claudeAccountIdentity(account);
+    const text = !account ? "Claude · kein Account verbunden" : `Claude · ${name}`;
     const title = !account ? "Monitoring-Account auf diesem Worker-Mac verbinden"
-      : [`Claude-Monitoring-Account: ${email || "E-Mail nicht gemeldet"}`,
-        account.name && account.name !== email ? `Bezeichnung: ${account.name}` : ""]
-        .filter(Boolean).join("\n");
+      : `Claude-Monitoring-Account: ${email || "E-Mail nicht gemeldet"}`;
     return { text, title, email };
   }
   function machineFigmaIdentity(machine) {
@@ -2024,8 +2028,7 @@
         : "Auf diesem Worker-Mac unter Queue & Macs → Monitoring-Account verbinden", true),
       detailField("Figma-Account", machineFigmaIdentity(machine).text, true),
       ...(machine.figmaAccount ? [detailField(machine.figmaAccount.source === "mcp-whoami" ? "Figma-Account geprüft" : "Figma zuletzt verwendet", exact(machine.figmaAccount.observedAt))] : []),
-      ...(account && account.name !== accountIdentity.email
-        ? [detailField("Account-Bezeichnung", account.name, true)] : []),
+      ...(accountIdentity.email ? [detailField("Claude-E-Mail", accountIdentity.email, true)] : []),
       detailField("Kontingente geprüft", exact(machine.usageUpdatedAt)),
       detailField(
         "Always On",
@@ -2084,7 +2087,7 @@
         node(
           "span",
           "",
-          `${limit.accountName || limit.accountId} · ${limit.label || limit.kind}`,
+          `${claudeAccountIdentity((machine.accounts || []).find(a => a.accountId === limit.accountId) || {name:limit.accountName}).name} · ${limit.label || limit.kind}`,
         ),
         node("strong", "", limit.percent == null ? "—" : `${limit.percent} % genutzt`),
       );
@@ -2113,7 +2116,7 @@
           node(
             "p",
             "usage-note",
-            `${account.name}: ${account.usageError || "Noch keine Kontingente gemeldet"}`,
+            `${claudeAccountIdentity(account).name}: ${account.usageError || "Noch keine Kontingente gemeldet"}`,
           ),
         );
     }
