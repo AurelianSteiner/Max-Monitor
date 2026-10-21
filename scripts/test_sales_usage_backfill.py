@@ -72,6 +72,21 @@ class SalesBackfillTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'isolated'):
             ledger.ingest({**payload(), 'sales_replay': True}, NOW + 600)
 
+    def test_normal_collector_acknowledges_retired_packets_without_recreating_runs(self):
+        ledger = ledger_module.Ledger(':memory:')
+        ledger.reset(NOW - 1)
+        ledger.fleet(both_windows(NOW, 10), NOW)
+        p = payload()
+        p['runs'][0].update(pending_scan=0)
+        ledger.ingest(p, NOW + 600)
+        ledger.fleet(both_windows(NOW + 600, 14), NOW + 600)
+        ledger.dashboard(NOW + 700)
+        ledger.dashboard(NOW + 3 * 86400)
+        p['usage_packet'] = module('quota_usage').encode_packet('mac-1', 'run-a', [
+            {'type': 'assistant', 'id': 'message-a', 'at': NOW + 100, 'usage': {'output_tokens': 100}}])
+        self.assertTrue(ledger.ingest(p, NOW + 3 * 86400)['ok'])
+        self.assertEqual(ledger.db.execute('SELECT COUNT(*) FROM runs').fetchone()[0], 0)
+
 
 if __name__ == '__main__':
     unittest.main()

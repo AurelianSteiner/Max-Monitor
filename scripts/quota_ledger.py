@@ -275,6 +275,7 @@ class Ledger:
         packet = decode_packet(payload['usage_packet'], worker) if payload.get('usage_packet') else None
         with self.db:
             reasons = set()
+            retired_runs = set()
             probe = payload.get('probe')
             if isinstance(probe, dict) and isinstance(probe.get('windows'), dict):
                 at = stamp(probe.get('at'))
@@ -313,6 +314,7 @@ class Ledger:
                 job = kind + ":" + task_id
                 compact = self.db.execute("SELECT finished FROM compact_jobs WHERE job=?", (job,)).fetchone()
                 if (not payload.get('sales_replay') or kind != 'sales') and compact and finished is not None and finished <= compact[0] and now - compact[0] > 48 * 3600:
+                    retired_runs.add(run_id)
                     continue
                 fields = 'job,title,customer,started,finished,state,evidence_errors,pending_scan'
                 prior = self.db.execute('SELECT ' + fields + ' FROM runs WHERE worker=? AND run_id=?', (worker, run_id)).fetchone()
@@ -365,7 +367,7 @@ class Ledger:
                                 (event_id, kind, run[0], worker, run_id, at, clean(event.get("time_quality"), 40),
                                  json.dumps(windows), clean(event.get("model"), 100), *values))
                 reasons.add('usage_evidence')
-            if packet:
+            if packet and packet.get('run_id') not in retired_runs:
                 self.ingest_usage(packet, now, since)
                 reasons.add('usage_evidence')
             for reason in sorted(reasons):
