@@ -982,7 +982,10 @@
       line.append(node("span", "", label), node("strong", "", remaining == null ? "—" : `${numberFormat.format(remaining)} % frei`));
       column.append(line);
       if(window) column.append(limitReset({percent:window.percent,resetsAt:window.reset,usageUpdatedAt:account.updatedAt},stale));
+      else column.append(node("small","limit-reset","Reset noch nicht gemeldet"));
     }
+    if(account.blockedUntil && !account.windows.some(w=>w.reset===account.blockedUntil))
+      column.append(node("small","limit-reset",`Limit-Reset ${exact(account.blockedUntil)}`));
     const note = stale ? "Messung veraltet" : account.status==='limited' ? "Limit erreicht"
       : account.status==='error' ? "Account prüfen" : account.status==='unknown' ? "Wird geprüft…" : "";
     if(note) column.append(node("p","usage-note",note));
