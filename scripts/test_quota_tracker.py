@@ -46,6 +46,20 @@ def both_windows(at, percent):
     return data
 
 
+def pool_fleet(at=NOW, selected='account-2', worker='mac-1', device='device-a'):
+    data = fleet(at, 100, worker=worker)
+    data['machines'][0]['deviceId'] = device
+    data['workerReports'] = [{'workerId': worker, 'deviceId': device,
+        'sampledAt': ledger_module.iso(at), 'receivedAt': ledger_module.iso(at),
+        'claudeAccounts': {'selectedAccountId': selected, 'accounts': [
+            {'id': 'primary', 'name': 'Claude 1', 'status': 'limited', 'updatedAt': ledger_module.iso(at),
+             'windows': [{'kind': 'weekly', 'percent': 100, 'reset': ledger_module.iso(RESET)}]},
+            {'id': 'account-2', 'name': 'Claude 2', 'status': 'ready', 'updatedAt': ledger_module.iso(at),
+             'windows': [{'kind': 'session', 'percent': 12, 'reset': ledger_module.iso(at + 3600)},
+                         {'kind': 'weekly', 'percent': 24, 'reset': ledger_module.iso(RESET + 3600)}]}]}}]
+    return data
+
+
 class LedgerTests(unittest.TestCase):
     def setUp(self):
         self.ledger = ledger_module.Ledger(":memory:")
@@ -454,6 +468,95 @@ class LedgerTests(unittest.TestCase):
         data['workerLinks'].append({'deviceId': 'device-a', 'workerId': 'mac-other'})
         fresh = ledger_module.Ledger(':memory:');fresh.fleet(data, NOW)
         self.assertEqual(fresh.scheduling([], NOW)['workers'], {})
+
+    def test_worker_pool_selected_budget_overrides_native_limit_without_rebinding_identity_or_prices(self):
+        self.ledger.fleet(pool_fleet(), NOW)
+        native = 'a@example.com'
+        groups = [{'key': native+'|newsletter', 'weekly_pp': {'n': 3, 'mean': 4, 'sd': 1}}]
+        q = self.ledger.scheduling(groups, NOW)['workers']['mac-1']
+        self.assertEqual((q['source'], q['scope'], q['evidence_status']), ('worker_pool', 'worker_slot', 'fresh'))
+        self.assertEqual(q['windows']['seven_day'], {'used': 24, 'reset': RESET + 3600, 'at': NOW})
+        self.assertEqual(q['windows']['five_hour']['used'], 12)
+        self.assertEqual(q['costs'], {})
+        self.assertNotEqual(q['account'], ledger_module.identifier(native)[:24])
+        self.assertEqual(self.ledger.db.execute('SELECT account FROM bindings WHERE until IS NULL').fetchone()[0], native)
+        self.assertEqual([tuple(r) for r in self.ledger.db.execute('SELECT account,percent FROM samples')], [(native, 100)])
+        exported = json.dumps(q)
+        self.assertNotIn(native, exported)
+        self.assertNotIn('Claude 2', exported)
+
+    def test_pool_switch_replaces_windows_immediately_and_invalidates_only_changed_scheduling(self):
+        data = pool_fleet(selected='primary')
+        self.ledger.fleet(data, NOW)
+        before = self.ledger.scheduling([], NOW)['workers']['mac-1']
+        self.assertEqual(before['windows']['seven_day']['used'], 100)
+        revision = self.ledger.setting('average_pending')['revision']
+        report = data['workerReports'][0]
+        report.update(sampledAt=ledger_module.iso(NOW + 10), receivedAt=ledger_module.iso(NOW + 10))
+        self.ledger.fleet(data, NOW + 10)
+        self.assertEqual(self.ledger.setting('average_pending')['revision'], revision, 'observer heartbeat does not recompute averages')
+        report['claudeAccounts']['selectedAccountId'] = 'account-2'
+        self.ledger.fleet(data, NOW + 10)
+        q = self.ledger.scheduling([], NOW + 10)['workers']['mac-1']
+        self.assertNotEqual(q['account'], before['account'])
+        self.assertEqual(q['windows']['seven_day']['used'], 24)
+        self.assertEqual(q['windows']['seven_day']['at'], NOW, 'selection never refreshes the measurement time')
+        self.assertGreater(self.ledger.setting('average_pending')['revision'], revision)
+
+    def test_silent_unknown_or_reset_pool_never_falls_back_to_native_100_percent(self):
+        data = pool_fleet()
+        self.ledger.fleet(data, NOW)
+        revision = self.ledger.setting('average_pending')['revision']
+        self.ledger.fleet(data, NOW + 46)
+        q = self.ledger.scheduling([], NOW + 46)['workers']['mac-1']
+        self.assertEqual((q['evidence_status'], q['status'], q['windows']), ('unknown', 'unknown', {}))
+        self.assertGreater(self.ledger.setting('average_pending')['revision'], revision, 'staleness publishes on the next collector pass')
+        data.pop('workerReports')
+        self.ledger.fleet(data, NOW + 47)
+        self.assertEqual(self.ledger.scheduling([], NOW + 47)['workers']['mac-1']['windows'], {})
+        for change in ('stale_sample', 'future_sample', 'reset_passed', 'error'):
+            with self.subTest(change=change):
+                data = pool_fleet()
+                chosen = data['workerReports'][0]['claudeAccounts']['accounts'][1]
+                if change == 'stale_sample':
+                    chosen['updatedAt'] = ledger_module.iso(NOW - 601)
+                elif change == 'future_sample':
+                    chosen['updatedAt'] = ledger_module.iso(NOW + 31)
+                elif change == 'reset_passed':
+                    chosen['windows'][0]['reset'] = ledger_module.iso(NOW)
+                else:
+                    chosen['status'] = 'error'
+                self.ledger.fleet(data, NOW)
+                self.assertEqual(self.ledger.scheduling([], NOW)['workers']['mac-1']['windows'], {})
+
+    def test_pool_requires_exact_device_link_and_never_deduplicates_slots_across_macs(self):
+        data = pool_fleet()
+        data['workerReports'][0]['deviceId'] = 'another-device'
+        self.ledger.fleet(data, NOW)
+        self.assertNotIn('source', self.ledger.scheduling([], NOW)['workers']['mac-1'])
+        data = pool_fleet()
+        data['machines'][0]['workerId'] = None
+        data['workerLinks'] = [{'workerId': 'mac-1', 'deviceId': 'device-a'}]
+        self.ledger.fleet(data, NOW)
+        first = self.ledger.scheduling([], NOW)['workers']['mac-1']
+        self.assertEqual(first['source'], 'worker_pool')
+        self.ledger.fleet(pool_fleet(worker='mac-2', device='device-b'), NOW)
+        other = self.ledger.scheduling([], NOW)['workers']['mac-2']
+        self.assertNotEqual(first['account'], other['account'], 'a matching slot/name is no proof of shared provider identity')
+
+    def test_partial_pool_usage_is_not_invented_and_malformed_pool_is_unknown(self):
+        data = pool_fleet()
+        chosen = data['workerReports'][0]['claudeAccounts']['accounts'][1]
+        chosen['windows'] = [{'kind': 'session', 'percent': 0, 'reset': None}]
+        self.ledger.fleet(data, NOW)
+        q = self.ledger.scheduling([], NOW)['workers']['mac-1']
+        self.assertEqual(q['windows'], {'five_hour': {'used': 0, 'reset': None, 'at': NOW}})
+        chosen['windows'].append({'kind': 'weekly', 'percent': True, 'reset': ledger_module.iso(RESET)})
+        self.ledger.fleet(data, NOW)
+        self.assertEqual(self.ledger.scheduling([], NOW)['workers']['mac-1']['windows'], {})
+        data['workerReports'][0]['claudeAccounts']['accounts'][0]['id'] = []
+        self.ledger.fleet(data, NOW)
+        self.assertEqual(self.ledger.scheduling([], NOW)['workers']['mac-1']['windows'], {})
 
     def test_existing_cli_probe_refreshes_only_its_proven_account_and_keeps_real_sample_time(self):
         self.ledger.fleet(fleet(NOW, 20), NOW)

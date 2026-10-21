@@ -2,6 +2,7 @@
 // Fixed Hub ingress: existing authenticated SSH, owner credentials stay here.
 import { loadConfiguration } from './enroll-monitor-worker.mjs';
 import reports from '../team-server/worker-reports.js';
+import control from '../team-server/worker-control.js';
 import { pathToFileURL } from 'node:url';
 
 export async function reportWorker(raw, { settings = loadConfiguration(), fetchImpl = fetch } = {}) {
@@ -13,7 +14,8 @@ export async function reportWorker(raw, { settings = loadConfiguration(), fetchI
   if (!response.ok) throw new Error('Worker-Bericht wurde nicht angenommen');
   const result = await response.json();
   if (result?.ok !== true || typeof result.accepted !== 'boolean') throw new Error('Ungültige Bestätigung');
-  return { schema: 1, accepted: result.accepted, ...(result.accountCommand ? {accountCommand:result.accountCommand} : {}) };
+  if (result.deviceId != null && !control.DEVICE_ID.test(result.deviceId)) throw new Error('Ungültige Geräte-Bestätigung');
+  return { schema: 1, accepted: result.accepted, ...(result.deviceId ? {deviceId:result.deviceId} : {}), ...(result.accountCommand ? {accountCommand:result.accountCommand} : {}) };
 }
 export async function main(argv = process.argv.slice(2)) {
   if (argv.length !== 1 || argv[0] !== '--stdin') throw new Error('Nur --stdin ist erlaubt');

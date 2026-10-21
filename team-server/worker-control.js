@@ -33,4 +33,15 @@ function controlForWorker(workerId, members, machines, deviceId = null) {
     reason: ids.size > 1 ? "ambiguous" : !identity ? "unregistered" : enabled ? "enabled" : "disabled" };
 }
 
-module.exports = { controlForWorker, WORKER_ID, DEVICE_ID };
+// Return only an identity registered by enrollment or the native app. Observer
+// reports and display names cannot manufacture the device binding. This lets an
+// already registered Mac prepare its encrypted inbox without reading app data.
+function registeredDeviceId(workerId, members, machines) {
+  const native = machines.filter(machine => machine.workerId === workerId &&
+    machine.workerIdSource !== 'worker' && machine.telemetrySource !== 'worker');
+  const records = native.length ? native : members.filter(member => member.enrollment?.workerId === workerId).map(member => member.enrollment);
+  const ids = new Set(records.map(record => record.deviceId));
+  return ids.size === 1 && DEVICE_ID.test([...ids][0] || '') ? [...ids][0] : undefined;
+}
+
+module.exports = { controlForWorker, registeredDeviceId, WORKER_ID, DEVICE_ID };

@@ -59,6 +59,66 @@ def number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
+def pool_observation(report, worker, device):
+    """Keep pool scheduling evidence separate from proven provider identities.
+
+    A setup token exposes no provider account ID. Its local slot must neither
+    inherit the app login's 100% window nor its learned percentage prices.
+    """
+    raw = report.get('claudeAccounts')
+    if not isinstance(raw, dict) or report.get('deviceId') != device:
+        return None
+    selected = raw.get('selectedAccountId')
+    accounts = raw.get('accounts')
+    valid = (selected in ('primary', 'account-2') and isinstance(accounts, list)
+             and len(accounts) == 2 and all(isinstance(a, dict) for a in accounts)
+             and all(a.get('id') in ('primary', 'account-2') for a in accounts)
+             and {a.get('id') for a in accounts} == {'primary', 'account-2'})
+    account = next((a for a in accounts if a.get('id') == selected), {}) if valid else {}
+    windows = {}
+    entries = account.get('windows')
+    windows_valid = isinstance(entries, list) and len(entries) <= 2
+    if windows_valid:
+        for value in entries:
+            if not isinstance(value, dict) or value.get('kind') not in WINDOWS:
+                windows = {}
+                windows_valid = False
+                break
+            name = WINDOWS[value['kind']]
+            percent = value.get('percent')
+            reset = stamp(value.get('reset'))
+            if (name in windows or not number(percent) or not 0 <= percent <= 100
+                    or (reset is None and not (name == 'five_hour' and percent == 0 and value.get('reset') is None))):
+                windows = {}
+                windows_valid = False
+                break
+            windows[name] = {'used': percent, 'reset': reset, 'at': stamp(account.get('updatedAt'))}
+    return {'account': identifier(['worker_pool_slot', worker, device, selected if valid else None])[:24],
+            'report_at': stamp(report.get('sampledAt')), 'received_at': stamp(report.get('receivedAt')),
+            'sample_at': stamp(account.get('updatedAt')),
+            'status': account.get('status') if windows_valid and account.get('status') in ('ready', 'limited', 'error') else 'unknown',
+            'windows': windows}
+
+
+def pool_scheduling(observation, now):
+    def fresh(at, age):
+        return number(at) and -30 <= now - at <= age
+    windows = observation.get('windows') or {}
+    current = (fresh(observation.get('report_at'), 45) and fresh(observation.get('received_at'), 45)
+               and fresh(observation.get('sample_at'), 600)
+               and observation.get('status') in ('ready', 'limited'))
+    # A passed reset needs a new provider observation; collection never turns
+    # an old percentage into a new window or makes an old report fresh.
+    if any(w['reset'] is not None and not 0 < w['reset'] - now <= (6 * 3600 if name == 'five_hour' else 8 * 86400)
+           for name, w in windows.items()):
+        current = False
+    return {'schema': 1, 'generated_at': iso(now), 'account': observation['account'],
+            'source': 'worker_pool', 'scope': 'worker_slot',
+            'evidence_status': 'fresh' if current and windows else 'unknown',
+            'status': observation.get('status') if current else 'unknown',
+            'windows': windows if current else {}, 'costs': {}}
+
+
 def nearest_observation(rows, times, at):
     index = bisect_left(times, at)
     # First observation wins duplicate times and equal-distance ties, including
@@ -176,6 +236,9 @@ class Ledger:
     def fleet(self, data, now=None):
         now = time.time() if now is None else now
         activity = {r.get("workerId"): r.get("activity") or {} for r in data.get("workerReports", [])}
+        reports = {r.get('workerId'): r for r in data.get('workerReports', [])}
+        pool = self.setting('worker_pool_scheduling', {})
+        previous_pool = identifier(pool)
         # Same exact device link as the Fleet read model; never match Mac names.
         # This identifies quota evidence only, never grants worker admission.
         explicit = {m.get('workerId') for m in data.get('machines', []) if m.get('workerId')}
@@ -188,6 +251,15 @@ class Ledger:
             worker = clean(machine.get("workerId") or (next(iter(linked)) if len(linked) == 1 else None), 100)
             if not worker:
                 continue
+            # The report was authenticated and device-bound on ingestion. Use
+            # the same exact device link here; names and app login IDs do not
+            # identify a worker token. Remember a known pool if its observer
+            # later goes silent, so it cannot fall back to the old app quota.
+            device = machine.get('deviceId')
+            if device:
+                observation = pool_observation(reports.get(worker, {}), worker, device)
+                if observation is not None:
+                    pool[worker] = observation
             accounts = machine.get("accounts") or []
             bound = next((a for a in accounts if a.get("accountId") == machine.get("monitoringAccountId")
                           and a.get("provider") == "claude"), None)
@@ -221,6 +293,17 @@ class Ledger:
                 window = WINDOWS[limit["kind"]]
                 key = identifier([account, window, reset, at, limit.get("percent"), "fleet"])
                 self.sample(key, account, worker, window, reset, at, limit.get("percent"), "monitor_bound", "fleet")
+        if identifier(pool) != previous_pool:
+            self.meta('worker_pool_scheduling', pool)
+        public_pool = {worker: {k: v for k, v in pool_scheduling(observation, now).items() if k != 'generated_at'}
+                       for worker, observation in pool.items()}
+        signature = identifier(public_pool)
+        if public_pool and signature != self.setting('worker_pool_public_signature'):
+            self.meta('worker_pool_public_signature', signature)
+            # Account selection/usage changes must publish on the next 15s
+            # collector pass instead of waiting for the average heartbeat.
+            # Mere observer heartbeats do not recalculate all task averages.
+            self.averages_changed('worker_pool_scheduling')
         context = {}
         queue_keys = []
         for task in (data.get("queue") or {}).get("tasks", []):
@@ -909,6 +992,11 @@ class Ledger:
                      for g in groups if g['key'].startswith(account + '|')}
             workers[worker] = {'schema': 1, 'generated_at': iso(now), 'account': identifier(account)[:24],
                                'windows': windows, 'costs': costs}
+        # Local slot identities are intentionally separate across Macs: without
+        # provider identity evidence, sharing or independence is unknown. This
+        # optional preference never replaces the worker's fresh capacity gate.
+        for worker, observation in self.setting('worker_pool_scheduling', {}).items():
+            workers[worker] = pool_scheduling(observation, now)
         return {'schema': 1, 'generated_at': iso(now), 'workers': workers, 'routing': routing_inputs()}
 
 

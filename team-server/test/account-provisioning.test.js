@@ -33,6 +33,8 @@ test('only admins can enqueue and a worker receives only its own sealed order th
     const at=new Date().toISOString(),store=createFleetStore(dir);
     store.heartbeat('RSMACS01',{role:'super',member:{id:'team-owner',name:'Owner'}},{deviceId,name:'Test Mac',workerId:'mac-test',reportedAt:at,limits:[]});
     const report={schema:1,workerId:'mac-test',deviceId,sampledAt:at,service:{running:true,lastPollAt:at},activity:{state:'idle',acceptingTasks:true,runs:[]},accountProvisioning:endpoint};
+    const bootstrap=(await call('/workers/mac-test/report','POST',{...report,deviceId:undefined,accountProvisioning:undefined})).body;
+    assert.equal(bootstrap.accepted,true);assert.equal(bootstrap.deviceId,deviceId,'a Mac known by Worker ID can configure its inbox without reading sandbox defaults');
     assert.equal((await call('/workers/mac-test/report','POST',report)).status,200);
     const member=(await call('/members','POST',{name:'Viewer',role:'member'})).body.member;
     assert.equal((await call('/workers/mac-test/claude-accounts','POST',envelope(),member.token)).status,403);

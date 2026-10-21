@@ -4,7 +4,20 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { once } = require('node:events');
-const { controlForWorker } = require('../worker-control');
+const { controlForWorker, registeredDeviceId } = require('../worker-control');
+
+test('account inbox bootstrap uses one exact native or enrolled device and never an observer-invented link', () => {
+  const first='610be10e-8a00-4e00-b000-000000000072',second='610be10e-8a00-4e00-b000-000000000073';
+  const enrolled=[{id:'a',enrollment:{workerId:'mac-a',deviceId:first}}];
+  assert.equal(registeredDeviceId('mac-a',enrolled,[]),first);
+  assert.equal(registeredDeviceId('mac-a',[],[{workerId:'mac-a',deviceId:first}]),first);
+  assert.equal(registeredDeviceId('mac-a',[],[{workerId:'mac-a',deviceId:first,telemetrySource:'worker'}]),undefined);
+  assert.equal(registeredDeviceId('mac-a',[],[{workerId:'mac-a',deviceId:first,workerIdSource:'worker'}]),undefined);
+  assert.equal(registeredDeviceId('mac-a',enrolled,[{workerId:'mac-a',deviceId:second}]),second,'native identity supersedes old enrollment');
+  assert.equal(registeredDeviceId('mac-a',enrolled,[{workerId:'mac-a',deviceId:first},{workerId:'mac-a',deviceId:second}]),undefined);
+  assert.equal(registeredDeviceId('mac-a',[...enrolled,{id:'b',enrollment:{workerId:'mac-a',deviceId:second}}],[]),undefined);
+  assert.equal(registeredDeviceId('mac-a',[],[{workerId:'mac-a',deviceId:'invalid'}]),undefined);
+});
 
 test('control uses exact identity bindings and fails closed for unknown or ambiguous workers', () => {
   const members = [{ id: 'a', role: 'member', enrollment: { workerId: 'mac-a' } },
@@ -59,7 +72,9 @@ test('HTTP control follows saved member/owner switches and reassignment without 
   const directReport = { schema: 1, workerId: 'mac-a', sampledAt,
     service: { running: true, lastPollAt: sampledAt }, activity: { state: 'idle', acceptingTasks: true, runs: [] } };
   assert.equal((await call('/workers/mac-a/report', 'POST', directReport, member.token)).status, 403);
-  assert.equal((await call('/workers/mac-a/report', 'POST', directReport)).body.accepted, true);
+  const bootstrap=(await call('/workers/mac-a/report', 'POST', directReport)).body;
+  assert.equal(bootstrap.accepted, true);
+  assert.equal(bootstrap.deviceId,deviceId,'an enrolled Mac receives its binding before its first native heartbeat');
   assert.equal((await call('/workers/mac-a/report')).body.activity.fresh, true);
   assert.equal((await call('/workers/mac-missing/report', 'POST', { ...directReport, workerId: 'mac-missing' })).status, 409);
   assert.equal((await call('/workers/mac-a/control')).body.enabled, true, 'enrollment works before first heartbeat');

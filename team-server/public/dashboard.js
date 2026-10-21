@@ -973,8 +973,8 @@
     if(!snapshot?.capabilities?.canManageClaudeAccounts || !machine.workerId)return actions;
     const full=machine.claudeAccounts?.accounts?.length>=2;
     const button=node('button','text-button account-add-button',full ? '2 Claude-Accounts eingerichtet' : '+ Claude-Account');
-    button.type='button';button.disabled=full || !machine.accountProvisioning || machine.agentStatus!=='online';
-    button.title=full?'Beide Account-Plätze sind eingerichtet':!machine.accountProvisioning?'Account-Verwaltung wird beim nächsten Worker-Update bereitgestellt':'Account auf diesem Mac hinzufügen';
+    button.type='button';button.disabled=full || machine.agentStatus!=='online';
+    button.title=full?'Beide Account-Plätze sind eingerichtet':!machine.accountProvisioning?'Account-Verwaltung auf diesem Mac prüfen':'Account auf diesem Mac hinzufügen';
     button.setAttribute('aria-label',full?`2 Claude-Accounts auf ${workerName(machine.workerId,machine.name)} eingerichtet`:`Claude-Account auf ${workerName(machine.workerId,machine.name)} hinzufügen`);
     button.addEventListener('click',event=>{event.stopPropagation();openAccountSetup(machine);});actions.append(button);
     if(machine.accountProvisioning?.result?.status==='figma_login_required') {
@@ -997,6 +997,26 @@
     return {id,action,expiresAt,keyId:endpoint.keyId,deviceId:machine.deviceId,iv:to64(iv),wrappedKey:to64(wrappedKey),ciphertext:to64(ciphertext)};
   }
   function openAccountSetup(machine,action='add-account') {
+    if (!machine.accountProvisioning) {
+      const label=workerName(machine.workerId,machine.name),panel=node('div','account-setup-form');
+      const status=node('p','account-setup-status'),retry=node('button','button primary','Erneut prüfen');
+      status.setAttribute('role','status');status.setAttribute('aria-live','polite');retry.type='button';
+      const check=async()=>{
+        retry.disabled=true;status.dataset.state='working';status.textContent=`Account-Verwaltung auf ${label} wird geprüft…`;
+        try {
+          const fleet=await consumptionRequest('/fleet');
+          if(!panel.isConnected || !$('detail-dialog').open)return;
+          const latest=fleet.machines?.find(item=>item.workerId===machine.workerId && item.deviceId===machine.deviceId);
+          if(latest?.agentStatus==='online' && latest.accountProvisioning)return openAccountSetup(latest,action);
+          status.dataset.state='warning';status.textContent=latest?.agentStatus==='online'
+            ? `${label} hat die Account-Verwaltung noch nicht bestätigt. Der Mac richtet sie beim nächsten Abgleich automatisch ein. Danach erneut prüfen.`
+            : `${label} ist gerade nicht erreichbar. Sobald der Mac wieder online ist, erneut prüfen.`;
+        }catch(error){if(panel.isConnected){status.dataset.state='error';status.textContent=error.name==='TimeoutError'?'Der Mac-Abgleich antwortet nicht. Bitte erneut prüfen.':error.message;}}
+        finally{retry.disabled=false;}
+      };
+      retry.addEventListener('click',check);panel.append(status,retry);
+      openDetail(`Claude-Account hinzufügen · ${label}`,[panel]);check();return;
+    }
     const label=workerName(machine.workerId,machine.name),form=node('form','account-setup-form');
     const intro=node('p','form-hint',action==='connect-figma'?`Figma wird auf ${label} geprüft und bei Bedarf im Browser verbunden.`:`Der zusätzliche Claude-Account wird auf ${label} eingerichtet. Die bestehende Anmeldung bleibt erhalten.`);
     const name=node('input'),token=node('input');
@@ -1026,8 +1046,10 @@
           if(!['queued','installing','figma_check'].includes(order?.status))break;
           await new Promise(resolve=>setTimeout(resolve,2000));order=(await consumptionRequest(route)).order;
         }
-        status.dataset.state=order?.status==='ready'?'ready':order?.status==='figma_login_required'?'warning':'error';
-        if(['ready','figma_login_required'].includes(order?.status)) {
+        const pending=['queued','installing','figma_check'].includes(order?.status);
+        status.dataset.state=order?.status==='ready'?'ready':order?.status==='figma_login_required' || pending?'warning':'error';
+        if(pending)status.textContent='Der Mac hat noch keinen Abschluss bestätigt. Die Einrichtung läuft weiter. Den Status im Mac-Eintrag prüfen; den Token nicht erneut senden.';
+        if(pending || ['ready','figma_login_required'].includes(order?.status)) {
           submit.hidden=true;name.disabled=true;token.disabled=true;nameField.hidden=true;tokenField.hidden=true;privacy.hidden=true;await refresh();
           const showMac=node('button','button secondary','Mac anzeigen');showMac.type='button';
           showMac.addEventListener('click',()=>{$('detail-dialog').close();selectView('machines');});form.append(showMac);

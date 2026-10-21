@@ -40,7 +40,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, MAX_PREVIEW_BYTES } = require("./fleet");
 const { EnrollmentError, enrollWorkerMember, validateEnrollment } = require("./enrollment");
-const { controlForWorker, WORKER_ID, DEVICE_ID } = require("./worker-control");
+const { controlForWorker, registeredDeviceId, WORKER_ID, DEVICE_ID } = require("./worker-control");
 const remoteAccess = require("./remote-access");
 const effortConfig = require('./effort-config');
 const planning = require('./planning');
@@ -576,13 +576,15 @@ const server = http.createServer((req, res) => {
       let body; try { body = JSON.parse(raw); } catch { return send(res, 400, { error: 'Ungültiges JSON' }); }
       if (body?.workerId !== reportMatch[1]) return send(res, 400, { error: 'Worker-ID widerspricht dem Bericht' });
       if (body.deviceId != null && (typeof body.deviceId !== 'string' || !DEVICE_ID.test(body.deviceId))) return send(res, 400, { error: 'Ungültige Geräte-ID' });
-      const permission = controlForWorker(body.workerId, [ownerIdentity(teamId, true), ...readMembers(teamId, true)], fleet.snapshot(teamId).machines, body.deviceId || null);
+      const identities = [ownerIdentity(teamId, true), ...readMembers(teamId, true)], machines = fleet.snapshot(teamId).machines;
+      const permission = controlForWorker(body.workerId, identities, machines, body.deviceId || null);
       if (!['enabled', 'disabled'].includes(permission.reason)) return send(res, 409, { error: 'Worker ist nicht eindeutig registriert' });
       return fleetResult(res, () => {
         const result = fleet.workerReport(teamId, body);
         if (result.accepted && body.deviceId) fleet.linkWorker(teamId, body.workerId, body.deviceId);
         const accountCommand=result.accepted ? accountProvisioning.deliver(teamDir(teamId),require('./worker-reports').validateReport(body),teamId) : null;
-        return { ok: true, ...result,...(accountCommand?{accountCommand}:{}) };
+        const deviceId = result.accepted ? body.deviceId || registeredDeviceId(body.workerId, identities, machines) : undefined;
+        return { ok: true, ...result,...(deviceId?{deviceId}:{}),...(accountCommand?{accountCommand}:{}) };
       });
     }, 64 * 1024);
   }
