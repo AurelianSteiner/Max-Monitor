@@ -195,7 +195,7 @@ gh release create "$WORKER_TAG" "$WORKER_ZIP" --target "$BUILD_SOURCE" \
 
 git add appcast.xml releases/worker-native.json
 git commit -q -m "Release $VERSION" || warn "Nichts zu committen"
-git push -q origin main
+git push -q origin HEAD:main
 
 info "Erstelle GitHub-Release…"
 gh release create "$TAG" "$DMG_PATH" \
