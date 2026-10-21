@@ -1041,25 +1041,35 @@
     $('detail-dialog').addEventListener('close',()=>{token.value='';},{once:true});
     openDetail(`${action==='add-account'?'Claude-Account hinzufügen':'Figma verbinden'} · ${label}`,[form]);
   }
-  function workerAccountColumn(machine, account) {
+  function workerAccountColumn(machine, account, compact = false) {
     const column = node("div", "worker-account-column");
     if (!account) { column.append(node("span", "usage-note", "Kein zweiter Account")); return column; }
+    const stale = account.stale || !snapshot || Date.now()-Date.parse(account.updatedAt)>10*60000;
     const selected = machine.claudeAccounts?.selectedAccountId === account.id;
     const heading = node("div", "worker-account-heading");
     const name = node("strong", "", account.name); name.title = account.name;
     heading.append(name);
-    if (selected && account.status==='ready' && !account.stale) heading.append(node("span", "worker-account-selected", "Nächster Start"));
+    if (selected && account.status==='ready' && !stale) heading.append(node("span", "worker-account-selected", "Nächster Start"));
     column.append(heading);
-    const stale = account.stale || !snapshot || Date.now()-Date.parse(account.updatedAt)>10*60000;
+    const limits = node("div", "machine-limits");
     for (const [label,kind] of [["5 h","session"],["Woche","weekly"]]) {
       const window = account.windows.find(w=>w.kind===kind);
+      const measurement = window ? {percent:window.percent,resetsAt:window.reset,usageUpdatedAt:account.updatedAt} : null;
+      if (compact) {
+        const limit = node("div", "worker-account-window");
+        limit.setAttribute("aria-label", `${label} genutzt`);
+        limit.append(node("span","worker-account-window-label",`${label} genutzt`),meter(measurement,stale));
+        limits.append(limit); continue;
+      }
+      const limit = node("div", "machine-limit");
+      limit.dataset.tone = percentTone(measurement?.percent,limitStale(measurement,stale));
+      limit.title = limitTitle(measurement,stale);
       const line = node("div", "usage-line");
-      const remaining = window ? Math.max(0,100-window.percent) : null;
-      line.append(node("span", "", label), node("strong", "", remaining == null ? "—" : `${numberFormat.format(remaining)} % frei`));
-      column.append(line);
-      if(window) column.append(limitReset({percent:window.percent,resetsAt:window.reset,usageUpdatedAt:account.updatedAt},stale));
-      else column.append(node("small","limit-reset","Reset noch nicht gemeldet"));
+      line.append(node("span", "", `${label} genutzt`), node("strong", "", window ? `${numberFormat.format(window.percent)} %` : "—"));
+      limit.append(line,usageTrack(measurement?.percent),limitReset(measurement,stale));
+      limits.append(limit);
     }
+    column.append(limits);
     if(account.blockedUntil && !account.windows.some(w=>w.reset===account.blockedUntil))
       column.append(node("small","limit-reset",`Limit-Reset ${exact(account.blockedUntil)}`));
     const note = stale ? "Messung veraltet" : account.status==='limited' ? "Limit erreicht"
@@ -1067,10 +1077,10 @@
     if(note) column.append(node("p","usage-note",note));
     return column;
   }
-  function workerAccountsGrid(machine) {
+  function workerAccountsGrid(machine, compact = false) {
     const grid = node("div","worker-accounts-grid");
     grid.setAttribute("aria-label","Claude-Accounts dieses Macs");
-    for(const account of machine.claudeAccounts.accounts) grid.append(workerAccountColumn(machine,account));
+    for(const account of machine.claudeAccounts.accounts) grid.append(workerAccountColumn(machine,account,compact));
     return grid;
   }
   function machineAccountIdentity(machine) {
@@ -1236,10 +1246,6 @@
     ).map(({ machine }) => machine);
   }
   function renderFleet(devices) {
-    const accountColumns = devices.some(machine=>machine.claudeAccounts?.accounts?.length===2);
-    document.querySelector('.fleet-table')?.classList.toggle('account-columns',accountColumns);
-    if($("fleet-claude-first")) $("fleet-claude-first").textContent = accountColumns ? "Claude-Account 1" : "5 h genutzt";
-    if($("fleet-claude-second")) $("fleet-claude-second").textContent = accountColumns ? "Claude-Account 2" : "Woche genutzt";
     const online = devices.filter((machine) => machine.status === "online").length;
     const affected = devices.filter(machine => workerFailureReason(machine)).length;
     const onlineCount = node("span", "", `${numberFormat.format(online)} von ${numberFormat.format(devices.length)} online`);
@@ -1319,15 +1325,11 @@
       const sessionCell = node("td");
       const weeklyCell = node("td");
       if (machine.claudeAccounts?.accounts?.length===2) {
-        sessionCell.append(workerAccountColumn(machine,machine.claudeAccounts.accounts[0]));
-        weeklyCell.append(workerAccountColumn(machine,machine.claudeAccounts.accounts[1]));
+        sessionCell.colSpan = 2;
+        sessionCell.classList.add("fleet-account-pool");
+        sessionCell.append(workerAccountsGrid(machine,true));
+        weeklyCell.hidden = true;
         row.classList.add("has-limit-reset");
-      } else if (accountColumns && account) {
-        const single = {id:account.accountId,name:account.email || account.name,status:"ready",stale,
-          updatedAt:account.usageUpdatedAt || machine.usageUpdatedAt,
-          windows:["session","weekly"].flatMap(kind=>{const w=machineLimit(machine,account,kind);return w ? [{kind,percent:w.percent,reset:w.resetsAt}] : [];})};
-        sessionCell.append(workerAccountColumn(machine,single));
-        weeklyCell.append(workerAccountColumn(machine,null));
       } else if (account) {
         sessionCell.append(meter(machineLimit(machine, account, "session"), stale));
         weeklyCell.append(meter(machineLimit(machine, account, "weekly"), stale));
