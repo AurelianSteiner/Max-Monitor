@@ -882,13 +882,15 @@ class UserSettings: ObservableObject {
     }
 
     /// 静默更新指定 Claude 账户的 session-token（Dashboard 并行拉取时使用）
-    func silentlyUpdateClaudeSessionToken(accountId: UUID, token: String) {
-        accountStore.silentlyUpdateClaudeSessionToken(accountId: accountId, token: token)
+    @discardableResult
+    func silentlyUpdateClaudeSessionToken(accountId: UUID, token: String, replacing expectedToken: String? = nil) -> Bool {
+        accountStore.silentlyUpdateClaudeSessionToken(accountId: accountId, token: token, replacing: expectedToken)
     }
 
     /// 静默更新指定 Codex 账户的 session-token（Dashboard 并行拉取时使用）
-    func silentlyUpdateCodexSessionToken(accountId: UUID, token: String) {
-        accountStore.silentlyUpdateCodexSessionToken(accountId: accountId, token: token)
+    @discardableResult
+    func silentlyUpdateCodexSessionToken(accountId: UUID, token: String, replacing expectedToken: String? = nil) -> Bool {
+        accountStore.silentlyUpdateCodexSessionToken(accountId: accountId, token: token, replacing: expectedToken)
     }
 
     // MARK: - Launch at Login Management

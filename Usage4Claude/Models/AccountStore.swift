@@ -17,6 +17,8 @@ final class AccountStore: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private let keychain = KeychainManager.shared
+    private let persistenceQueue = DispatchQueue(label: "xyz.fi5h.Usage4Claude.accountPersistence", qos: .userInitiated)
+    @Published private(set) var lastPersistenceSucceeded = true
 
     // MARK: - Claude 账户
 
@@ -220,8 +222,11 @@ final class AccountStore: ObservableObject {
     private func saveAccounts() {
         // 在调用线程（主线程）快照，避免后台队列直接读取主线程持有的可变数组造成数据竞争
         let snapshot = accounts
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.keychain.saveAccounts(snapshot)
+        let keychain = keychain
+        persistenceQueue.async { [weak self] in
+            let saved = keychain.saveAccounts(snapshot)
+            if !saved { Logger.settings.error("Claude account persistence failed") }
+            DispatchQueue.main.async { self?.lastPersistenceSucceeded = saved }
         }
     }
 
@@ -369,11 +374,14 @@ final class AccountStore: ObservableObject {
     /// 静默更新指定 Claude 账户的 session-token（不触发 accountChanged 通知）
     /// Dashboard 会为每个账户并行拉取用量，OAuth refresh_token 轮换时必须写回
     /// 发起请求的那个账户，而不是"当前账户"。
-    func silentlyUpdateClaudeSessionToken(accountId: UUID, token: String) {
-        guard let index = accounts.firstIndex(where: { $0.id == accountId }) else { return }
-        guard accounts[index].sessionKey != token else { return }
+    @discardableResult
+    func silentlyUpdateClaudeSessionToken(accountId: UUID, token: String, replacing expectedToken: String? = nil) -> Bool {
+        guard let index = accounts.firstIndex(where: { $0.id == accountId }),
+              expectedToken == nil || accounts[index].sessionKey == expectedToken || accounts[index].sessionKey == token else { return false }
+        guard accounts[index].sessionKey != token else { return true }
         accounts[index].sessionKey = token
         Logger.settings.notice("Claude session-token 已静默更新（指定账户，自动续期）")
+        return true
     }
 
     // MARK: - Codex Account Management
@@ -381,8 +389,11 @@ final class AccountStore: ObservableObject {
     private func saveCodexAccounts() {
         // 在调用线程（主线程）快照，避免后台队列直接读取主线程持有的可变数组造成数据竞争
         let snapshot = codexAccounts
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.keychain.saveCodexAccounts(snapshot)
+        let keychain = keychain
+        persistenceQueue.async { [weak self] in
+            let saved = keychain.saveCodexAccounts(snapshot)
+            if !saved { Logger.settings.error("Codex account persistence failed") }
+            DispatchQueue.main.async { self?.lastPersistenceSucceeded = saved }
         }
     }
 
@@ -488,11 +499,14 @@ final class AccountStore: ObservableObject {
 
     /// 静默更新指定 Codex 账户的 session-token（不触发 accountChanged 通知）
     /// 与 Claude 侧同理，供 Dashboard 的绑定实例写回自己的账户。
-    func silentlyUpdateCodexSessionToken(accountId: UUID, token: String) {
-        guard let index = codexAccounts.firstIndex(where: { $0.id == accountId }) else { return }
-        guard codexAccounts[index].sessionKey != token else { return }
+    @discardableResult
+    func silentlyUpdateCodexSessionToken(accountId: UUID, token: String, replacing expectedToken: String? = nil) -> Bool {
+        guard let index = codexAccounts.firstIndex(where: { $0.id == accountId }),
+              expectedToken == nil || codexAccounts[index].sessionKey == expectedToken || codexAccounts[index].sessionKey == token else { return false }
+        guard codexAccounts[index].sessionKey != token else { return true }
         codexAccounts[index].sessionKey = token
         Logger.settings.notice("Codex session-token 已静默更新（指定账户，自动续期）")
+        return true
     }
 
     // MARK: - Shared Helpers

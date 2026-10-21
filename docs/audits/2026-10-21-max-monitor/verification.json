@@ -1,0 +1,123 @@
+{
+  "verifiedAt": "2026-10-21T18:13:10.201598+02:00",
+  "baseline": "aa3f426a60b7ea2a4a76218bad5231df166f5daa",
+  "branch": "codex/audit-technical-fixes",
+  "runtime": "Node v22.22.2",
+  "tests": {
+    "node": {
+      "passed": 523,
+      "failed": 0,
+      "skipped": 0
+    },
+    "swift": {
+      "passed": 195,
+      "failed": 0
+    },
+    "python": {
+      "passed": 130,
+      "failed": 0,
+      "skipped": 6,
+      "skipReason": "requires Linux CAP_SYS_ADMIN and squashfs-tools"
+    },
+    "nativeRegressionGroups": 5,
+    "credentialStorageChecks": 156,
+    "realKeychainCalls": 0,
+    "debugBuild": "succeeded",
+    "releaseBuild": "succeeded",
+    "browser": {
+      "passed": true,
+      "viewports": [
+        "1440x900",
+        "1024x768",
+        "390x844"
+      ],
+      "checks": [
+        "expired windows visibly unavailable",
+        "recovery after a fresh reset window",
+        "two switches",
+        "three sliders",
+        "current/full",
+        "day/week",
+        "shared live averages",
+        "capacity rises after optimization",
+        "selected mix recalibrates after average change",
+        "five-day consumption count",
+        "upload follows newsletter",
+        "correction rebalance",
+        "upload rebalance",
+        "keyboard",
+        "connection recovery",
+        "responsive",
+        "no console errors"
+      ],
+      "errors": []
+    },
+    "runtimePreflight": "actual SQLite query and sharp JPEG under Node 22.22.2; missing sharp rejected"
+  },
+  "sourceFiles": {
+    "scripts/audit-regressions.test.mjs": "0c47f989bcdaf85c5aa6a555c1383358b7776afd08a350f16e76cf990b9774fd",
+    "scripts/test-audit-native.py": "a3f5f3e54bbfc6d0dcbc0f45f330042d91c15a8c31b61b08ecf5ac847bb4bd18",
+    "team-server/test/audit-regressions.test.js": "ce0d5544800a86a8a097b6b29323d763963cc465ae7d138c95291eb62efd5c9d",
+    ".github/workflows/test.yml": "ff6dd6f25495e682b3ddf4efd52e5cd46bc4f8406a0646b327a977f186d59138",
+    "Config/runtime-release-files.json": "a646ebd4c15b1a9b950003d27c4a14ad788b06773ff26ff515671c1bef2fabdb",
+    "Tests/Usage4ClaudeCoreTests/SmartRefreshPolicyTests.swift": "2d5da00b747782c1a402b0bb9d764d0f8f6c3eb4af1dbc262888bcd2209ec1d5",
+    "Usage4Claude/Helpers/DataRefreshManager.swift": "168f99cc061973c9878a591836fcd4ee5a244876d8873133d83e93121fe89ff6",
+    "Usage4Claude/Helpers/SleepGuard.swift": "73dd1015c0248bc9674f2365046d5e0c03b887040d49a3e8fc3267f57a55b351",
+    "Usage4Claude/Helpers/SmartRefreshPolicy.swift": "506c9be3aa8bc11297f9ab681f8af1461b8851212bdfd786f23b8c480126c939",
+    "Usage4Claude/Models/AccountStore.swift": "6d61fde70b08ea400d64417964c78377666554916384dc1371f3f9c713910ece",
+    "Usage4Claude/Models/UserSettings.swift": "7a960da881428ed1310bc4937b75f944c6a945463af11e2ec9392384a4289278",
+    "Usage4Claude/Services/ClaudeAPIService.swift": "9df12ab8ecd35052ac0a3c11adcb243a6acad52efc897a2643be66f650fe38f9",
+    "Usage4Claude/Services/CodexAPIService.swift": "ede48be29f38ead4d02d18dcf4341c7c85fd712b1e25350fe3719a6926061c96",
+    "Usage4Claude/Views/WebLogin/ClaudeOAuthCoordinator.swift": "dc55bd9efc04f11aa180fb9b895fdd134771e23dd697fb904c2b132245682980",
+    "scripts/install-monitor-hub.mjs": "c32ec193243472055a37b249e9a12624ce232da6ed1a2890b99ebb44cc63d36d",
+    "scripts/newsletter-monitor-bridge.mjs": "04e819d6a201a84950fc3eb4d2b53e4edb8f8b005e4298db506db143ea3326d8",
+    "scripts/newsletter-monitor-bridge.test.mjs": "a1ebdb1d8d5c5d9874a148809c5da8feb5c7f8d7d0e618f3a4a401446e466b3d",
+    "scripts/review-planning.cjs": "d2b2d11386dfec151ddd7eef7e5bc77407b0e48c0ff6207907e34beedccc81ed",
+    "team-server/account-provisioning.js": "e2592a7eb3e48b015568cfa8497398f00f6f44bee8c035728a5b79391316fbd1",
+    "team-server/effort-config.js": "09f29e2d5ce603cba89a89397e0cd636a20d3796e5c779f133d4d77b49c64bf1",
+    "team-server/fleet.js": "a09872fe93729caef5b1b408589290fbf27f22b4afe7b0a6d4737763c65b802b",
+    "team-server/package.json": "19d1df2b08cd7fbda84f75d365c528f7cf5a4eec68ebce013d1c363ff9b3931e",
+    "team-server/public/planning-model.js": "2068a1f2b9262777f22e3ad926a78628ab543210044e7ec2b2ffb48d494e9392",
+    "team-server/server.js": "294a466df2970efd3a295bc37740a5e433749d50033684faf64904fd7cdf5403",
+    "team-server/test/account-provisioning.test.js": "6a7276a2de18c444e29048bc8ae9c4871b42a2721bd61f199ae58d7c93a55a0b",
+    "team-server/test/planning.test.js": "8305163bc6df65d72956c6cc77013e23ecd4ba9ef389a5a0b644e469318386eb"
+  },
+  "openBusinessDecisions": [
+    "F11"
+  ],
+  "deployed": false,
+  "rawLogs": {
+    "release-build.txt": {
+      "sha256": "35e5b793acc6322d96a9b145583c87b14a61519fe9518a7775768ef5a42fc171",
+      "path": "/Users/tillticktucktim/.codex/visualizations/2026/10/21/01a15f26-39e4-7d33-ab0f-bc3b38d20108/audit-fixes-logs/release-build.txt"
+    },
+    "node22.txt": {
+      "sha256": "65f26647536b78f6d3eebb4459042cb7e8fd32986b6b14e5d4057b9120cdc2ca",
+      "path": "/Users/tillticktucktim/.codex/visualizations/2026/10/21/01a15f26-39e4-7d33-ab0f-bc3b38d20108/audit-fixes-logs/node22.txt"
+    },
+    "python.txt": {
+      "sha256": "c2773dbd0e716c608c9d143ef4317b16360289844cf06b274f4eb125b6006493",
+      "path": "/Users/tillticktucktim/.codex/visualizations/2026/10/21/01a15f26-39e4-7d33-ab0f-bc3b38d20108/audit-fixes-logs/python.txt"
+    },
+    "credential-storage.txt": {
+      "sha256": "49d89e16e5036d4b90d00f0cafdd1f6021d2627af98247d7c33e959a95692cbe",
+      "path": "/Users/tillticktucktim/.codex/visualizations/2026/10/21/01a15f26-39e4-7d33-ab0f-bc3b38d20108/audit-fixes-logs/credential-storage.txt"
+    },
+    "localization.txt": {
+      "sha256": "29b723b1b436d521297cf25e1ed212c4e2c42d117e8fe3e276153da5b64776cb",
+      "path": "/Users/tillticktucktim/.codex/visualizations/2026/10/21/01a15f26-39e4-7d33-ab0f-bc3b38d20108/audit-fixes-logs/localization.txt"
+    },
+    "native-regressions.txt": {
+      "sha256": "32f08bd629246d1d6bb68411574939d2fffc13bf5e830c67b941b1c8557443a0",
+      "path": "/Users/tillticktucktim/.codex/visualizations/2026/10/21/01a15f26-39e4-7d33-ab0f-bc3b38d20108/audit-fixes-logs/native-regressions.txt"
+    },
+    "swift.txt": {
+      "sha256": "47a08071d31130a8a51a8ecf7a67894edfa2c76eb4ca6ed031efd768f660baf3",
+      "path": "/Users/tillticktucktim/.codex/visualizations/2026/10/21/01a15f26-39e4-7d33-ab0f-bc3b38d20108/audit-fixes-logs/swift.txt"
+    },
+    "debug-build.txt": {
+      "sha256": "d8960cce830e331a34c26eee04e9d754701b853a0fce17edc6e386ae65a579e7",
+      "path": "/Users/tillticktucktim/.codex/visualizations/2026/10/21/01a15f26-39e4-7d33-ab0f-bc3b38d20108/audit-fixes-logs/debug-build.txt"
+    }
+  }
+}

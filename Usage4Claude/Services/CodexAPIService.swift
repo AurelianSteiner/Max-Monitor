@@ -182,15 +182,17 @@ class CodexAPIService {
     /// 缓存有效时（距过期 > 20 分钟）跳过网络请求；同一凭据的并发调用由
     /// OAuthTokenCache 合并为一次网络请求。completion 一律主线程回调。
     private func fetchAccessToken(sessionToken: String, completion: @escaping (Result<String, Error>) -> Void) {
+        let accountId = boundAccountId ?? settings.currentCodexAccount?.id
+        let cache = tokenCache
         Task {
             do {
-                let accessToken = try await tokenCache.accessToken(
+                let accessToken = try await cache.accessToken(
                     refreshToken: sessionToken,
                     margin: Self.tokenRefreshMargin
                 ) { [weak self] credential in
                     guard let self else { throw UsageError.networkError }
                     if Self.isOAuthRefreshToken(credential) {
-                        return try await self.refreshOAuthTokens(refreshToken: credential)
+                        return try await self.refreshOAuthTokens(refreshToken: credential, accountId: accountId)
                     }
                     return try await self.fetchSessionTokens(sessionToken: credential)
                 }
@@ -200,10 +202,13 @@ class CodexAPIService {
                 // 避免网络瞬断/服务端抖动影响用量拉取。凭据失效类错误不回退——
                 // 必须让 401 传播出去触发三级刷新链 / 重新登录提示。
                 switch error {
-                case UsageError.unauthorized, UsageError.sessionExpired:
+                case OAuthTokenCacheError.revokedGrant:
+                    await MainActor.run { completion(.failure(UsageError.sessionExpired)) }
+                    return
+                case UsageError.unauthorized, UsageError.sessionExpired, is CancellationError:
                     break
                 default:
-                    if let fallback = await tokenCache.validCachedToken(refreshToken: sessionToken) {
+                    if let fallback = await cache.validCachedToken(refreshToken: sessionToken) {
                         Logger.api.warning("Codex token 刷新失败（\(error.localizedDescription)），回退未过期的缓存 token")
                         await MainActor.run { completion(.success(fallback)) }
                         return
@@ -324,27 +329,28 @@ class CodexAPIService {
     /// OAuth 账户：用 refresh_token 向 auth.openai.com 换取 access_token。
     /// 只会在 OAuthTokenCache 判定「确实需要发起新刷新」时被调用一次（并发调用共享同一次结果）。
     /// refresh_token 轮换时静默写回账户存储，并作为返回的 refreshToken（缓存键跟随新值）。
-    private func refreshOAuthTokens(refreshToken: String) async throws -> OAuthTokenCache.Tokens {
-        let tokens = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CodexOAuthTokens, Error>) in
-            CodexOAuthService.refresh(refreshToken: refreshToken) { result in
-                continuation.resume(with: result)
+    private func refreshOAuthTokens(refreshToken: String, accountId: UUID?) async throws -> OAuthTokenCache.Tokens {
+        let tokens: CodexOAuthTokens
+        do {
+            tokens = try await withCheckedThrowingContinuation { continuation in
+                CodexOAuthService.refresh(refreshToken: refreshToken) { result in
+                    continuation.resume(with: result)
+                }
             }
+        } catch UsageError.sessionExpired {
+            throw OAuthTokenCacheError.revokedGrant
         }
 
         let newRefresh = tokens.refreshToken.isEmpty ? refreshToken : tokens.refreshToken
         if newRefresh != refreshToken {
-            Logger.api.notice("Codex OAuth: refresh_token 已轮换，静默写回")
-            // 绑定实例写回它自己的账户，避免把 A 账户的新 token 覆盖到当前账户
-            let boundId = boundAccountId
-            await MainActor.run {
-                if let boundId = boundId {
-                    UserSettings.shared.silentlyUpdateCodexSessionToken(accountId: boundId, token: newRefresh)
-                } else {
-                    UserSettings.shared.silentlyUpdateCurrentCodexSessionToken(newRefresh)
+            try await MainActor.run {
+                guard let accountId,
+                      UserSettings.shared.silentlyUpdateCodexSessionToken(
+                        accountId: accountId, token: newRefresh, replacing: refreshToken) else {
+                    throw CancellationError()
                 }
             }
         }
-
         return OAuthTokenCache.Tokens(
             accessToken: tokens.accessToken,
             refreshToken: newRefresh,

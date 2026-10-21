@@ -1,0 +1,28 @@
+{
+  "passed": true,
+  "viewports": [
+    "1440x900",
+    "1024x768",
+    "390x844"
+  ],
+  "checks": [
+    "expired windows visibly unavailable",
+    "recovery after a fresh reset window",
+    "two switches",
+    "three sliders",
+    "current/full",
+    "day/week",
+    "shared live averages",
+    "capacity rises after optimization",
+    "selected mix recalibrates after average change",
+    "five-day consumption count",
+    "upload follows newsletter",
+    "correction rebalance",
+    "upload rebalance",
+    "keyboard",
+    "connection recovery",
+    "responsive",
+    "no console errors"
+  ],
+  "errors": []
+}

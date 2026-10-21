@@ -5,10 +5,19 @@ const { planningEvidence } = require('../planning');
 const NOW = Date.parse('2026-10-20T12:00:00Z');
 function fixture(count = 7) {
   return { generated_at: new Date(NOW).toISOString(), accounts: Array.from({ length: count }, (_, i) => ({ id: 'account-' + i,
-    windows: { five_hour: { used: 0, at: NOW / 1000 }, seven_day: { used: 0, at: NOW / 1000 } } })),
+    windows: { five_hour: { used: 0, at: NOW / 1000, reset: NOW / 1000 + 3600 }, seven_day: { used: 0, at: NOW / 1000, reset: NOW / 1000 + 86400 } } })),
     averages: model.KINDS.map((key, i) => ({ key, five_hour_pp: { mean: [10, 5, 2][i], n: 20 }, weekly_pp: { mean: [1, .5, .2][i], n: 20 } })) };
 }
 const cap = (s, mode = 'full', period = 'week') => model.capacity(s, mode, period, NOW);
+test('current planning rejects expired or unknown reset windows until a new sample arrives', () => {
+  for (const reset of [NOW / 1000 - 1, NOW / 1000, undefined, NaN]) {
+    const source = fixture(1); source.accounts[0].windows.five_hour.reset = reset;
+    assert.equal(cap(source, 'current').available, false);
+    assert.equal(model.initial(cap(source, 'current')).newsletter, 0);
+    assert.equal(cap(source, 'full').available, true, 'hypothetical full capacity stays explicit');
+  }
+  assert.equal(cap(fixture(1), 'current').available, true);
+});
 function assertFits(c, mix) {
   for (const window of ['fiveHour', 'weekly']) assert.ok(model.KINDS.reduce((n, k) => n + mix[k] * c.costs[k][window], 0) <= c.budgets[window] + 1e-7);
 }

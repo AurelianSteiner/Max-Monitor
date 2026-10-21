@@ -555,6 +555,8 @@ const server = http.createServer((req, res) => {
     if(!['admin','super'].includes(who.role))return send(res,403,{error:'Nur Admins dürfen Claude-Accounts hinzufügen.'});
     return readBody(req,(error,raw)=>{
       if(error)return send(res,413,{error:'Account-Übertragung zu groß'});
+      const current = identify(req, teamId);
+      if (!current || !['admin','super'].includes(current.role)) return send(res,403,{error:'Team-Berechtigung wurde geändert'});
       try {
         const body=JSON.parse(raw),machines=fleet.snapshot(teamId).machines;
         const target=machines.find(m=>m.workerId===workerId && m.deviceId===body.deviceId);
@@ -623,7 +625,9 @@ const server = http.createServer((req, res) => {
     if (!['admin','super'].includes(who.role)) return send(res,403,{error:'Nur Admins dürfen den zentralen Aufwand ändern.'});
     return readBody(req,(error,raw)=>{
       if(error) return send(res,413,{error:'Einstellungen zu groß'});
-      try { const policy=effortConfig.savePolicy(teamDir(teamId),JSON.parse(raw),who); return send(res,200,{policy}); }
+      const current = identify(req, teamId);
+      if (!current || !['admin','super'].includes(current.role)) return send(res,403,{error:'Team-Berechtigung wurde geändert'});
+      try { const policy=effortConfig.savePolicy(teamDir(teamId),JSON.parse(raw),current); return send(res,200,{policy}); }
       catch(e) { return send(res,e instanceof SyntaxError ? 400 : e.status||503,{error:e.status?e.message:'Einstellungen konnten nicht gespeichert werden.'}); }
     },8192);
   }
@@ -664,9 +668,11 @@ const server = http.createServer((req, res) => {
     if (!["admin", "super"].includes(who.role)) return send(res, 403, { error: "Nur Admin oder Team-Inhaber darf Klärungsbedarf zuordnen" });
     return readBody(req, (error, raw) => {
       if (error) return send(res, 413, { error: "Klärungsanfrage zu groß" });
+      const current = identify(req, teamId);
+      if (!current || !["admin", "super"].includes(current.role)) return send(res, 403, { error: "Team-Berechtigung wurde geändert" });
       let body;
       try { body = JSON.parse(raw); } catch { return send(res, 400, { error: "kein gültiges JSON" }); }
-      return fleetResult(res, () => ({ ok: true, task: fleet.clarifyTask(teamId, who, body) }));
+      return fleetResult(res, () => ({ ok: true, task: fleet.clarifyTask(teamId, current, body) }));
     });
   }
   // Every team member can resolve an attention item; source synchronization
@@ -674,9 +680,11 @@ const server = http.createServer((req, res) => {
   if (req.method === "POST" && rest === "/fleet/tasks/complete") {
     return readBody(req, (error, raw) => {
       if (error) return send(res, 413, { error: "Abhak-Anfrage zu groß" });
+      const current = identify(req, teamId);
+      if (!current) return send(res, 401, { error: "Mitgliedszugang ist nicht mehr gültig" });
       let body;
       try { body = JSON.parse(raw); } catch { return send(res, 400, { error: "kein gültiges JSON" }); }
-      return fleetResult(res, () => ({ ok: true, task: fleet.completeTask(teamId, who, body) }));
+      return fleetResult(res, () => ({ ok: true, task: fleet.completeTask(teamId, current, body) }));
     });
   }
   if (req.method === "POST" && (rest === "/heartbeat" || rest === "/queue")) {
@@ -694,6 +702,18 @@ const server = http.createServer((req, res) => {
       if (rest === "/heartbeat" && who.member?.enrollment &&
         (String(body?.deviceId || "").toLowerCase() !== who.member.enrollment.deviceId || body?.workerId !== who.member.enrollment.workerId)) {
         return send(res, 409, { error: "Worker-Token ist an die registrierte Geräte-ID und Worker-ID gebunden" });
+      }
+      if (rest === "/heartbeat" && body?.workerId) {
+        let reserved;
+        try {
+          reserved = readMembers(teamId, true).filter(member => member.enrollment
+            && (member.enrollment.workerId === body.workerId || member.enrollment.deviceId === String(body.deviceId || "").toLowerCase()));
+        } catch { return send(res, 503, { error: "Worker-Zuordnung konnte nicht geprüft werden" }); }
+        if (reserved.some(member => member.enrollment.workerId !== body.workerId
+          || member.enrollment.deviceId !== String(body.deviceId || "").toLowerCase()
+          || who.role !== "super" && member.id !== who.member?.id)) {
+          return send(res, 409, { error: "Worker- und Geräte-ID sind bereits für einen anderen Zugang registriert" });
+        }
       }
       return fleetResult(res, () => rest === "/heartbeat"
         ? { ok: true, machine: fleet.heartbeat(teamId, who, body) }
@@ -846,6 +866,23 @@ const server = http.createServer((req, res) => {
 
   return send(res, 404, { error: "unbekannter Pfad" });
 });
+
+let accountCleanupTimer;
+function cleanupExpiredAccountOrders() {
+  try {
+    for (const entry of fs.readdirSync(DATA_DIR, { withFileTypes: true })) {
+      if (entry.isDirectory() && /^[A-Z0-9]{4,16}$/.test(entry.name)) {
+        accountProvisioning.pruneExpired(teamDir(entry.name));
+      }
+    }
+  } catch (error) { if (error.code !== "ENOENT") console.error("Abgelaufene Account-Aufträge konnten nicht bereinigt werden"); }
+}
+server.on("listening", () => {
+  cleanupExpiredAccountOrders();
+  accountCleanupTimer = setInterval(cleanupExpiredAccountOrders, 60000);
+  accountCleanupTimer.unref();
+});
+server.on("close", () => clearInterval(accountCleanupTimer));
 
 if (require.main === module) {
   server.listen(PORT, HOST, () => {

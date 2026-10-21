@@ -7,6 +7,36 @@ const publicKey=keys.publicKey.export({type:'spki',format:'der'}).toString('base
 const endpoint={publicKey,keyId:crypto.createHash('sha256').update(Buffer.from(publicKey,'base64')).digest('hex')};
 const deviceId='12345678-1234-4234-8234-123456789abc';
 const envelope=()=>({id:crypto.randomUUID(),action:'add-account',expiresAt:new Date(Date.now()+60000).toISOString(),deviceId,keyId:endpoint.keyId,wrappedKey:crypto.randomBytes(384).toString('base64'),iv:crypto.randomBytes(12).toString('base64'),ciphertext:crypto.randomBytes(80).toString('base64')});
+test('expiry erases the sealed payload even without a matching receiver or a later worker poll',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'account-expiry-'));
+  try {
+    const now=Date.now(),target={workerId:'mac-test',deviceId,teamId:'RSMACS01',endpoint},body=envelope();
+    enqueue(dir,target,body,now);
+    const file=path.join(dir,'claude-account-orders/mac-test.json');
+    const later=Date.parse(body.expiresAt)+1;
+    assert.equal(deliver(dir,{workerId:'mac-test',deviceId:'rotated',accountProvisioning:{}},'RSMACS01',later),null);
+    assert.equal(JSON.parse(fs.readFileSync(file,'utf8')).command,undefined);
+    const second={...envelope(),expiresAt:new Date(later+60000).toISOString()};
+    enqueue(dir,target,second,later);
+    require('../account-provisioning').pruneExpired(dir,later+60001);
+    assert.equal(JSON.parse(fs.readFileSync(file,'utf8')).command,undefined);
+    assert.equal(status(dir,'mac-test',later+60001).status,'expired');
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('accepted recipient key sizes and wrapped key lengths agree',()=>{
+  const publicEndpoint=bits=>{
+    const key=crypto.createPublicKey({key:{kty:'RSA',n:Buffer.alloc(bits/8,255).toString('base64url'),e:'AQAB'},format:'jwk'});
+    const der=key.export({type:'spki',format:'der'});
+    return {publicKey:der.toString('base64'),keyId:crypto.createHash('sha256').update(der).digest('hex')};
+  };
+  assert.throws(()=>validateEndpoint(publicEndpoint(8192)),/Schlüssel/);
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'account-key-size-'));
+  try {
+    const large=validateEndpoint(publicEndpoint(4096)),target={workerId:'mac-test',deviceId,teamId:'RSMACS01',endpoint:large};
+    assert.throws(()=>enqueue(dir,target,{...envelope(),keyId:large.keyId}),/ungültig/);
+    assert.equal(enqueue(dir,target,{...envelope(),keyId:large.keyId,wrappedKey:crypto.randomBytes(512).toString('base64')}).status,'queued');
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
 test('the inbox binds encrypted orders to one device/key, redacts status and erases payload after acknowledgement',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'account-inbox-'));try{
     const target={workerId:'mac-test',deviceId,teamId:'RSMACS01',endpoint};const body=envelope();

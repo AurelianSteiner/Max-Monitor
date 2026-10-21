@@ -152,7 +152,8 @@ final class ClaudeOAuthCoordinator: ObservableObject {
         // 2) `code#state` 形态
         if text.contains("#"), !text.contains("?"), !text.contains("/") {
             let parts = text.split(separator: "#", maxSplits: 1).map(String.init)
-            var result = ["code": parts[0]]
+            guard let code = parts.first, !code.isEmpty else { return [:] }
+            var result = ["code": code]
             if parts.count > 1, !parts[1].isEmpty { result["state"] = parts[1] }
             return result
         }

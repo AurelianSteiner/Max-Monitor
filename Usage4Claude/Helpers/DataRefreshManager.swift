@@ -91,6 +91,8 @@ class DataRefreshManager: ObservableObject {
 
         let fetchClaude = shouldFetchClaudeUsage
         let fetchCodex = shouldFetchCodexUsage
+        let claudeAccountId = settings.currentAccount?.id
+        let codexAccountId = settings.currentCodexAccount?.id
 
         if !fetchClaude {
             clearClaudeUsageState()
@@ -117,6 +119,8 @@ class DataRefreshManager: ObservableObject {
             let codexResult = await codexTask?.value
 
             guard let self = self else { return }
+            guard self.settings.currentAccount?.id == claudeAccountId,
+                  self.settings.currentCodexAccount?.id == codexAccountId else { return }
             self.isLoading = false
 
             var monitoringUtilizations: [ProviderType: Double] = [:]
@@ -315,8 +319,10 @@ class DataRefreshManager: ObservableObject {
         lastAPIFetchTime = Date()
 
         // ClaudeAPIService.fetchUsage 保证 completion 一律在主线程回调，此处无需再包一层 DispatchQueue.main.async
+        let accountId = settings.currentAccount?.id
         apiService.fetchUsage { [weak self] result in
             guard let self = self else { return }
+            guard self.settings.currentAccount?.id == accountId else { return }
             self.isLoading = false
 
             switch result {
@@ -348,9 +354,11 @@ class DataRefreshManager: ObservableObject {
         codexErrorMessage = nil
         lastAPIFetchTime = Date()
 
+        let accountId = settings.currentCodexAccount?.id
         codexApiService.fetchUsage { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                guard self.settings.currentCodexAccount?.id == accountId else { return }
                 self.isLoading = false
     
                 switch result {

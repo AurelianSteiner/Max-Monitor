@@ -17,7 +17,7 @@ als Installationsziele verwendet.
 ## Vorbereitung und Vorschau
 
 Den aktuellen Checkout mit den Installationsskripten auf den Hub übertragen.
-Node.js ab Version 20, systemd und die vorhandene nginx-TLS-Konfiguration werden
+Node.js ab Version 22.13 mit `node:sqlite`, funktionsfähiges `sharp` im RS Hub, systemd und die vorhandene nginx-TLS-Konfiguration werden
 benötigt. Der Installer verlangt den Pfad zu dieser Konfiguration ausdrücklich;
 auf dem aktuellen Hub ist das `/etc/nginx/sites-available/rs-configs`.
 

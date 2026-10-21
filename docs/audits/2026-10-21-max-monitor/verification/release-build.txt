@@ -1,0 +1,21 @@
+    builtin-RegisterExecutionPolicyException /tmp/max-monitor-audit-build/Build/Products/Release/Usage4Claude.app
+
+Validate /tmp/max-monitor-audit-build/Build/Products/Release/Usage4Claude.app (in target 'Usage4Claude' from project 'Usage4Claude')
+    cd /Users/tillticktucktim/.codex/worktrees/audit-technical-fixes/Max-Monitor
+    builtin-validationUtility /tmp/max-monitor-audit-build/Build/Products/Release/Usage4Claude.app -no-validate-extension -infoplist-subpath Contents/Info.plist
+
+RegisterWithLaunchServices /tmp/max-monitor-audit-build/Build/Products/Release/Usage4Claude.app (in target 'Usage4Claude' from project 'Usage4Claude')
+    cd /Users/tillticktucktim/.codex/worktrees/audit-technical-fixes/Max-Monitor
+    builtin-lsregisterurl --record-path /tmp/max-monitor-audit-build/Build/Intermediates.noindex/XCBuildData/registered-launchservices.txt -- /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted /tmp/max-monitor-audit-build/Build/Products/Release/Usage4Claude.app
+
+Touch /tmp/max-monitor-audit-build/Build/Products/Release/Usage4Claude.app (in target 'Usage4Claude' from project 'Usage4Claude')
+    cd /Users/tillticktucktim/.codex/worktrees/audit-technical-fixes/Max-Monitor
+    /usr/bin/touch -c /tmp/max-monitor-audit-build/Build/Products/Release/Usage4Claude.app
+
+PruneExplicitPrecompiledModules /tmp/max-monitor-audit-build/SDKExplicitPrecompiledModules
+
+PruneExplicitPrecompiledModules /tmp/max-monitor-audit-build/Build/Intermediates.noindex/ExplicitPrecompiledModules
+
+PruneExplicitPrecompiledModules /tmp/max-monitor-audit-build/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules
+
+** BUILD SUCCEEDED **

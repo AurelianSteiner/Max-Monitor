@@ -7,7 +7,7 @@ function validateEndpoint(raw) {
   if(raw==null)return undefined;
   if(!/^[a-f0-9]{64}$/.test(raw.keyId||'') || typeof raw.publicKey!=='string' || !/^[A-Za-z0-9+/=]{400,2048}$/.test(raw.publicKey))throw Error('Ungültiger Account-Empfang');
   const der=Buffer.from(raw.publicKey,'base64'),key=crypto.createPublicKey({key:der,type:'spki',format:'der'});
-  if(key.asymmetricKeyType!=='rsa' || key.asymmetricKeyDetails.modulusLength<3072
+  if(key.asymmetricKeyType!=='rsa' || ![3072,4096].includes(key.asymmetricKeyDetails.modulusLength)
     || crypto.createHash('sha256').update(der).digest('hex')!==raw.keyId)throw Error('Ungültiger Account-Schlüssel');
   let result;
   if(raw.result) {
@@ -28,6 +28,21 @@ function publicOrder(order,now=Date.now()) {
   const expired=!terminal(order.status)&&Date.parse(order.command?.expiresAt)<=now;
   return {id:order.id,status:expired?'expired':order.status,createdAt:order.createdAt,updatedAt:order.updatedAt,...(order.figma?{figma:order.figma}:{})};
 }
+function currentOrder(file, now) {
+  const order=read(file);
+  if(order?.command && Date.parse(order.command.expiresAt)<=now) {
+    order.status='expired';order.updatedAt=new Date(now).toISOString();delete order.command;write(file,order);
+  }
+  return order;
+}
+function pruneExpired(dir,now=Date.now()) {
+  const folder=path.join(dir,'claude-account-orders');
+  let entries;try{entries=fs.readdirSync(folder,{withFileTypes:true});}catch(e){if(e.code==='ENOENT')return;throw e;}
+  for(const entry of entries) {
+    if(entry.isFile() && /^[a-z0-9][a-z0-9-]{1,40}\.json$/.test(entry.name)) currentOrder(path.join(folder,entry.name),now);
+  }
+}
+function remove(dir,workerId) { fs.rmSync(fileFor(dir,workerId),{force:true}); }
 function enqueue(dir,{workerId,deviceId,endpoint,teamId},raw,now=Date.now()) {
   const fail=message=>{throw Object.assign(Error(message),{status:400});};
   if(!endpoint || raw.keyId!==endpoint.keyId || raw.deviceId!==deviceId || !UUID.test(raw.id||''))fail('Der Mac-Empfang hat sich geändert. Ansicht aktualisieren.');
@@ -37,16 +52,18 @@ function enqueue(dir,{workerId,deviceId,endpoint,teamId},raw,now=Date.now()) {
     if(typeof value!=='string'||!/^[A-Za-z0-9+/]+={0,2}$/.test(value))fail('Verschlüsselte Account-Daten ungültig.');
     const bytes=Buffer.from(value,'base64');if(bytes.length<min||bytes.length>max||bytes.toString('base64')!==value)fail('Verschlüsselte Account-Daten ungültig.');return value;
   };
-  const file=fileFor(dir,workerId),old=read(file);
+  const file=fileFor(dir,workerId),old=currentOrder(file,now);
   if(old?.id===raw.id)return publicOrder(old,now);
   if(old && !terminal(publicOrder(old,now).status))throw Object.assign(Error('Auf diesem Mac wird bereits ein Account eingerichtet.'),{status:409});
   const stamp=new Date(now).toISOString();
+  const supported=validateEndpoint(endpoint);
+  const keyBytes=crypto.createPublicKey({key:Buffer.from(supported.publicKey,'base64'),type:'spki',format:'der'}).asymmetricKeyDetails.modulusLength/8;
   const command={id:raw.id,workerId,deviceId,keyId:raw.keyId,teamId,action:raw.action,expiresAt:raw.expiresAt,
-    wrappedKey:decode(raw.wrappedKey,384,512),iv:decode(raw.iv,12,12),ciphertext:decode(raw.ciphertext,18,4096)};
+    wrappedKey:decode(raw.wrappedKey,keyBytes,keyBytes),iv:decode(raw.iv,12,12),ciphertext:decode(raw.ciphertext,18,4096)};
   const order={id:raw.id,command,status:'queued',createdAt:stamp,updatedAt:stamp};write(file,order);return publicOrder(order,now);
 }
 function deliver(dir,report,teamId,now=Date.now()) {
-  const file=fileFor(dir,report.workerId),order=read(file);if(!order)return null;
+  const file=fileFor(dir,report.workerId),order=currentOrder(file,now);if(!order || terminal(order.status))return null;
   if(order.command?.deviceId!==report.deviceId || order.command?.keyId!==report.accountProvisioning?.keyId)return null;
   const result=report.accountProvisioning?.result;
   if(result?.id===order.id) {
@@ -58,5 +75,5 @@ function deliver(dir,report,teamId,now=Date.now()) {
   if(Date.parse(order.command.expiresAt)<=now){order.status='expired';delete order.command;write(file,order);return null;}
   return order.command;
 }
-function status(dir,workerId){return publicOrder(read(fileFor(dir,workerId)));}
-module.exports={validateEndpoint,enqueue,deliver,status,publicOrder};
+function status(dir,workerId,now=Date.now()){return publicOrder(currentOrder(fileFor(dir,workerId),now),now);}
+module.exports={validateEndpoint,enqueue,deliver,status,publicOrder,remove,pruneExpired};

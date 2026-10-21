@@ -871,6 +871,9 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         if ((workflow.stateTags?.[name] ?? []).some(tag => normalized.has(normalizeTag(tag)))) status = name;
       }
       if (finished) status = 'completed';
+      // A successful tag is history, not proof that this new status epoch finished.
+      if (ordered && task.statusSince && status === 'completed' && !finished
+        && task.status?.type !== 'closed') status = 'queued';
       if ((workflow.claimWorkflow ?? workflow.id) === 'klaviyo' && admission.manualUpload(task) && status !== 'completed') continue;
       // A closed source is no longer an open production order. Its generic
       // closing time does not prove when this individual workflow finished.
@@ -1129,18 +1132,25 @@ export async function readRunStatuses(hubFetch, channelId, threads, { concurrenc
         const url = new URL('https://slack.com/api/conversations.replies');
         const expected = wanted.get(ts);
         for (const [key, value] of Object.entries({ channel: channelId, ts, limit: 50, ...(expected.runId ? { include_all_metadata: true } : {}) })) url.searchParams.set(key, String(value));
-        const result = await requestJson(hubFetch, url, 'Slack');
-        const messages = Array.isArray(result.messages) ? result.messages : [];
+        const messages = [], cursors = new Set();
+        let complete = false;
+        for (let page = 0; page < 20; page++) {
+          const result = await requestJson(hubFetch, url, 'Slack');
+          if (Array.isArray(result.messages)) messages.push(...result.messages);
+          const cursor = result.response_metadata?.next_cursor;
+          if (!result.has_more && !cursor) { complete = true; break; }
+          if (typeof cursor !== 'string' || !cursor || cursors.has(cursor)) break;
+          cursors.add(cursor); url.searchParams.set('cursor', cursor);
+        }
         const parentMessage = messages.find(message => message.ts === ts && message.bot_id);
         const parent = expected.runId ? parseClaim(parentMessage) : null;
         // A resumed worker may reuse its own status reply. The current parent
         // metadata must still prove this exact run, job/status epoch and workflow.
         // Do not label an older first-page reply as the current diagnosis. A
         // truncated new-path read stays unverified; no extra Slack budget is used.
-        const complete = !result.has_more && !result.response_metadata?.next_cursor;
-        const bound = !expected.runId || complete && parent?.runId === expected.runId && parent.jobId === expected.jobId
+        const bound = complete && (!expected.runId || parent?.runId === expected.runId && parent.jobId === expected.jobId
           && parent.taskId === expected.taskId && parent.workflow === expected.workflow
-          && parent.state === 'final' && parent.outcome !== 'completed';
+          && parent.state === 'final' && parent.outcome !== 'completed');
         // Only the worker's own bot reply counts, never a person writing in the thread.
         const found = (bound ? messages : [])
           .filter(message => message?.ts !== ts && message?.bot_id
@@ -1231,10 +1241,12 @@ export function createRenderPreviews({ localHub, upload, openDatabase, resize, r
           } catch { /* Retried next cycle; meanwhile the previous picture stays. */ }
         }
         const key = `${runId}:${mail.key}`;
-        const entry = image ? { id: image.id, title: mail.title, ...(mail.subject ? { subject: mail.subject } : {}),
+        const persisted = attempts.find(attempt => attempt.runId === runId)?.previousPreviews?.find(entry => entry.mailId === mail.key);
+        const entry = image ? { id: image.id, mailId: mail.key, title: mail.title, ...(mail.subject ? { subject: mail.subject } : {}),
           renderedAt: new Date(mail.renderedAt).toISOString(), render: mail.render, width: image.width, height: image.height } : shown.get(key);
+        const retained = entry || persisted;
         if (image) nextMade.set(mail.sha256, image);
-        if (entry) { nextShown.set(key, entry); list.push(entry); }
+        if (retained) { nextShown.set(key, retained); list.push(retained); }
       }
       if (list.length) result.set(runId, list);
     }
@@ -1269,7 +1281,8 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
   const budget = { limited: false };
   const [statusLists, rendered] = await Promise.all([
     Promise.all([...channels].map(async ([channel, threads]) => [channel, await readRunStatuses(hubFetch, channel, threads, { cache: statusCache, now, budget })])),
-    previews && attempts.length ? previews(attempts.map(row => ({ taskId: row.run.taskId, runId: row.run.id }))).catch(() => null) : new Map(),
+    previews && attempts.length ? previews(attempts.map(row => ({ taskId: row.run.taskId, runId: row.run.id,
+      previousPreviews: previous.get(row.id)?.attemptId === row.run.id ? previous.get(row.id).previews : undefined }))).catch(() => null) : new Map(),
   ]);
   if (statusCache) {
     const live = new Set(running.map(row => `${row.run.channelId || channelId}:${row.run.ts}`));
@@ -1301,8 +1314,9 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
         Object.assign(row, { blockerReason: row.blockedReason, reasonCode: old.reasonCode, responsibleRole: old.responsibleRole, nextStep: old.nextStep });
       }
     }
-    const list = attempts.includes(row) ? (rendered ? rendered.get(row.run.id) : old?.previews)
-      : row.status === 'completed' && old?.status === 'completed' ? old.previews : undefined;
+    const sameAttempt = Boolean(row.attemptId && row.attemptId === old?.attemptId);
+    const list = attempts.includes(row) ? (rendered?.get(row.run.id) || (sameAttempt ? old?.previews : undefined))
+      : row.status === 'completed' && old?.status === 'completed' && sameAttempt ? old.previews : undefined;
     const kept = Array.isArray(list) ? list.filter(entry => now - Date.parse(entry?.renderedAt) <= PREVIEW_RETENTION_MS) : [];
     if (kept.length) row.previews = kept;
     delete row.run;

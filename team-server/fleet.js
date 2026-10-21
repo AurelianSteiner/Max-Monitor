@@ -195,6 +195,7 @@ function previewList(value) {
     if (typeof raw.id !== "string" || !PREVIEW_ID.test(raw.id)) throw new FleetError(400, "preview.id ist ungültig");
     return optionalFields({
       id: raw.id,
+      mailId: string(raw.mailId, "preview.mailId", 200, true),
       title: string(raw.title, "preview.title", 200),
       subject: string(raw.subject, "preview.subject", 300, true),
       renderedAt: timestamp(raw.renderedAt, "preview.renderedAt"),
@@ -526,7 +527,7 @@ function currentQueue(state, liveReports) {
     const sampled = Date.parse(report.sampledAt);
     const active = new Set(report.activity.runs.map(run => run.id));
     for (const [id, task] of tasks) {
-      if (task.workerId === report.workerId && ["running", "queued"].includes(task.status) && !active.has(id)
+      if (report.activity.state !== "unknown" && task.workerId === report.workerId && ["running", "queued"].includes(task.status) && !active.has(id)
         && (!task.updatedAt || sampled >= Date.parse(task.updatedAt))) {
         // A live Mac's lagging reservation (bridge buildQueue) waits only while
         // that Mac does not contradict it; its own fresh report without the run
@@ -724,6 +725,10 @@ function createFleetStore(dataDir, now = Date.now) {
     if (previous && previous.ownerId !== ownerId && !ownerResumesMac) throw new FleetError(409, "deviceId gehört bereits zu einem anderen Team-Mitglied");
     if (incoming.workerId && state.machines.some((machine) => machine.workerId === incoming.workerId && machine.deviceId !== incoming.deviceId)) {
       throw new FleetError(409, "workerId ist bereits einem anderen Mac zugeordnet");
+    }
+    if (incoming.workerId && (state.workerLinks || []).some(link => link.workerId === incoming.workerId
+      && link.deviceId !== incoming.deviceId && state.machines.some(machine => machine.deviceId === link.deviceId))) {
+      throw new FleetError(409, "workerId ist bereits mit einem anderen Mac verbunden");
     }
     if (!previous && state.machines.length >= MAX_MACHINES) throw new FleetError(400, "zu viele Macs im Team");
     const time = now();
@@ -1003,8 +1008,9 @@ function createFleetStore(dataDir, now = Date.now) {
     const previous = reports.find(item => item.workerId === report.workerId);
     // A delayed response from an earlier agent invocation cannot roll back state.
     if (previous && Date.parse(previous.sampledAt) > Date.parse(report.sampledAt)) return { accepted: false };
-    report.rsHubMcp = newerCapabilities(previous?.rsHubMcp, report.rsHubMcp);
-    if (report.integrationContract?.rsHubMcp) report.integrationContract.rsHubMcp = report.rsHubMcp;
+    report.rsHubMcp = [previous?.rsHubMcp, previous?.integrationContract?.rsHubMcp,
+      report.rsHubMcp, report.integrationContract?.rsHubMcp].reduce(newerCapabilities, undefined);
+    if (report.integrationContract && report.rsHubMcp) report.integrationContract.rsHubMcp = report.rsHubMcp;
     state.workerReports = [...reports.filter(item => item.workerId !== report.workerId), report].slice(-MAX_MACHINES);
     state.latestSkillRelease = newerSkillRelease(state.latestSkillRelease, report.skillRelease);
     write(teamId, state);
@@ -1052,6 +1058,12 @@ function createFleetStore(dataDir, now = Date.now) {
         workers.add(member.enrollment.workerId);
       }
     }
+    const reportWorkers = new Set([...workers, ...(state.workerLinks || [])
+      .filter(link => devices.has(link.deviceId)).map(link => link.workerId)]);
+    // Purge external orders before committing state, so cleanup can be retried.
+    for (const workerId of reportWorkers) require("./account-provisioning").remove(path.dirname(filePath(teamId)), workerId);
+    state.workerReports = (state.workerReports || []).filter(report =>
+      !reportWorkers.has(report.workerId) && !devices.has(report.deviceId));
     // Keep only identity deny lists, never deleted telemetry or account data.
     state.deletedDevices = [...new Set([...(state.deletedDevices || []), ...devices])];
     state.deletedWorkers = [...new Set([...(state.deletedWorkers || []), ...workers])];

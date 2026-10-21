@@ -1,0 +1,18 @@
+  duration_ms: 5.848375
+  type: 'test'
+  ...
+# Subtest: parked queue work keeps its session owner while fresh worker telemetry counts replacement work
+ok 492 - parked queue work keeps its session owner while fresh worker telemetry counts replacement work
+  ---
+  duration_ms: 93.842708
+  type: 'test'
+  ...
+1..492
+# tests 523
+# suites 0
+# pass 523
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 6573.284791

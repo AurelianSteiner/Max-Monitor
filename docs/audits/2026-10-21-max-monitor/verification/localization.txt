@@ -1,0 +1,1 @@
+Localization check passed: 2 languages, 335 keys each.

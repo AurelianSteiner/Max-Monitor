@@ -536,11 +536,13 @@ class ClaudeAPIService {
 
     /// 用 refresh_token 获取 access_token，带缓存 + 单飞合并（委托给 OAuthTokenCache actor）
     private func fetchOAuthAccessToken(refreshToken: String, completion: @escaping (Result<String, Error>) -> Void) {
+        let accountId = boundAccountId ?? settings.currentAccount?.id
+        let cache = oauthTokenCache
         Task {
             do {
-                let accessToken = try await oauthTokenCache.accessToken(refreshToken: refreshToken) { [weak self] token in
+                let accessToken = try await cache.accessToken(refreshToken: refreshToken) { [weak self] token in
                     guard let self else { throw UsageError.decodingError }
-                    return try await self.refreshClaudeOAuthTokens(refreshToken: token)
+                    return try await self.refreshClaudeOAuthTokens(refreshToken: token, accountId: accountId)
                 }
                 await MainActor.run { completion(.success(accessToken)) }
             } catch OAuthTokenCacheError.revokedGrant {
@@ -555,7 +557,7 @@ class ClaudeAPIService {
 
     /// 实际发起网络请求向 Claude OAuth 端点换取新 token；处理 refresh_token 轮换的静默写回。
     /// 只会在 OAuthTokenCache 判定"确实需要发起新刷新"时才被调用一次（并发调用者共享同一次结果）。
-    private func refreshClaudeOAuthTokens(refreshToken: String) async throws -> OAuthTokenCache.Tokens {
+    private func refreshClaudeOAuthTokens(refreshToken: String, accountId: UUID?) async throws -> OAuthTokenCache.Tokens {
         do {
             let tokens = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ClaudeOAuthTokens, Error>) in
                 ClaudeOAuthService.refresh(refreshToken: refreshToken) { result in
@@ -569,16 +571,17 @@ class ClaudeAPIService {
                 Logger.api.notice("Claude OAuth: refresh_token 已轮换，静默写回")
                 // 绑定实例必须写回它自己的账户（而非"当前账户"），否则 Dashboard
                 // 并行拉取时会把 A 账户的新 token 覆盖到当前账户上。
-                let boundId = boundAccountId
                 try await MainActor.run {
                     if let credentialWriter = self.credentialWriter {
                         guard credentialWriter(refreshToken, newRefresh) else {
                             throw FleetMonitoringManager.BindingError.saveFailed
                         }
-                    } else if let boundId = boundId {
-                        UserSettings.shared.silentlyUpdateClaudeSessionToken(accountId: boundId, token: newRefresh)
                     } else {
-                        UserSettings.shared.silentlyUpdateCurrentClaudeSessionToken(newRefresh)
+                        guard let accountId,
+                              UserSettings.shared.silentlyUpdateClaudeSessionToken(
+                                accountId: accountId, token: newRefresh, replacing: refreshToken) else {
+                            throw CancellationError()
+                        }
                     }
                 }
             }

@@ -61,9 +61,9 @@ final class SmartRefreshPolicy {
 
     @discardableResult
     private func switchToActiveMode() -> Bool {
+        unchangedCount = 0
         guard currentMode != .active else { return false }
         currentMode = .active
-        unchangedCount = 0
         return true
     }
 

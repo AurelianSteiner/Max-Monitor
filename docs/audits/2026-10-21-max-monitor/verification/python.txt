@@ -1,0 +1,18 @@
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/tillticktucktim/.codex/worktrees/audit-technical-fixes/Max-Monitor/scripts/quota_ledger.py:871: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x105fcf2e0>
+  archived_rows["samples"] = [] if replay_sales else [dict(r) for r in self.db.execute("SELECT * FROM samples WHERE at<?", (cutoff - 1800,))]
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/tillticktucktim/.codex/worktrees/audit-technical-fixes/Max-Monitor/scripts/quota_ledger.py:871: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x105fcf1f0>
+  archived_rows["samples"] = [] if replay_sales else [dict(r) for r in self.db.execute("SELECT * FROM samples WHERE at<?", (cutoff - 1800,))]
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/tillticktucktim/.codex/worktrees/audit-technical-fixes/Max-Monitor/scripts/quota_ledger.py:871: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x1067b8a90>
+  archived_rows["samples"] = [] if replay_sales else [dict(r) for r in self.db.execute("SELECT * FROM samples WHERE at<?", (cutoff - 1800,))]
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/tillticktucktim/.codex/worktrees/audit-technical-fixes/Max-Monitor/scripts/quota_ledger.py:871: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x1067b85e0>
+  archived_rows["samples"] = [] if replay_sales else [dict(r) for r in self.db.execute("SELECT * FROM samples WHERE at<?", (cutoff - 1800,))]
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+....................
+----------------------------------------------------------------------
+Ran 136 tests in 3.654s
+
+OK (skipped=6)

@@ -32,7 +32,7 @@ function savePolicy(directory, body, actor) {
     const error = Error('Die Einstellungen wurden inzwischen geändert. Aktualisiere die Ansicht.'); error.status=409; throw error;
   }
   const value = {schema:1, revision:current.revision+1, phases:body.phases,
-    updated_at:new Date().toISOString(), updated_by:String(actor.id||'team-owner')};
+    updated_at:new Date().toISOString(), updated_by:String(actor.member?.id||actor.id||'team-owner')};
   fs.mkdirSync(directory,{recursive:true});
   const temporary=path.join(directory,`effort-policy.${crypto.randomUUID()}.tmp`);
   try {

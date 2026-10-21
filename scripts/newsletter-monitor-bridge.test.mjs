@@ -916,7 +916,7 @@ test('each new render is resized and uploaded once; a failed upload keeps the pr
   const first = (await previews([{ taskId: 'a', runId: 'run-1' }])).get('run-1');
   assert.equal(first.length, 2);
   assert.match(first[0].id, /^[a-f0-9]{64}$/);
-  assert.deepEqual(Object.keys(first[0]).sort(), ['height', 'id', 'render', 'renderedAt', 'subject', 'title', 'width']);
+  assert.deepEqual(Object.keys(first[0]).sort(), ['height', 'id', 'mailId', 'render', 'renderedAt', 'subject', 'title', 'width']);
   assert.equal(reads[0], '/opt/rs-hub/data/customer-intelligence/assets/tisso/11111111-1111-4111-8111-000000000004.png');
   assert.equal(uploads.length, 2);
   await previews([{ taskId: 'a', runId: 'run-1' }]);
@@ -968,6 +968,22 @@ test('pictures follow the attempt, stay after completion and are never backfille
   // A broken Hub read keeps the last pictures instead of failing the queue.
   const failing = await collectSnapshot({ now, ...runningSource(), fleetReader: async () => [], previousTasks: running.tasks, previews: async () => { throw new Error('database locked'); } });
   assert.deepEqual([failing.source.error, failing.tasks[0].previews], [undefined, [picture()]]);
+});
+
+test('a cold reader keeps each exact persisted mail when another mail receives a new preview', async () => {
+  const db = await renderDatabase();
+  const dependencies = { localHub: '/fixture', openDatabase: () => ({ prepare: sql => db.prepare(sql), close() {} }),
+    readFile: async file => Buffer.from(file), resize: async data => ({ data, width: 600, height: 800 }), upload: async () => {} };
+  try {
+    const saved = (await createRenderPreviews(dependencies)([{ taskId: 'a', runId: 'run-1' }])).get('run-1');
+    const restarted = createRenderPreviews({ ...dependencies, readFile: async file => {
+      if (file.endsWith('000000000005.png')) throw Error('one unavailable render');
+      return Buffer.from('updated:' + file);
+    } });
+    const current = (await restarted([{ taskId: 'a', runId: 'run-1', previousPreviews: saved }])).get('run-1');
+    assert.equal(current.length, 2); assert.notEqual(current[0].id, saved[0].id);
+    assert.equal(current[1].mailId, 'm2'); assert.equal(current[1].id, saved[1].id);
+  } finally { db.close(); }
 });
 
 test('preview uploads go to the relay with the token in the header only', async () => {

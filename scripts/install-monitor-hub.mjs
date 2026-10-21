@@ -14,11 +14,7 @@ const SERVICE = 'max-monitor-relay.service';
 const QUEUE_SERVICE = 'max-monitor-queue.service';
 const BEGIN = '# MAX MONITOR BEGIN';
 const END = '# MAX MONITOR END';
-const SOURCE_FILES = ['team-server/server.js', 'team-server/fleet.js', 'team-server/enrollment.js', 'team-server/package.json',
-  'team-server/public/dashboard.html', 'team-server/public/dashboard.css', 'team-server/public/dashboard.js', 'scripts/enroll-monitor-worker.mjs',
-  'team-server/worker-control.js', 'team-server/remote-access.js', 'scripts/member-remote.py', 'scripts/check-worker-control.mjs', 'team-server/worker-reports.js', 'team-server/skill-versions.js', 'scripts/report-monitor-worker.mjs',
-  'scripts/install-monitor-hub.mjs', 'scripts/install-monitor-hub.sh', 'scripts/newsletter-monitor-bridge.mjs', 'scripts/task-state.cjs', 'scripts/status-reconciliation.mjs', 'scripts/pm-question-status.mjs', 'scripts/error-copy-cleanup.mjs', 'scripts/worker-admin-hub.mjs', 'scripts/worker-admin.mjs', 'scripts/worker-diagnose.py', 'scripts/install-worker-admin.sh', 'scripts/worker-remote.mjs', 'scripts/worker-remote-hub.mjs', 'scripts/setup-mac-monitor.mjs'];
-SOURCE_FILES.push('team-server/integration-contract.js', 'team-server/worker-identities.json', 'scripts/blocker-context.mjs', 'team-server/effort-config.js', 'team-server/public/consumption.js', 'scripts/pm-owner.mjs', 'scripts/monitor-bridge-credentials.mjs');
+const SOURCE_FILES = JSON.parse(fs.readFileSync(new URL('../Config/runtime-release-files.json', import.meta.url), 'utf8')).files;
 const defaults = { serverURL: 'https://api.ruegamer-steiner.de/max-monitor', teamId: 'RSMACS01', port: 8941, nodeBinary: '/usr/bin/node' };
 const HUB_ROOT = '/opt/rs-hub';
 const DEFAULT_SLACK_RATE_LIMITS = `${HUB_ROOT}/state/slack-rate-limits`;
@@ -363,16 +359,30 @@ function restoreInstallation(backupDirectory, manifest) {
   systemctl('reload', 'nginx');
 }
 
+export function preflightNodeRuntime(nodeBinary, hubRoot = HUB_ROOT, run = spawnSync) {
+  const probe = `const {createRequire}=require('node:module');
+    const {DatabaseSync}=require('node:sqlite');
+    const db=new DatabaseSync(':memory:');db.prepare('SELECT 1').get();db.close();
+    const sharp=createRequire(process.argv[1])('sharp');
+    sharp({create:{width:1,height:1,channels:3,background:'#fff'}}).jpeg().toBuffer()
+      .then(data=>{if(!data.length)process.exit(1)}).catch(()=>process.exit(1));`;
+  const result = run(nodeBinary, ['-e', probe, path.join(hubRoot, 'package.json')],
+    { encoding: 'utf8', timeout: 30000 });
+  if (result.status !== 0 || result.error) {
+    throw new Error('Node-Laufzeit unvollständig: Node ab 22.13 mit node:sqlite und funktionierendem Hub-sharp erforderlich; keine Dienste geändert.');
+  }
+}
+
 export async function installOnHub(options) {
   requireLinuxRoot();
   const { settings, files } = prepareInstallation(options);
+  preflightNodeRuntime(settings.nodeBinary, options.hubRoot || HUB_ROOT);
   const wasActive = activeService();
   const wasEnabled = enabledService();
   const services = [{ name: SERVICE, wasActive, wasEnabled }, { name: QUEUE_SERVICE, wasActive: activeService(QUEUE_SERVICE), wasEnabled: enabledService(QUEUE_SERVICE) }];
   if (!wasActive) await freePort(settings.port);
   command('/usr/sbin/nginx', ['-t']);
   command('/usr/bin/systemctl', ['--version']);
-  command(settings.nodeBinary, ['-e', 'if(Number(process.versions.node.split(".")[0])<20)process.exit(1)']);
   const user = command('/usr/bin/id', ['-u', 'max-monitor'], true);
   if (user.status === 0 && user.stdout.trim() === '0') throw new Error('Der Dienstbenutzer max-monitor darf nicht root sein.');
   if (user.status !== 0) command('/usr/sbin/useradd', ['--system', '--user-group', '--home-dir', '/var/lib/max-monitor', '--no-create-home', '--shell', '/usr/sbin/nologin', 'max-monitor']);

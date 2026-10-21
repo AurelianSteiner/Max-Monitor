@@ -55,6 +55,21 @@ const output = path.resolve(process.argv[2] || 'build/planning-review');
     await page.goto(origin + '/fleet?view=usage&usage-tab=planning', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => Number(document.querySelector('#planning-newsletter-count').value) > 0);
     const current = Number(await page.locator('#planning-newsletter-count').inputValue());
+    // A just-ended window must become visibly unavailable until a fresh window arrives.
+    for (const worker of Object.values(summary.scheduling.workers)) worker.windows.five_hour.reset = now / 1000 - 1;
+    publish(); await page.evaluate(() => window.MaxMonitorConsumption.refresh());
+    await page.waitForFunction(() => document.querySelector('#planning-newsletter').disabled);
+    assert.equal(await page.locator('#planning-newsletter-count').inputValue(), '');
+    for (const [width, height] of [[1440, 900], [1024, 768], [390, 844]]) {
+      await page.setViewportSize({ width, height });
+      await page.screenshot({ path: path.join(output, `planning-expired-${width}.png`), fullPage: true });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    }
+    for (const worker of Object.values(summary.scheduling.workers)) worker.windows.five_hour.reset = now / 1000 + 14400;
+    publish(); await page.evaluate(() => window.MaxMonitorConsumption.refresh());
+    await page.waitForFunction(() => !document.querySelector('#planning-newsletter').disabled);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    assert.equal(Number(await page.locator('#planning-newsletter-count').inputValue()), current);
     assert.equal(await page.locator('#planning-correction-count').inputValue(), '0');
     assert.equal(await page.locator('#planning-upload-count').inputValue(), '0');
     assert.equal(await page.locator('#usage-planning [type="range"]').count(), 3);
@@ -123,7 +138,7 @@ const output = path.resolve(process.argv[2] || 'build/planning-review');
     }
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(output, 'review.json'), JSON.stringify({ passed: true, viewports: ['1440x900', '1024x768', '390x844'],
-      checks: ['two switches', 'three sliders', 'current/full', 'day/week', 'shared live averages', 'capacity rises after optimization', 'selected mix recalibrates after average change', 'five-day consumption count', 'upload follows newsletter', 'correction rebalance', 'upload rebalance', 'keyboard', 'connection recovery', 'responsive', 'no console errors'], errors }, null, 2));
+      checks: ['expired windows visibly unavailable', 'recovery after a fresh reset window', 'two switches', 'three sliders', 'current/full', 'day/week', 'shared live averages', 'capacity rises after optimization', 'selected mix recalibrates after average change', 'five-day consumption count', 'upload follows newsletter', 'correction rebalance', 'upload rebalance', 'keyboard', 'connection recovery', 'responsive', 'no console errors'], errors }, null, 2));
     console.log('Browser acceptance passed:', output);
   } finally {
     await browser?.close();

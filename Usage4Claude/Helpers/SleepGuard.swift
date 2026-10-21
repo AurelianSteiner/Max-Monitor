@@ -63,6 +63,7 @@ final class SleepGuard: ObservableObject {
     /// Wahr, wenn die Deckel-Stufe von außen kam (Terminal), nicht von uns.
     /// Dann bleibt sie beim Beenden stehen — sie gehört dem Benutzer.
     private var externallyEnabled = false
+    private var lastObservedSleepDisabled: Bool?
 
     // MARK: - Private State
 
@@ -119,8 +120,17 @@ final class SleepGuard: ObservableObject {
     private func checkSystemState() {
         guard let systemOn = Self.readSleepDisabled() else { return }
         DispatchQueue.main.async { [weak self] in
-            guard let self, systemOn != self.isAwake else { return }
-            self.adopt(systemOn)
+            self?.observeSleepDisabled(systemOn)
+        }
+    }
+
+    private func observeSleepDisabled(_ systemOn: Bool) {
+        let previous = lastObservedSleepDisabled
+        lastObservedSleepDisabled = systemOn
+        // A missing optional lid tier is not an instruction to release IOKit.
+        // Only a measured on -> off transition proves an external switch-off.
+        if systemOn && !isAwake || !systemOn && previous == true {
+            adopt(systemOn)
         }
     }
 
@@ -273,6 +283,7 @@ final class SleepGuard: ObservableObject {
     ///   Mal der EINE Passwortdialog erscheinen. `false` beim Start
     ///   (Re-Apply): dort läuft die Deckel-Stufe ausschließlich still.
     func setAwake(_ enabled: Bool, interactive: Bool = true) {
+        lastObservedSleepDisabled = nil
         // Ein Klick macht die Deckel-Stufe zu unserer: Ab jetzt räumen wir sie
         // beim Beenden auch wieder weg. (Beim stillen Re-Apply nach dem Start
         // gilt dasselbe — wir setzen sie ja selbst.)

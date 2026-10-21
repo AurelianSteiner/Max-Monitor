@@ -11,6 +11,18 @@ import XCTest
 ///   at 6, idleMedium→idleLong at 12. idleLong has no further escalation.
 /// - `update` returns whether the mode actually changed this call.
 final class SmartRefreshPolicyTests: XCTestCase {
+    func testChangedUsageRestartsTheQuietCounterEvenWhileAlreadyActive() {
+        let policy = SmartRefreshPolicy()
+        for value in [10.0, 10.0, 20.0, 20.0] {
+            policy.update(providerUtilizations: [.claude: value])
+        }
+        XCTAssertEqual(policy.currentMode, .active)
+        XCTAssertEqual(policy.unchangedCount, 1)
+        policy.update(providerUtilizations: [.claude: 20.0])
+        XCTAssertEqual(policy.currentMode, .active)
+        policy.update(providerUtilizations: [.claude: 20.0])
+        XCTAssertEqual(policy.currentMode, .idleShort)
+    }
 
     func testStartsInActiveMode() {
         let policy = SmartRefreshPolicy()

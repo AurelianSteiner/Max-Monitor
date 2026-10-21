@@ -1,0 +1,5 @@
+PASS: request-bound rotation preserves the other account and rejects stale writes
+PASS: permanent rejection reaches the cache and stops repeated endpoint calls
+PASS: both account stores serialize snapshots and surface failed persistence
+PASS: rejected optional lid tier preserves assertions; actual external transitions are followed
+PASS: invalid callback cannot crash; valid manual and URL callbacks still parse

@@ -1,0 +1,18 @@
+Test Case '-[Usage4ClaudeCoreTests.UsageResponseTests testSonnetZeroSentinelIsNil]' started.
+Test Case '-[Usage4ClaudeCoreTests.UsageResponseTests testSonnetZeroSentinelIsNil]' passed (0.001 seconds).
+Test Case '-[Usage4ClaudeCoreTests.UsageResponseTests testThreeScopedModelsAllPreservedInWeeklyModels]' started.
+Test Case '-[Usage4ClaudeCoreTests.UsageResponseTests testThreeScopedModelsAllPreservedInWeeklyModels]' passed (0.001 seconds).
+Test Case '-[Usage4ClaudeCoreTests.UsageResponseTests testToUsageDataLeavesExtraUsageNil]' started.
+Test Case '-[Usage4ClaudeCoreTests.UsageResponseTests testToUsageDataLeavesExtraUsageNil]' passed (0.001 seconds).
+Test Case '-[Usage4ClaudeCoreTests.UsageResponseTests testTwoScopedModelsFillOpusThenSonnet]' started.
+Test Case '-[Usage4ClaudeCoreTests.UsageResponseTests testTwoScopedModelsFillOpusThenSonnet]' passed (0.001 seconds).
+Test Suite 'UsageResponseTests' passed at 2026-10-21 18:07:31.748.
+	 Executed 19 tests, with 0 failures (0 unexpected) in 0.015 (0.016) seconds
+Test Suite 'Usage4ClaudeCoreTests.xctest' passed at 2026-10-21 18:07:31.748.
+	 Executed 195 tests, with 0 failures (0 unexpected) in 0.178 (0.193) seconds
+Test Suite 'All tests' passed at 2026-10-21 18:07:31.748.
+	 Executed 195 tests, with 0 failures (0 unexpected) in 0.178 (0.195) seconds
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
