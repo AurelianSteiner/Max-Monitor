@@ -47,9 +47,6 @@
         </button>
       </nav>
       <div class="topbar-actions">
-        <span id="claude-account-summary" class="account-summary" aria-live="polite" hidden
-          ><strong id="claude-account-count">—</strong> Claude-Accounts</span
-        >
         <span id="sync-status" class="sync" data-state="idle" role="status"
           >Nicht verbunden</span
         ><button
@@ -96,9 +93,12 @@
           <header class="panel-head">
             <h2 id="fleet-heading">Macs</h2>
             <span id="fleet-summary" class="panel-meta">—</span>
+            <span id="claude-account-summary" class="panel-meta account-summary" aria-live="polite" hidden
+              ><strong id="claude-account-count">—</strong> Claude-Accounts</span
+            >
+            <span class="panel-meta fleet-sort-note" title="Fehler zuerst · danach Woche, dann 5 h aufsteigend · 100 % Woche immer zuletzt">Fehler zuerst, dann freie Kontingente</span>
             <span id="fleet-dots" class="fleet-dots" aria-hidden="true"></span>
           </header>
-          <p class="panel-meta fleet-sort-note">Fehler zuerst · danach Woche, dann 5 h aufsteigend · 100 % Woche immer zuletzt</p>
           <div class="fleet-table-wrap">
             <table class="fleet-table">
               <thead>
@@ -106,8 +106,9 @@
                   <th scope="col">Mac</th>
                   <th scope="col">Arbeitet an</th>
                   <th scope="col" class="num">Akku</th>
-                  <th scope="col" id="fleet-claude-first">5 h genutzt</th>
-                  <th scope="col" id="fleet-claude-second">Woche genutzt</th>
+                  <th scope="col">Account</th>
+                  <th scope="col" id="fleet-claude-first" title="Genutztes 5-Stunden-Kontingent und nächster Reset">5 h · Reset</th>
+                  <th scope="col" id="fleet-claude-second" title="Genutztes Wochenkontingent und nächster Reset">Woche · Reset</th>
                   <th scope="col" class="num">Meldung</th>
                 </tr>
               </thead>
