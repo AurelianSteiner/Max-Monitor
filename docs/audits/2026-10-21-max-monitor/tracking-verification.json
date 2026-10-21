@@ -1,0 +1,642 @@
+{
+  "schema": 1,
+  "scope": "Monitoring account reconnection and native fleet tracking rollout, including current capacity integration",
+  "verifiedAt": "2026-10-21T17:50:27.588125+00:00",
+  "account": {
+    "worker": "Orange",
+    "newMonitoringGrantConfirmed": true,
+    "firstSuccessfulProviderMeasurementAt": "2026-10-21T17:27:31.000Z",
+    "subsequentRegularProviderMeasurementAt": "2026-10-21T17:48:18.000Z",
+    "usageStatus": "fresh",
+    "usageError": null,
+    "weeklyUsedPercent": 100,
+    "quotaPausePreserved": true,
+    "credentialsPrintedOrCopied": false,
+    "providerMeasurementTimesObserved": [
+      "2026-10-21T17:27:31.000Z",
+      "2026-10-21T17:33:18.000Z",
+      "2026-10-21T17:48:18.000Z"
+    ]
+  },
+  "native": {
+    "version": "2.16.3",
+    "sourceRevision": "ea2aed27bad0eca6af66b77212f1f36635c72a69",
+    "workerCount": 9,
+    "workers": [
+      {
+        "workerId": "macbook-2",
+        "version": "2.16.3",
+        "signingFamilyPreserved": true,
+        "singleGui": true,
+        "actualTaskPollOk": true,
+        "normalMaintenanceOk": true,
+        "legacyKeychainReads": 0,
+        "activeRuns": 0
+      },
+      {
+        "workerId": "newsletter-mac-141b2976",
+        "version": "2.16.3",
+        "signingFamilyPreserved": true,
+        "singleGui": true,
+        "actualTaskPollOk": true,
+        "normalMaintenanceOk": true,
+        "legacyKeychainReads": 0,
+        "activeRuns": 3
+      },
+      {
+        "workerId": "mac-f121ae17",
+        "version": "2.16.3",
+        "signingFamilyPreserved": true,
+        "singleGui": true,
+        "actualTaskPollOk": true,
+        "normalMaintenanceOk": true,
+        "legacyKeychainReads": 0,
+        "activeRuns": 0
+      },
+      {
+        "workerId": "macbook-air-von-gustav-ccdf84ef",
+        "version": "2.16.3",
+        "signingFamilyPreserved": true,
+        "singleGui": true,
+        "actualTaskPollOk": true,
+        "normalMaintenanceOk": true,
+        "legacyKeychainReads": 0,
+        "activeRuns": 0
+      },
+      {
+        "workerId": "mac-worker-6-64d66918",
+        "version": "2.16.3",
+        "signingFamilyPreserved": true,
+        "singleGui": true,
+        "actualTaskPollOk": true,
+        "normalMaintenanceOk": true,
+        "legacyKeychainReads": 0,
+        "activeRuns": 0
+      },
+      {
+        "workerId": "pink",
+        "version": "2.16.3",
+        "signingFamilyPreserved": true,
+        "singleGui": true,
+        "actualTaskPollOk": true,
+        "normalMaintenanceOk": true,
+        "legacyKeychainReads": 0,
+        "activeRuns": 0
+      },
+      {
+        "workerId": "macbook-1",
+        "version": "2.16.3",
+        "signingFamilyPreserved": true,
+        "singleGui": true,
+        "actualTaskPollOk": true,
+        "normalMaintenanceOk": true,
+        "legacyKeychainReads": 0,
+        "activeRuns": 0
+      },
+      {
+        "workerId": "macworker-5-schwarz",
+        "version": "2.16.3",
+        "signingFamilyPreserved": true,
+        "singleGui": true,
+        "actualTaskPollOk": true,
+        "normalMaintenanceOk": true,
+        "legacyKeychainReads": 0,
+        "activeRuns": 6
+      },
+      {
+        "workerId": "macbook-air-von-nachteule-cdb5c505",
+        "version": "2.16.3",
+        "signingFamilyPreserved": true,
+        "singleGui": true,
+        "actualTaskPollOk": true,
+        "normalMaintenanceOk": true,
+        "legacyKeychainReads": 0,
+        "activeRuns": 0
+      }
+    ],
+    "publicRelease": {
+      "ok": true,
+      "version": "2.16.3",
+      "manifest": {
+        "schema": 1,
+        "version": "2.16.3",
+        "sourceRevision": "ea2aed27bad0eca6af66b77212f1f36635c72a69",
+        "sha256": "9a27a636abe8f15142b6b9dc16b1bab927f5aa41f2ae3160196356f31834d7c2",
+        "tag": "worker-native-ea2aed27bad0",
+        "asset": "Max-Monitor-worker.zip"
+      },
+      "publicDownloadsVerified": true,
+      "originalFeedKeyVerified": true,
+      "files": {
+        "tracking-public-2.16.3.dmg": {
+          "sha256": "5c7626d6ca5a4f261b21b0836ff2ccd1addc8819799167147d9770ed599b7689",
+          "size": 5850727
+        },
+        "tracking-public-worker-2.16.3.zip": {
+          "sha256": "9a27a636abe8f15142b6b9dc16b1bab927f5aa41f2ae3160196356f31834d7c2",
+          "size": 5215320
+        }
+      }
+    },
+    "bundle": {
+      "ok": true,
+      "mountedDmgAndWorkerZipMatch": true,
+      "version": "2.16.3",
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "binarySha256": "264cba37131604be3c2e2a75e60f93d19c999c584bdade6aec99c8dbb75b134e",
+      "codesignStrict": true
+    }
+  },
+  "runtime": {
+    "sourceRevision": "1d569ed8363f00b21f4ea08f870dfc9d855528c2",
+    "manifestFileCount": 51,
+    "sourceHashesVerified": true,
+    "relayAndQueueActive": true,
+    "queueSourceFresh": true
+  },
+  "liveBrowser": {
+    "mainChecks": 13,
+    "planningFollowupChecks": 4,
+    "assetsVerified": 6,
+    "viewports": [
+      "1440x900",
+      "1024x768",
+      "390x844"
+    ],
+    "errors": [],
+    "writes": [],
+    "mobileScroll": {
+      "ok": true,
+      "at": "2026-10-21T17:36:34.329Z",
+      "names": [
+        "Pink",
+        "Schwarz",
+        "Gelb",
+        "Blau",
+        "Grün",
+        "Lila",
+        "Orange",
+        "Rot",
+        "Türkis"
+      ],
+      "viewports": [
+        "Pink",
+        "Orange",
+        "Türkis"
+      ],
+      "width": 390,
+      "height": 844,
+      "horizontalOverflow": false
+    }
+  },
+  "tests": {
+    "node": {
+      "version": "22.22.2",
+      "pass": 527,
+      "fail": 0,
+      "skip": 0
+    },
+    "nativeSwiftHttpInteroperability": {
+      "delayedCompilerSeconds": 6,
+      "beforeFix": "reproduces fetch failed after blocking receiver event loop",
+      "afterFix": "2 tests pass, no skips",
+      "productionRuntimeChanged": false
+    },
+    "githubCI": {
+      "runId": 39645689401,
+      "url": "https://github.com/AurelianSteiner/Max-Monitor/actions/runs/39645689401",
+      "sourceRevision": "6882969ce03e532a3aff709c1b632e8bfeee791d",
+      "status": "completed",
+      "conclusion": "success",
+      "allSixJobsPassed": true,
+      "sameSourcePublishedOnMain": true,
+      "duplicateMainRunId": 39646035802,
+      "mainRunId": 39646035802,
+      "mainUrl": "https://github.com/AurelianSteiner/Max-Monitor/actions/runs/39646035802",
+      "mainConclusion": "success",
+      "allSixMainJobsPassed": true
+    }
+  },
+  "workProtection": {
+    "ownChangesToBusyMacs": false,
+    "ownNewsletterServiceRestarts": 0,
+    "ownCustomerProviderWrites": 0,
+    "pinkOldMonitorCompilerCancellation": {
+      "activeRuns": 0,
+      "onlyVerifiedMonitorSetupAndCompilerPidsSignalled": true,
+      "regularMonitorUpdaterSuccess": true
+    },
+    "busyMachinesAtReadback": {
+      "Gelb": 3,
+      "Schwarz": 6
+    },
+    "finalContinuityReadback": [
+      {
+        "workerId": "newsletter-mac-141b2976",
+        "at": "2026-10-21T17:50:29.435767+00:00",
+        "before": 3,
+        "after": 3,
+        "sameRunIdsAndPids": 3,
+        "endedOrReplacedSinceEarlierReadback": 0
+      },
+      {
+        "workerId": "macworker-5-schwarz",
+        "at": "2026-10-21T17:50:29.243584+00:00",
+        "before": 6,
+        "after": 6,
+        "sameRunIdsAndPids": 5,
+        "endedOrReplacedSinceEarlierReadback": 1
+      }
+    ]
+  },
+  "hubStoredSnapshot": {
+    "observedAt": "2026-10-21T17:49:42.806369+00:00",
+    "computedAt": "2026-10-21T17:49:01.996Z",
+    "compressedBytes": 96112,
+    "decodedBytes": 798322,
+    "sha256Verified": true,
+    "collectionComplete": true,
+    "calculationComplete": true,
+    "sources": {
+      "workers": {
+        "ok": true,
+        "at": "2026-10-21T17:49:00.501Z",
+        "missing": [],
+        "expected": [
+          "mac-f121ae17",
+          "mac-worker-6-64d66918",
+          "macbook-1",
+          "macbook-2",
+          "macbook-air-von-gustav-ccdf84ef",
+          "macbook-air-von-nachteule-cdb5c505",
+          "macworker-5-schwarz",
+          "newsletter-mac-141b2976",
+          "pink"
+        ],
+        "reported": 9
+      },
+      "taskPolling": {
+        "ok": true,
+        "missing": []
+      },
+      "deviceTelemetry": {
+        "ok": true,
+        "at": "2026-10-21T17:48:58.000Z",
+        "missing": []
+      },
+      "usageLimits": {
+        "ok": true,
+        "at": "2026-10-21T17:48:27.000Z",
+        "missing": []
+      },
+      "quota": {
+        "ok": true,
+        "at": "2026-10-21T17:48:38.727996Z",
+        "missing": [],
+        "failed": []
+      },
+      "errors": {
+        "ok": true,
+        "at": "2026-10-21T17:47:59.446953+00:00",
+        "missing": []
+      },
+      "costs": {
+        "ok": true,
+        "at": "2026-10-21T17:49:01.996Z",
+        "unpricedCalls": 0,
+        "unlinkedSinceCutover": 292
+      },
+      "planning": {
+        "ok": true,
+        "at": "2026-10-21T17:48:38.727996Z"
+      },
+      "production": {
+        "ok": true,
+        "at": "2026-10-21T17:49:01.995Z",
+        "warnings": []
+      },
+      "infrastructure": {
+        "ok": true,
+        "missing": []
+      }
+    },
+    "productionSources": {
+      "customers": {
+        "ok": true,
+        "checkedAt": "2026-10-21T17:39:40.186Z"
+      },
+      "questions": {
+        "ok": true,
+        "checkedAt": "2026-10-21T17:39:40.186Z"
+      },
+      "production": {
+        "ok": true,
+        "checkedAt": "2026-10-21T17:39:40.186Z"
+      },
+      "work": {
+        "ok": true,
+        "checkedAt": "2026-10-21T17:39:40.186Z"
+      },
+      "workload": {
+        "ok": true,
+        "checkedAt": "2026-10-21T17:39:40.186Z",
+        "complete": true
+      },
+      "errors": {
+        "ok": true,
+        "checkedAt": "2026-10-21T17:39:40.186Z",
+        "complete": true
+      },
+      "clickup": {
+        "ok": true,
+        "checkedAt": "2026-10-21T17:39:40.186Z"
+      },
+      "task-bindings": {
+        "ok": true,
+        "checkedAt": "2026-10-21T17:39:40.186Z"
+      },
+      "filestage-index": {
+        "ok": true,
+        "checkedAt": "2026-10-21T17:39:40.186Z"
+      },
+      "filestage-bindings": {
+        "ok": true,
+        "checkedAt": "2026-10-21T17:39:40.186Z"
+      },
+      "filestage-live": {
+        "ok": true,
+        "checkedAt": "2026-10-21T17:39:40.186Z"
+      },
+      "flows": {
+        "ok": true,
+        "checkedAt": "2026-10-21T17:39:40.186Z",
+        "overdueDefinitions": 0,
+        "pendingDefinitionReads": 0,
+        "pendingCustomerLists": 0,
+        "failedDefinitions": 0
+      }
+    },
+    "transport": {
+      "nativeReports": [
+        {
+          "workerId": "mac-f121ae17",
+          "encoding": "gzip",
+          "wireBytes": 438,
+          "decodedBytes": 1122,
+          "receivedAt": "2026-10-21T17:48:37.442Z"
+        },
+        {
+          "workerId": "mac-worker-6-64d66918",
+          "encoding": "gzip",
+          "wireBytes": 427,
+          "decodedBytes": 1119,
+          "receivedAt": "2026-10-21T17:48:19.247Z"
+        },
+        {
+          "workerId": "macbook-1",
+          "encoding": "gzip",
+          "wireBytes": 421,
+          "decodedBytes": 1121,
+          "receivedAt": "2026-10-21T17:48:32.351Z"
+        },
+        {
+          "workerId": "macbook-2",
+          "encoding": "gzip",
+          "wireBytes": 415,
+          "decodedBytes": 1099,
+          "receivedAt": "2026-10-21T17:48:31.747Z"
+        },
+        {
+          "workerId": "macbook-air-von-gustav-ccdf84ef",
+          "encoding": "gzip",
+          "wireBytes": 438,
+          "decodedBytes": 1128,
+          "receivedAt": "2026-10-21T17:48:46.847Z"
+        },
+        {
+          "workerId": "macbook-air-von-nachteule-cdb5c505",
+          "encoding": "gzip",
+          "wireBytes": 444,
+          "decodedBytes": 1122,
+          "receivedAt": "2026-10-21T17:48:30.970Z"
+        },
+        {
+          "workerId": "macworker-5-schwarz",
+          "encoding": "gzip",
+          "wireBytes": 440,
+          "decodedBytes": 1153,
+          "receivedAt": "2026-10-21T17:48:59.013Z"
+        },
+        {
+          "workerId": "newsletter-mac-141b2976",
+          "encoding": "gzip",
+          "wireBytes": 438,
+          "decodedBytes": 1154,
+          "receivedAt": "2026-10-21T17:48:31.610Z"
+        },
+        {
+          "workerId": "pink",
+          "encoding": "gzip",
+          "wireBytes": 427,
+          "decodedBytes": 1136,
+          "receivedAt": "2026-10-21T17:48:28.648Z"
+        }
+      ],
+      "nativeReportsCompressed": true
+    },
+    "orange": [
+      {
+        "workerId": "mac-worker-6-64d66918",
+        "usageUpdatedAt": "2026-10-21T17:48:18.000Z",
+        "usageError": null,
+        "limits": [
+          {
+            "kind": "session",
+            "percent": 0,
+            "usageUpdatedAt": "2026-10-21T17:48:18.000Z"
+          },
+          {
+            "kind": "weekly",
+            "percent": 100,
+            "resetsAt": "2026-10-21T21:00:00.000Z",
+            "usageUpdatedAt": "2026-10-21T17:48:18.000Z"
+          },
+          {
+            "kind": "model:0",
+            "percent": 0,
+            "usageUpdatedAt": "2026-10-21T17:48:18.000Z"
+          }
+        ],
+        "service": {
+          "running": true,
+          "lastPollAt": "2026-10-21T17:48:46.064Z",
+          "lastPollOk": true
+        }
+      }
+    ],
+    "units": "rs-pm-question-pilot.service                                  loaded    active     running       R&S private Slack question intake test (no production execution)\nrs-production-metrics.service                                 loaded    inactive   dead          RS Hub compact production and question metrics (read-only sources)\nrs-tracking.service                                           loaded    activating start   start Refresh unified compressed RS Hub tracking from local evidence",
+    "timers": "Wed 2026-10-21 17:54:04 UTC 4min 21s Wed 2026-10-21 17:41:58 UTC     7min ago rs-production-metrics.timer      rs-production-metrics.service\n-                                  - Wed 2026-10-21 17:49:42 UTC    675ms ago rs-tracking.timer                rs-tracking.service"
+  },
+  "openBusinessDecisions": [
+    "F11"
+  ],
+  "overallAcceptance": "verified",
+  "liveFleet": [
+    {
+      "name": "Blau",
+      "workerId": "macbook-2",
+      "version": "2.16.3",
+      "nativeLastSeenAt": "2026-10-21T17:49:32.804Z",
+      "workerLastSeenAt": "2026-10-21T17:50:19.409Z",
+      "lastPollAt": "2026-10-21T17:50:14.259Z",
+      "lastPollOk": true,
+      "usageStatus": "fresh",
+      "usageError": null,
+      "transport": {
+        "encoding": "gzip",
+        "wireBytes": 415,
+        "decodedBytes": 1099,
+        "receivedAt": "2026-10-21T17:49:32.804Z"
+      }
+    },
+    {
+      "name": "Gelb",
+      "workerId": "newsletter-mac-141b2976",
+      "version": "2.16.3",
+      "nativeLastSeenAt": "2026-10-21T17:49:31.536Z",
+      "workerLastSeenAt": "2026-10-21T17:50:18.574Z",
+      "lastPollAt": "2026-10-21T17:50:13.934Z",
+      "lastPollOk": true,
+      "usageStatus": "fresh",
+      "usageError": null,
+      "transport": {
+        "encoding": "gzip",
+        "wireBytes": 437,
+        "decodedBytes": 1154,
+        "receivedAt": "2026-10-21T17:49:31.536Z"
+      }
+    },
+    {
+      "name": "Grün",
+      "workerId": "mac-f121ae17",
+      "version": "2.16.3",
+      "nativeLastSeenAt": "2026-10-21T17:49:38.451Z",
+      "workerLastSeenAt": "2026-10-21T17:50:21.873Z",
+      "lastPollAt": "2026-10-21T17:50:19.163Z",
+      "lastPollOk": true,
+      "usageStatus": "fresh",
+      "usageError": null,
+      "transport": {
+        "encoding": "gzip",
+        "wireBytes": 432,
+        "decodedBytes": 1122,
+        "receivedAt": "2026-10-21T17:49:38.451Z"
+      }
+    },
+    {
+      "name": "Lila",
+      "workerId": "macbook-air-von-gustav-ccdf84ef",
+      "version": "2.16.3",
+      "nativeLastSeenAt": "2026-10-21T17:49:46.864Z",
+      "workerLastSeenAt": "2026-10-21T17:50:13.581Z",
+      "lastPollAt": "2026-10-21T17:50:06.722Z",
+      "lastPollOk": true,
+      "usageStatus": "fresh",
+      "usageError": null,
+      "transport": {
+        "encoding": "gzip",
+        "wireBytes": 445,
+        "decodedBytes": 1128,
+        "receivedAt": "2026-10-21T17:49:46.864Z"
+      }
+    },
+    {
+      "name": "Orange",
+      "workerId": "mac-worker-6-64d66918",
+      "version": "2.16.3",
+      "nativeLastSeenAt": "2026-10-21T17:50:18.171Z",
+      "workerLastSeenAt": "2026-10-21T17:50:18.544Z",
+      "lastPollAt": "2026-10-21T17:50:13.901Z",
+      "lastPollOk": true,
+      "usageStatus": "fresh",
+      "usageError": null,
+      "transport": {
+        "encoding": "gzip",
+        "wireBytes": 432,
+        "decodedBytes": 1119,
+        "receivedAt": "2026-10-21T17:50:18.171Z"
+      }
+    },
+    {
+      "name": "Pink",
+      "workerId": "pink",
+      "version": "2.16.3",
+      "nativeLastSeenAt": "2026-10-21T17:49:27.552Z",
+      "workerLastSeenAt": "2026-10-21T17:50:15.255Z",
+      "lastPollAt": "2026-10-21T17:50:13.877Z",
+      "lastPollOk": true,
+      "usageStatus": "fresh",
+      "usageError": null,
+      "transport": {
+        "encoding": "gzip",
+        "wireBytes": 424,
+        "decodedBytes": 1136,
+        "receivedAt": "2026-10-21T17:49:27.552Z"
+      }
+    },
+    {
+      "name": "Rot",
+      "workerId": "macbook-1",
+      "version": "2.16.3",
+      "nativeLastSeenAt": "2026-10-21T17:49:32.472Z",
+      "workerLastSeenAt": "2026-10-21T17:50:12.966Z",
+      "lastPollAt": "2026-10-21T17:50:06.862Z",
+      "lastPollOk": true,
+      "usageStatus": "fresh",
+      "usageError": null,
+      "transport": {
+        "encoding": "gzip",
+        "wireBytes": 422,
+        "decodedBytes": 1121,
+        "receivedAt": "2026-10-21T17:49:32.472Z"
+      }
+    },
+    {
+      "name": "Schwarz",
+      "workerId": "macworker-5-schwarz",
+      "version": "2.16.3",
+      "nativeLastSeenAt": "2026-10-21T17:49:58.971Z",
+      "workerLastSeenAt": "2026-10-21T17:50:19.367Z",
+      "lastPollAt": "2026-10-21T17:50:13.867Z",
+      "lastPollOk": true,
+      "usageStatus": "fresh",
+      "usageError": null,
+      "transport": {
+        "encoding": "gzip",
+        "wireBytes": 435,
+        "decodedBytes": 1153,
+        "receivedAt": "2026-10-21T17:49:58.971Z"
+      }
+    },
+    {
+      "name": "Türkis",
+      "workerId": "macbook-air-von-nachteule-cdb5c505",
+      "version": "2.16.3",
+      "nativeLastSeenAt": "2026-10-21T17:49:30.973Z",
+      "workerLastSeenAt": "2026-10-21T17:50:21.964Z",
+      "lastPollAt": "2026-10-21T17:50:13.871Z",
+      "lastPollOk": true,
+      "usageStatus": "fresh",
+      "usageError": null,
+      "transport": {
+        "encoding": "gzip",
+        "wireBytes": 444,
+        "decodedBytes": 1122,
+        "receivedAt": "2026-10-21T17:49:30.973Z"
+      }
+    }
+  ]
+}

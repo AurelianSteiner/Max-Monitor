@@ -334,7 +334,7 @@
     }
   },
   "evidenceDirectory": "/Users/tillticktucktim/.codex/visualizations/2026/10/21/01a15f26-39e4-7d33-ab0f-bc3b38d20108/audit-rollout",
-  "overallAcceptance": "audit_rollout_verified_separate_tracking_followup_open",
+  "overallAcceptance": "verified",
   "followupVerifiedAt": "2026-10-21T17:23:16.512406+00:00",
   "runtimeFollowup": {
     "observedAt": "2026-10-21T17:20:51.101216+00:00",
@@ -419,18 +419,34 @@
     ]
   },
   "separateTrackingRollout": {
-    "status": "in_progress",
+    "status": "verified",
     "ownerChat": "Tracking komplett prüfen",
     "nativeSourceChange": "4ff3340c1684cbc3609a1bfac34b4218e1bce087",
     "targetVersion": "2.16.3",
-    "installedVersionOnOrangeAtReadback": "2.16.2",
-    "automaticUpdateAt": "2026-10-21T17:19:53.937532+00:00",
-    "automaticUpdateReason": "build_failed",
-    "automaticUpdateFailure": "Max Monitor bauen fehlgeschlagen (Exit 1): Usage4Claude/Helpers/CredentialStartup.swift:6:1: error: 'nonisolated' modifier cannot be applied to this declaration",
+    "installedVersionOnOrangeAtReadback": "2.16.3",
     "installedAppPreserved": true,
-    "usageErrorAt": "2026-10-21T17:20:10.201Z",
-    "usageError": "Sign-in expired — please sign in again",
-    "usageStale": true,
-    "accountReauthenticationBeingHandledSeparately": true
-  }
+    "usageError": null,
+    "usageStale": false,
+    "accountReauthenticationBeingHandledSeparately": false,
+    "installedOnAllNineWorkers": true,
+    "regularMaintenanceOnAllNineOk": true,
+    "accountReauthenticationVerifiedAt": "2026-10-21T17:33:18.000Z",
+    "nativeGzipReceptionOnAllNineVerified": true,
+    "previousAutomaticUpdateFailureResolved": true,
+    "closeoutReport": "tracking-closeout.md",
+    "closeoutEvidence": "tracking-verification.json",
+    "verifiedAt": "2026-10-21T17:50:27.588125+00:00",
+    "historicalFailedUpdate": {
+      "automaticUpdateAt": "2026-10-21T17:19:53.937532+00:00",
+      "automaticUpdateReason": "build_failed",
+      "automaticUpdateFailure": "Max Monitor bauen fehlgeschlagen (Exit 1): Usage4Claude/Helpers/CredentialStartup.swift:6:1: error: 'nonisolated' modifier cannot be applied to this declaration",
+      "usageErrorAt": "2026-10-21T17:20:10.201Z",
+      "usageError": "Sign-in expired — please sign in again"
+    }
+  },
+  "trackingCloseoutReport": "tracking-closeout.md",
+  "trackingCloseoutEvidence": "tracking-verification.json",
+  "trackingVerifiedAt": "2026-10-21T17:50:27.588125+00:00",
+  "finalHubCollectionComplete": true,
+  "finalHubCalculationComplete": true
 }

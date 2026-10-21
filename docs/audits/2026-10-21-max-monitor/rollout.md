@@ -1,6 +1,6 @@
 # Live-Ausrollung der technischen Auditkorrekturen
 
-Max Monitor 2.16.2 ist auf allen neun berichtenden Worker-Macs installiert und nach dem Austausch authentifiziert bestätigt. Die 19 technischen Auditpunkte und die beiden ergänzenden Vertragskorrekturen sind veröffentlicht. F11 bleibt in [Offene Entscheidungen](open-decisions.md) getrennt offen; `TeamAutoReporter` wurde nicht geändert. Auch die ausstehende Verbindungsprüfung von Orange ist nach seiner Rückkehr abgeschlossen. Das anschließend separat begonnene Tracking-Update und die Kontingentanmeldung sind unten mit ihren noch offenen Prüfungen aufgeführt.
+Max Monitor 2.16.2 wurde auf allen neun berichtenden Worker-Macs installiert und nach dem Austausch authentifiziert bestätigt. Die 19 technischen Auditpunkte und die beiden ergänzenden Vertragskorrekturen sind veröffentlicht. F11 bleibt in [Offene Entscheidungen](open-decisions.md) getrennt offen; `TeamAutoReporter` wurde nicht geändert. Auch die Verbindungsprüfung von Orange ist abgeschlossen. Das anschließende Tracking-Update auf 2.16.3 und die erfolgreiche Kontingentanmeldung sind in [Kontingentanmeldung und Tracking-Update](tracking-closeout.md) mit den aktuellen Live-Belegen dokumentiert.
 
 ## Ausgelieferter Stand
 
@@ -50,11 +50,13 @@ Das tatsächlich geladene Profil verwendet weiterhin `ssh_multiplex: true`; in d
 
 Der zentrale Abgleich um **17:20:51 UTC** bestätigt neue native Geräteberichte und Worker-Berichte aller neun Macs, aktive Relay-/Queue-Dienste und einen frischen vollständigen Queue-Snapshot ohne Quellenfehler. Alle 51 Manifestdateien der inzwischen separat aktualisierten Runtime `4ff3340c1684cbc3609a1bfac34b4218e1bce087` stimmen mit deren Installationsbeleg überein. Oranges Startdiagnose bestätigt weiterhin App 2.16.2, geöffneten lokalen Tresor und null Alt-Schlüsselbundlesezugriffe.
 
-## Separat laufender Tracking-Rollout
+## Historischer Zwischenstand des Tracking-Rollouts
 
 Der Chat „Tracking komplett prüfen“ ergänzt nach dem Audit-Rollout gzip für native Geräte-/Kontingentmeldungen und bereitet dafür App 2.16.3 vor. Bei Orange hat der automatische Abgleich dieser neuen nativen Quellen einen lokalen Compilerfehler gemeldet: `CredentialStartup.swift:6:1: 'nonisolated' modifier cannot be applied to this declaration`. Das Update wurde zurückgestellt; die installierte und weiterhin berichtende App 2.16.2 blieb erhalten. Die Abnahme des nachfolgenden App-Updates ist damit noch offen.
 
 Oranges zentrale Kontingentmeldung enthält außerdem `Sign-in expired — please sign in again`; Aufgabenabruf und Wartungszugang funktionieren. Die erneute Anmeldung und deren Kontingentprüfung werden im genannten Chat bereits separat bearbeitet. Eine vollständige aktuelle Kontingentmessung wird hier deshalb nicht behauptet. F11 bleibt davon unabhängig offen.
+
+Dieser Zwischenstand ist inzwischen überholt: Alle neun Macs sind auf 2.16.3, die reguläre Monitor-Wartung und die gzip-Übertragung sind bestätigt. Orange hat einen neuen Monitoring-Zugang und erneut erfolgreiche reguläre Kontingentabrufe. Die [nachfolgende Live-Abnahme](tracking-closeout.md) enthält die aktuellen Ergebnisse; F11 bleibt offen.
 
 Die Prüfung schickt keine echten Kundenaufträge durch Schreibtests und versetzt keinen Mac absichtlich in den Ruhezustand. OAuth-Fehler, Kontowechsel, Berechtigungswechsel, konkurrierende Zustände und Schlafschutz-Übergänge sind mit den tatsächlichen Produktionsmethoden und isolierten Systemgrenzen geprüft.
 
