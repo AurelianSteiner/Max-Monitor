@@ -233,8 +233,13 @@ test('worker artifact download verifies content, preserves tampered caches, and 
   const runner = async (command,args) => {
     calls.push([command,args]);
     if (command === 'git') return args.includes('diff') && nativeChanged ? 'Usage4Claude/Helpers/FleetReporter.swift' : '';
-    if (command === 'gh') {
-      await fs.writeFile(path.join(args[args.indexOf('--dir')+1],manifest.asset),corruptDownload ? 'tampered' : content);
+    if (command === '/usr/bin/curl') {
+      assert.equal(args[0],'-q');
+      assert.equal(args[args.indexOf('--proto')+1],'=https');
+      assert.equal(args[args.indexOf('--proto-redir')+1],'=https');
+      assert.equal(args[args.indexOf('--max-filesize')+1],String(64*1024*1024));
+      assert.equal(args.at(-1),`https://github.com/AurelianSteiner/Max-Monitor/releases/download/${manifest.tag}/${manifest.asset}`);
+      await fs.writeFile(args[args.indexOf('--output')+1],corruptDownload ? 'tampered' : content);
       return '';
     }
     if (command === '/usr/bin/ditto') {
@@ -248,14 +253,14 @@ test('worker artifact download verifies content, preserves tampered caches, and 
   corruptDownload = false;
   const bundle = await workerArtifactBundle(REVISION,runner,{manifestPath,cacheRoot});
   assert.equal(await fs.readFile(path.join(bundle,'Contents','marker'),'utf8'),'artifact');
-  const count = calls.filter(([cmd])=>cmd === 'gh').length;
+  const count = calls.filter(([cmd])=>cmd === '/usr/bin/curl').length;
   assert.equal(await workerArtifactBundle(REVISION,runner,{manifestPath,cacheRoot}),bundle);
-  assert.equal(calls.filter(([cmd])=>cmd === 'gh').length,count);
+  assert.equal(calls.filter(([cmd])=>cmd === '/usr/bin/curl').length,count);
   await fs.writeFile(path.join(path.dirname(bundle),manifest.asset),'tampered-cache');
   await assert.rejects(workerArtifactBundle(REVISION,runner,{manifestPath,cacheRoot}),/Prüfsumme/);
   nativeChanged = true;
   assert.equal(await workerArtifactBundle(REVISION,runner,{manifestPath,cacheRoot}),null);
-  assert.equal(calls.filter(([cmd])=>cmd === 'gh').length,count);
+  assert.equal(calls.filter(([cmd])=>cmd === '/usr/bin/curl').length,count);
 });
 
 test('artifact re-signing uses only the installed certificate and preserves ad-hoc installations', async t => {
@@ -274,7 +279,7 @@ test('artifact re-signing uses only the installed certificate and preserves ad-h
     const runner=async(command,args)=>{
       calls.push({command,args});
       if(command==='git')return '';
-      if(command==='gh'){await fs.writeFile(path.join(args[args.indexOf('--dir')+1],manifest.asset),content);return '';}
+      if(command==='/usr/bin/curl'){await fs.writeFile(args[args.indexOf('--output')+1],content);return '';}
       if(command==='/usr/bin/ditto'){await appBundle(path.join(args.at(-1),'Max Monitor.app'),'candidate');return '';}
       if(command==='/usr/bin/security')assert.fail('valid-only or label lookup must not select a different identity');
       if(command==='/usr/bin/codesign'){
@@ -321,7 +326,7 @@ test('an already matching signed artifact needs no local private key but a forei
     let signingAttempts=0,verifiedRequirement=false;
     const runner=async(command,args)=>{
       if(command==='git')return '';
-      if(command==='gh'){await fs.writeFile(path.join(args[args.indexOf('--dir')+1],'Max-Monitor-worker.zip'),content);return '';}
+      if(command==='/usr/bin/curl'){await fs.writeFile(args[args.indexOf('--output')+1],content);return '';}
       if(command==='/usr/bin/ditto'){await appBundle(path.join(args.at(-1),'Max Monitor.app'),'published artifact');return '';}
       if(command==='/usr/bin/security')assert.fail('a matching artifact requires no identity enumeration');
       if(command==='/usr/bin/codesign'){
@@ -1531,7 +1536,7 @@ test('paused artifact admission requires the exact canary identity, pinned conte
   let changed=false,downloads=0;
   const runner=async(command,args)=>{
     if(command==='git')return changed&&args.includes('diff')?'Usage4Claude/Services/CredentialVault.swift\n':'';
-    if(command==='gh'){downloads++;await fs.writeFile(path.join(args[args.indexOf('--dir')+1],manifest.asset),content);return '';}
+    if(command==='/usr/bin/curl'){downloads++;await fs.writeFile(args[args.indexOf('--output')+1],content);return '';}
     if(command==='/usr/bin/ditto'){await appBundle(path.join(args.at(-1),'Max Monitor.app'),'verified canary');return '';}
     if(command==='/usr/bin/codesign'||command==='/usr/bin/security')return '';
     assert.fail(command);

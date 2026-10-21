@@ -476,9 +476,14 @@ export async function workerArtifactBundle(revision, runner = run, {
   try { await fs.access(zip); } catch {
     const staging = await fs.mkdtemp(path.join(cacheRoot,'download-'));
     try {
-      await runner('gh',['release','download',manifest.tag,'--repo','AurelianSteiner/Max-Monitor',
-        '--pattern',manifest.asset,'--dir',staging],{label:'Repo-Download: Monitor-Release laden',timeout:180000});
       const archive = path.join(staging,manifest.asset);
+      // Public immutable artifact: no GitHub login or Keychain access is needed.
+      // Ignore local curl config and accept only HTTPS, including redirects.
+      await runner('/usr/bin/curl',['-q','--fail','--location','--silent','--show-error',
+        '--proto','=https','--proto-redir','=https','--connect-timeout','15','--max-time','180',
+        '--max-filesize',String(64*1024*1024),'--output',archive,
+        `https://github.com/AurelianSteiner/Max-Monitor/releases/download/${manifest.tag}/${manifest.asset}`],
+        {label:'Repo-Download: Monitor-Release laden',timeout:185000});
       const size = (await fs.stat(archive)).size;
       if (size > 64*1024*1024 || createHash('sha256').update(await fs.readFile(archive)).digest('hex') !== manifest.sha256)
         throw new Error('App-Signatur: Monitor-Release-Prüfsumme stimmt nicht.');
