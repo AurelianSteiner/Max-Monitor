@@ -21,7 +21,7 @@ def digest(path):
 
 
 def safe_path(value):
-    return isinstance(value, str) and re.fullmatch(r'(?:(?:team-server|scripts)/[A-Za-z0-9_.-]+|team-server/public/[A-Za-z0-9_-]+\.(?:html|css|js))', value) and '..' not in value
+    return isinstance(value, str) and (value == 'Config/runtime-release-files.json' or re.fullmatch(r'(?:(?:team-server|scripts)/[A-Za-z0-9_.-]+|team-server/public/[A-Za-z0-9_-]+\.(?:html|css|js))', value)) and '..' not in value
 
 
 def install(payload, root=Path('/opt/max-monitor'), backup_root=Path('/var/backups/max-monitor'),
@@ -87,6 +87,7 @@ def install(payload, root=Path('/opt/max-monitor'), backup_root=Path('/var/backu
                     raise ValueError('Live source changed during staging: ' + rel)
             for rel, data in decoded.items():
                 p = root / rel
+                p.parent.mkdir(parents=True, exist_ok=True)
                 temporary = p.with_name(p.name + '.release-' + stamp)
                 temporary.write_bytes(data)
                 temporary.chmod(p.stat().st_mode & 0o777 if p.exists() else 0o644)

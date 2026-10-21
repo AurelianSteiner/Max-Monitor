@@ -13,7 +13,28 @@ spec.loader.exec_module(runtime)
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_complete_repository_manifest_installs_and_reads_back_including_new_directory(self):
+        repo = Path(__file__).resolve().parent.parent
+        manifest = json.loads((repo / 'Config/runtime-release-files.json').read_text())
+        self.payload['manifest'] = manifest
+        self.payload['files'] = {}
+        self.payload['baseline'] = {}
+        for rel in manifest['files']:
+            data = (repo / rel).read_bytes()
+            self.payload['files'][rel] = {'base64': base64.b64encode(data).decode(),
+                                          'sha256': hashlib.sha256(data).hexdigest()}
+            self.payload['baseline'][rel] = runtime.digest(self.root / rel)
+        self.assertFalse((self.root / 'Config').exists())
+        self.assertTrue(self.install(dry_run=True)['dryRun'])
+        self.assertEqual([], self.calls)
+        result = self.install()
+        self.assertEqual(len(manifest['files']), len(result['sourceFiles']))
+        for rel, digest in result['sourceFiles'].items():
+            self.assertEqual(digest, runtime.digest(self.root / rel), rel)
+
     def test_runtime_asset_paths_are_explicit_and_cannot_escape_public(self):
+        self.assertTrue(runtime.safe_path('Config/runtime-release-files.json'))
+        self.assertFalse(runtime.safe_path('Config/Info.plist'))
         self.assertTrue(runtime.safe_path('team-server/public/consumption.js'))
         self.assertTrue(runtime.safe_path('team-server/public/dashboard.css'))
         for value in ['team-server/public/../../secrets.json','team-server/public/other/private.js','team-server/public/secret.json','/etc/passwd']:
