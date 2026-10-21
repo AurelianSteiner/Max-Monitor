@@ -231,15 +231,13 @@ main:focus { outline: none; }
 .panel-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; min-height: 18px; }
 .panel-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .fleet-sort-note { margin: 0 0 8px; }
-.panel-foot { margin-top: auto; padding-top: 10px; align-self: flex-start; }
 .count { margin-left: 4px; font-size: 12px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
 .overview {
   display: grid; gap: 12px;
-  grid-template-columns: minmax(0, 2.3fr) minmax(300px, 1fr);
-  grid-template-areas: "pipeline attention" "fleet fleet";
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "pipeline" "fleet";
 }
 .pipeline-panel { grid-area: pipeline; display: flex; flex-direction: column; }
-.attention-panel { grid-area: attention; display: flex; flex-direction: column; }
 .fleet-panel { grid-area: fleet; }
 
 /* ── Pipeline chart ──────────────────────────────────────── */
@@ -251,7 +249,7 @@ main:focus { outline: none; }
 .pipeline-period .tab.selected { background: var(--primary); color: var(--primary-ink); box-shadow: none; }
 .pipeline-period .tab.selected:active { background: var(--primary-hover); }
 /* Three workflows (Pre-Gen, Klaviyo-Upload, Übersetzung) share one row down to the app's 1120px window. */
-.pipeline { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px 16px; }
+.pipeline { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px 16px; }
 .flow { min-width: 0; display: flex; flex-direction: column; container-type: inline-size; }
 .flow-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
 .flow-head h3 { font-size: 12px; font-weight: 600; }
@@ -297,18 +295,7 @@ main:focus { outline: none; }
 .bar-col:first-child .bar-tip { left: 0; transform: none; }
 .bar-col:last-child .bar-tip { left: auto; right: 0; transform: none; }
 
-/* ── Attention list ──────────────────────────────────────── */
-.attention-list { list-style: none; margin: 0 -8px; padding: 0; display: grid; gap: 1px; }
-.attention-item {
-  display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; column-gap: 10px; align-items: center;
-  width: 100%; padding: 5px 8px; border: 0; border-radius: var(--radius-sm); background: transparent; text-align: left;
-}
-.attention-item:hover { background: var(--hover); }
-.attention-item .dot { grid-row: span 2; align-self: start; margin-top: 5px; }
-.attention-item strong { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.attention-item small { grid-column: 2 / -1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.attention-item .kind { grid-column: 3; grid-row: 1; font-size: 11px; color: var(--muted); }
-.attention-calm { display: flex; align-items: center; gap: 10px; padding: 8px 0; color: var(--good); font-size: 13px; }
+/* ── Status dots ─────────────────────────────────────────── */
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--st-marked); flex-shrink: 0; }
 .dot.online, .dot.completed, .dot.good { background: var(--st-done); }
 .dot.silent, .dot.queued { background: var(--st-queued); }
@@ -653,8 +640,6 @@ dialog.wide { max-width: 1060px; }
   .topbar-main { flex-wrap: wrap; gap: 8px 20px; padding: 10px 0; }
   .nav { order: 3; flex-basis: 100%; }
   .nav-item { flex: 1; justify-content: center; }
-  .overview { grid-template-columns: minmax(0, 1fr); grid-template-areas: "pipeline" "attention" "fleet"; }
-  .attention-list { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); column-gap: 8px; }
   .machine-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .fleet-table th:nth-child(6), .fleet-table td:nth-child(6) { display: none; }
   .search input { width: 200px; }
@@ -677,8 +662,6 @@ dialog.wide { max-width: 1060px; }
   .pipeline-period .tab { min-height: 44px; height: auto; padding: 0 12px; }
   #clear-queue-period { min-height: 44px; }
   .bars { height: 120px; }
-  .attention-list { grid-template-columns: 1fr; }
-  .attention-item { min-height: 44px; }
   .machine-grid { grid-template-columns: 1fr; }
   .fleet-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .fleet-table, .fleet-table tbody { display: block; }

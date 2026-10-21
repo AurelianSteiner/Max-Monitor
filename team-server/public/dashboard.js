@@ -450,7 +450,6 @@
     if (snapshot) return;
     $("machine-grid").replaceChildren(...Array.from({ length: 3 }, () => skeleton("machine")));
     $("pipeline").replaceChildren(skeleton("flow", 4));
-    $("attention-list").replaceChildren(skeleton("attention-calm", 3, "li"));
     $("fleet-body").replaceChildren(...Array.from({ length: 4 }, () => {
       const row = node("tr");
       const cell = node("td");
@@ -462,7 +461,6 @@
   }
   function overviewMessage(message) {
     $("pipeline").replaceChildren(node("div", "empty-state", message));
-    $("attention-list").replaceChildren();
     const row = node("tr");
     const cell = node("td", "empty-state", message);
     cell.colSpan = 6;
@@ -827,7 +825,7 @@
     $("workflow").value = selectedWorkflow;
     if (snapshot) {
       renderMachines(devices);
-      renderOverview(devices, items, attention);
+      renderOverview(devices, items);
     }
     renderQueue(items);
     renderEvents(attention);
@@ -915,53 +913,6 @@
       flow.append(head, bars, labels);
       return flow;
     }));
-  }
-  function attentionSeverity(entry) {
-    const status = entry.type === "machine" ? machineDisplayStatus(entry.entity) : entry.entity.status;
-    if (status === "offline" || status === "failed") return 0;
-    if (status === "blocked") return 1;
-    if (entry.reasons.some((reason) => reason.startsWith("Claude-Limit erreicht"))) return 1;
-    if (status === "silent") return 2;
-    return 3;
-  }
-  function renderAttention(attention) {
-    const list = $("attention-list");
-    $("attention-count").textContent = numberFormat.format(attention.length);
-    $("attention-count").dataset.tone = attention.length ? "bad" : "good";
-    $("attention-more").hidden = !attention.length;
-    if (!attention.length) {
-      const calm = node("li", "attention-calm");
-      calm.append(node("span", "dot good"), node("span", "", "Alles in Ordnung – kein Mac und keine Aufgabe braucht dich."));
-      list.replaceChildren(calm);
-      return;
-    }
-    const limit = window.innerHeight >= 860 && window.innerWidth >= 1100 ? 6 : 4;
-    const sorted = attention.slice().sort((a, b) => attentionSeverity(a) - attentionSeverity(b));
-    list.replaceChildren(...sorted.slice(0, limit).map((entry) => {
-      const task = entry.type === "task";
-      const entity = entry.entity;
-      const item = node("li");
-      const button = node("button", "attention-item");
-      button.type = "button";
-      const severity = attentionSeverity(entry);
-      const dot = node("span", `dot ${task ? entity.status : severity <= 1 ? "offline" : severity === 2 ? "silent" : "unknown"}`);
-      const title = task ? entity.title || entity.id : workerName(entity.workerId, entity.name);
-      const label = node("strong", "", title);
-      label.title = title;
-      const reason = entry.reasons.length > 1
-        ? `${entry.reasons[0]} · +${entry.reasons.length - 1}`
-        : entry.reasons[0];
-      const detail = node("small", "", reason);
-      detail.title = entry.reasons.join(" · ");
-      button.append(dot, label, node("span", "kind", task ? workflow(entity) : "Mac"), detail);
-      button.setAttribute("aria-label", `${title}: ${entry.reasons.join(", ")}`);
-      button.addEventListener("click", () => (task ? taskDetails(entity) : machineDetails(entity)));
-      item.append(button);
-      return item;
-    }));
-    $("attention-more").textContent = attention.length > limit
-      ? `Alle ${numberFormat.format(attention.length)} im Log ansehen →`
-      : "Im Log ansehen →";
   }
   function machineAccount(machine) {
     return (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
@@ -1372,9 +1323,8 @@
       return row;
     }));
   }
-  function renderOverview(devices, items, attention) {
+  function renderOverview(devices, items) {
     renderPipeline(items);
-    renderAttention(attention);
     renderFleet(devices);
   }
   function renderMachines(devices) {

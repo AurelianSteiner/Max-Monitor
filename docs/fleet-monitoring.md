@@ -39,7 +39,7 @@ ClickUp-Startstatus + RS-Hub-Reservierungen + Hub-Worker-Dateien ── Newslett
 
 Die **Übersicht** zeigt alles auf einer Seite: oben pro Workflow ein Balkendiagramm
 der Stufen **Markiert · Wartet · Läuft · Blockiert · Fertig** (bei Bedarf **Fehler**),
-daneben die dringendsten Einträge aus **Braucht Aufmerksamkeit** und darunter alle Macs
+über die volle Breite und darunter alle Macs
 mit Status, aktueller Aufgabe, Akku, 5h-/Wochenlimit und letzter Meldung. Wie bei
 den Workern erteilt nur der ClickUp-Status einen Auftrag (`pre-gen`, `klaviyo upload`,
 `revision intern`, `revision extern`); die Brücke liest diese Aufgaben mit derselben
