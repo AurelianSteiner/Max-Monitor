@@ -194,6 +194,24 @@ test('typed owners replace only unowned codes, and an open PM question is always
     ['pm_decision_pending', 'PM', 'waiting_human', 'Welche Module?']);
 });
 
+test('a ❓ of a setup gap or missing master data without a bound journal keeps that owner and step', () => {
+  const open = (blockerReason, extra) => ({ status: 'blocked', workflow: 'correction', phase: 'PM-Rückfrage offen', blockerReason,
+    reasonCode: 'pm_decision_pending', responsibleRole: 'PM', nextStep: 'Entscheidung im Rückfragen-Thread bzw. in ClickUp treffen; danach setzt der Worker fort.', ...extra });
+  const rows = [open(SETUP_GAP, { blockerOwner: 'onboarding' }), open(SETUP_GAP), open(KEY_NOT_SET, { blockerOwner: 'stammdaten' }),
+    open('Welche Module?', { blockerOwner: 'onboarding' }),
+    // The worker's PM type, an ordinary question and a season design gate stay PM decisions.
+    open(SETUP_GAP, { blockerOwner: 'pm' }), open('Welche Module?'), open('Es gibt keine freigegebene Gestaltung für Black Week.')];
+  applyBlockerContexts(rows, [], 1000);
+  const shown = row => [row.phase, row.reasonCode, row.responsibleRole];
+  assert.deepEqual(shown(rows[0]), ['Blockiert · Kunden-Setup', 'customer_setup_incomplete', 'PM und Design']);
+  assert.match(rows[0].nextStep, /neu beauftragen/);
+  assert.match(rows[0].blockedReason, /Zuständig: PM und Design .* Nächster Schritt: Designbasis im RS Hub freigeben/);
+  assert.deepEqual(shown(rows[1]), ['Blockiert · Kunden-Setup', 'customer_setup_incomplete', 'PM und Design']);
+  assert.deepEqual(shown(rows[2]), ['Blockiert · Stammdaten', 'master_data_missing', STAMMDATEN_ROLE]);
+  assert.deepEqual(shown(rows[3]), ['Blockiert · Kunden-Setup', 'customer_setup_incomplete', 'PM und Design']);
+  for (const row of rows.slice(4)) assert.deepEqual(shown(row), ['PM-Rückfrage offen', 'pm_decision_pending', 'PM']);
+});
+
 test('the PM caption distinguishes an empty, an ambiguous and an unread PM field', () => {
   const user = (id, username) => ({ id, username });
   const field = value => ({ id: 't', custom_fields: [{ id: PM_FIELD_ID, type: 'users', value }] });

@@ -6,13 +6,14 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { applyBlockerContexts } from './blocker-context.mjs';
+import { applyBlockerContexts, blockerContext } from './blocker-context.mjs';
+import { applyPmQuestions } from './pm-question-status.mjs';
 import {
   DEFAULT_WORKFLOWS, normalizeTag, validateWorkflows, discoverTags, listTasks,
   parseClaim, parseRegisterClaim, listClaims, parseWorkerIssue, buildQueue, parseObservedWorkers, readHubFleet,
   collectSnapshot, relayEndpoint, publishSnapshot, syncOnce, runSyncLoop,
   parseRunStatus, parseBlockedReason, addRunDetails, readRenders, createRenderPreviews, uploadPreview,
-  createClaimReader, readRunStatuses, freshClaimCycle,
+  createClaimReader, readRunStatuses, freshClaimCycle, applyStoredCheckpoints,
 } from './newsletter-monitor-bridge.mjs';
 
 const now = Date.parse('2026-10-07T12:00:00Z');
@@ -371,6 +372,68 @@ test('a fresh review or inline cause does not inherit an earlier PM decision cla
     assert.notEqual(row.phase, 'PM-Rückfrage offen');
     assert.doesNotMatch(row.nextStep, /Old PM action/);
   }
+});
+
+// Nachkontrolle 21.10.2026: Schwarz V1.911 posted Tomishop's customer setup gap as
+// "❓ Wartet · PM-Rückfrage" (owner onboarding, pm_question_registration_skipped
+// keine_frage); Max Monitor switched it to a PM question two minutes later.
+const TOMISHOP_SETUP = 'Kunden-Setup noch nicht abgeschlossen: Designbasis von tomishop im RS Hub nicht freigegeben (Kunden/tomishop/produktion/gestaltung.json, Freigabestatus „ungeklaert“). Designsystem bereitmachen und freigeben oder für diese Aufgabe eine Auftragsausnahme eintragen, danach den Auftrag neu beauftragen.';
+function tomishopRun(jobId, runId, owner) {
+  const taskId = jobId.replace(/@\d+$/, '');
+  const row = { id: `clickup:newsletter:${taskId}`, url: `https://app.clickup.com/t/${taskId}`, workflow: 'newsletter', status: 'blocked',
+    phase: 'Blockiert', attemptId: runId, blockerOwner: owner,
+    run: { id: runId, jobId, taskId, ts: '1792585580.000100', channelId: 'source-channel', heartbeat: 1 } };
+  const parent = { ts: '1792585580.000100', bot_id: 'worker-bot', reactions: [{ name: 'x' }], metadata: {
+    event_type: 'ai_newsletter_claim', event_payload: { task_id: jobId, run_id: runId, worker: 'macworker-5-schwarz', state: 'final', heartbeat: 1 } } };
+  const notice = { ts: '1792585580.000200', bot_id: 'worker-bot', text: `❓ Wartet · PM-Rückfrage\n${TOMISHOP_SETUP}`,
+    metadata: { event_type: 'ai_newsletter_notice', event_payload: { notification_id: `${runId}:status` } } };
+  const saved = { run_id: runId, task_id: jobId, producer: 'macworker-5-schwarz', owner: null, ready_at: 8640000000000000,
+    blocker: { ...blockerContext(TOMISHOP_SETUP, { state: 'blockiert' }), blockerSource: 'checkpoint', blockerSourceRunId: runId } };
+  return { row, hubFetch: async () => response({ ok: true, messages: [parent, notice] }), saved };
+}
+// The snapshot order of collectSnapshot.
+async function tomishopSnapshot({ row, hubFetch, saved }, { previousTasks = [], fetcher = hubFetch, questions = { sets: [], jobs: [] } } = {}) {
+  const bindings = new Map([[row.id, row.run]]);
+  await addRunDetails([row], { hubFetch: fetcher, channelId: 'source-channel', previousTasks, now });
+  applyStoredCheckpoints([row], [saved], bindings);
+  applyPmQuestions([row], questions, bindings, { now });
+  applyBlockerContexts([row], [], now);
+  return row;
+}
+
+test('a customer setup gap shown with ❓ keeps setup ownership and step without a registered question', async () => {
+  for (const [jobId, runId] of [['86c95myuv@1792571607802', '20261021T122622Z-0f8b-86c95myuv@1792571607802'],
+    ['86caxdrej@1792571666357', '20261021T123339Z-0f8b-86caxdrej@1792571666357']]) {
+    // Typed by the worker, and an untyped row through the worker's setup predicate.
+    for (const owner of ['onboarding', undefined]) {
+      const row = await tomishopSnapshot(tomishopRun(jobId, runId, owner));
+      assert.equal(row.reasonCode, 'customer_setup_incomplete');
+      assert.equal(row.responsibleRole, 'PM und Design');
+      assert.equal(row.blockerKind, 'waiting_human');
+      assert.notEqual(row.phase, 'PM-Rückfrage offen');
+      assert.match(row.blockedReason, /^Gesicherter Befund: Kunden-Setup noch nicht abgeschlossen: Designbasis von tomishop/);
+      assert.match(row.blockedReason, / · Zuständig: PM und Design \(PM nicht zugeordnet\) · Nächster Schritt: .*neu beauftragen/);
+      assert.doesNotMatch(row.blockedReason, /Rückfragen-Thread|setzt der Worker fort|Zuständig: PM \(/);
+    }
+    // After the rollout, a previous PM classification of this attempt is not carried over during a Slack outage.
+    const fixture = tomishopRun(jobId, runId, 'onboarding');
+    const old = { ...fixture.row, phase: 'PM-Rückfrage offen', blockedReason: TOMISHOP_SETUP, blockerReason: TOMISHOP_SETUP,
+      reasonCode: 'pm_decision_pending', responsibleRole: 'PM', nextStep: 'Entscheidung im Rückfragen-Thread bzw. in ClickUp treffen; danach setzt der Worker fort.' };
+    delete old.run;
+    const outage = await tomishopSnapshot(fixture, { previousTasks: [old], fetcher: async () => { throw Error('temporary outage'); } });
+    assert.deepEqual([outage.reasonCode, outage.responsibleRole], ['customer_setup_incomplete', 'PM und Design']);
+    assert.notEqual(outage.phase, 'PM-Rückfrage offen');
+  }
+  // The worker's PM type and a registered question journal still decide for the PM.
+  const pm = await tomishopSnapshot(tomishopRun('86c95myuv@1792571607802', '20261021T122622Z-0f8b-86c95myuv@1792571607802', 'pm'));
+  assert.deepEqual([pm.phase, pm.reasonCode, pm.responsibleRole], ['PM-Rückfrage offen', 'pm_decision_pending', 'PM']);
+  const fixture = tomishopRun('86c95myuv@1792571607802', '20261021T122622Z-0f8b-86c95myuv@1792571607802', 'onboarding');
+  fixture.row.run.workerId = 'macworker-5-schwarz';
+  const set = { id: 'set-1', mode: 'production', stage: 'newsletter', taskId: '86c95myuv', workerId: 'macworker-5-schwarz',
+    runId: fixture.row.run.id, threadTs: '1792585580.000300', createdAt: now, sourceVersion: 1,
+    questions: [{ id: 'F1', title: 'Trotz offener Designbasis starten?', status: 'open' }] };
+  const journal = await tomishopSnapshot(fixture, { questions: { sets: [set], jobs: [] } });
+  assert.deepEqual([journal.phase, journal.reasonCode, journal.responsibleRole], ['Wartet · PM-Rückfrage', 'pm_decision_pending', 'PM']);
 });
 
 test('a terminal correction marked Fertig in its parent is completed without a reaction', () => {

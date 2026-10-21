@@ -71,6 +71,17 @@ const PM_DECISION = /PM[- ]Entscheidung erforderlich|PM entscheidet|im Aufgabent
 // Checked access or setup in the "Stand:" section never decides the cause.
 const causeOf = reason => reason.split(/(?:^|\s)\**Stand\**\s*:/)[0];
 
+// Nachkontrolle 21.10.2026 (Tomishop 86c95myuv, 86caxdrej): the worker posts a
+// customer setup gap with the ❓ status of a decision block, but types its owner
+// onboarding; no question is registered and nothing continues by itself until the
+// PM commissions again (docs/ablauf.md). Such a ❓ is no PM question. Untyped rows
+// follow the worker's setup predicate. → 'onboarding' | 'stammdaten' | null
+export function setupOwner(owner, text) {
+  if (owner === 'onboarding' || owner === 'stammdaten') return owner;
+  return !BLOCKER_OWNERS.has(owner) && SETUP.test(causeOf(clean(text, 4000)).replace(DESIGN_GATE, ' ')) ? 'onboarding' : null;
+}
+const SETUP_PHASE = { onboarding: 'Blockiert · Kunden-Setup', stammdaten: 'Blockiert · Stammdaten' };
+
 function fallbackContext(reason, state, technical) {
   const cause = causeOf(reason);
   const setupCause = cause.replace(DESIGN_GATE, ' ');
@@ -188,13 +199,18 @@ export function applyBlockerContexts(rows, tasks, now = Date.now()) {
     Object.assign(row, pm);
     row.pmCheckedAt = new Date(now).toISOString();
     const reason = row.blockerReason || row.blockedReason;
+    // Still open here means no bound journal (applyPmQuestions gives each its own
+    // phase): a ❓ of a setup gap or missing master data keeps that owner and step.
+    const setup = row.phase === 'PM-Rückfrage offen' && setupOwner(row.blockerOwner, reason);
+    if (setup) row.phase = SETUP_PHASE[setup];
     // An open PM question is a PM decision, also against a checkpoint code (Fehleraudit 19.10.2026).
     if (row.phase === 'PM-Rückfrage offen') {
       Object.assign(row, { ...OWNER_CONTEXT.pm, nextStep: row.reasonCode === 'pm_decision_pending' && row.nextStep || OWNER_CONTEXT.pm.nextStep,
         blockerReason: clean(reason) || 'PM-Rückfrage offen' });
     // A workflow name proves no technical cause. Preserve unknown ownership
     // until an actual worker state, typed owner or structured PM journal supplies it.
-    } else if (!row.reasonCode || (OWNER_CONTEXT[row.blockerOwner] && UNOWNED.has(row.reasonCode))) {
+    } else if (!row.reasonCode || (OWNER_CONTEXT[row.blockerOwner] && UNOWNED.has(row.reasonCode))
+      || (setup && GROUP[row.reasonCode] !== setup)) {
       Object.assign(row, blockerContext(reason, { owner: row.blockerOwner }));
     }
     // A superseded worker handover (Leebmann 19.10.2026) never redirects technical work.
