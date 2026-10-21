@@ -116,7 +116,7 @@
       "singleGuiAndPidRetained": true
     },
     {
-      "name": "Gr\u00fcn",
+      "name": "Grün",
       "appVersion": "2.16.2",
       "devicePreserved": true,
       "signingPreserved": true,
@@ -206,7 +206,7 @@
       "singleGuiAndPidRetained": true
     },
     {
-      "name": "T\u00fcrkis",
+      "name": "Türkis",
       "appVersion": "2.16.2",
       "devicePreserved": true,
       "signingPreserved": true,
@@ -264,6 +264,13 @@
       ],
       "errors": [],
       "writes": []
+    },
+    "nodeFollowup": {
+      "sourceRevision": "ea2aed27bad0eca6af66b77212f1f36635c72a69",
+      "nodeVersion": "22.22.2",
+      "pass": 526,
+      "fail": 0,
+      "skip": 0
     }
   },
   "openBusinessDecisions": [
@@ -273,12 +280,157 @@
     "worker": "Orange",
     "finding": "Task retrieval recorded Hub transport timeouts while native reports and monitor maintenance succeeded.",
     "observedLegacySshMultiplexSetting": true,
-    "resolution": "Readback required: maintenance connection closed during the guarded repair attempt; reverse SSH then refused connection. Local wake/WLAN check requested.",
+    "resolution": "After the user confirmed Orange was on again, three new authenticated read-only maintenance sessions confirmed successful real task polls and fresh central native/worker reports. No additional profile change or restart was performed.",
     "attemptedSetting": false,
     "profileChangeConfirmed": false,
     "idleRestartConfirmed": false,
-    "requiredCloseout": "Read profile and service state, then verify a newly successful real task poll and fresh central telemetry."
+    "requiredCloseout": "Satisfied: successful real task polls, fresh central telemetry and working maintenance access.",
+    "status": "resolved",
+    "resolvedAt": "2026-10-21T17:20:52.686086+00:00",
+    "loadedSshMultiplexAtCloseout": true,
+    "localProfileOverrideAtCloseout": null,
+    "priorRepairBackupPresent": false,
+    "priorRepairTemporaryPresent": false,
+    "successfulPolls": [
+      {
+        "at": "2026-10-21T17:19:44.968Z",
+        "ok": true,
+        "listed": 85,
+        "observedAt": "2026-10-21T17:19:54.343604+00:00"
+      },
+      {
+        "at": "2026-10-21T17:20:24.274Z",
+        "ok": true,
+        "listed": 85,
+        "observedAt": "2026-10-21T17:20:30.880697+00:00"
+      },
+      {
+        "at": "2026-10-21T17:20:49.529Z",
+        "ok": true,
+        "listed": 85,
+        "observedAt": "2026-10-21T17:20:52.686086+00:00"
+      }
+    ],
+    "monitorPidDuringReadback": 1577,
+    "activeRunsDuringReadback": 0,
+    "mutationsDuringReadback": false,
+    "rootCauseOfPriorDisconnectionProven": false,
+    "workerPidDuringFirstThreePollChecks": 584,
+    "additionalSuccessfulPoll": {
+      "observedAt": "2026-10-21T17:23:16.512406+00:00",
+      "at": "2026-10-21T17:23:13.796Z",
+      "ok": true,
+      "listed": 83,
+      "variants": [
+        "pre-gen",
+        "revision intern",
+        "revision extern",
+        "klaviyo upload"
+      ],
+      "workerPid": 14889,
+      "monitorPid": 1577,
+      "activeRuns": 0,
+      "ownMutationOrRestart": false
+    }
   },
   "evidenceDirectory": "/Users/tillticktucktim/.codex/visualizations/2026/10/21/01a15f26-39e4-7d33-ab0f-bc3b38d20108/audit-rollout",
-  "overallAcceptance": "pending_orange_connectivity"
+  "overallAcceptance": "audit_rollout_verified_separate_tracking_followup_open",
+  "followupVerifiedAt": "2026-10-21T17:23:16.512406+00:00",
+  "runtimeFollowup": {
+    "observedAt": "2026-10-21T17:20:51.101216+00:00",
+    "sourceRevision": "4ff3340c1684cbc3609a1bfac34b4218e1bce087",
+    "fileCount": 51,
+    "sha256Readback": true,
+    "servicesActive": true,
+    "queueSourceFresh": true,
+    "machines": [
+      {
+        "name": "Blau",
+        "nativeLastSeenAt": "2026-10-21T17:20:28.660Z",
+        "workerLastSeenAt": "2026-10-21T17:20:49.129Z",
+        "lastPollAt": "2026-10-21T17:20:44.815Z",
+        "lastPollOk": true,
+        "appVersion": "2.16.2"
+      },
+      {
+        "name": "Gelb",
+        "nativeLastSeenAt": "2026-10-21T17:20:46.768Z",
+        "workerLastSeenAt": "2026-10-21T17:20:48.348Z",
+        "lastPollAt": "2026-10-21T17:20:46.088Z",
+        "lastPollOk": true,
+        "appVersion": "2.16.2"
+      },
+      {
+        "name": "Grün",
+        "nativeLastSeenAt": "2026-10-21T17:19:54.985Z",
+        "workerLastSeenAt": "2026-10-21T17:20:36.668Z",
+        "lastPollAt": "2026-10-21T17:20:14.065Z",
+        "lastPollOk": true,
+        "appVersion": "2.16.2"
+      },
+      {
+        "name": "Lila",
+        "nativeLastSeenAt": "2026-10-21T17:20:02.079Z",
+        "workerLastSeenAt": "2026-10-21T17:20:43.364Z",
+        "lastPollAt": "2026-10-21T17:20:38.036Z",
+        "lastPollOk": true,
+        "appVersion": "2.16.2"
+      },
+      {
+        "name": "Orange",
+        "nativeLastSeenAt": "2026-10-21T17:20:10.201Z",
+        "workerLastSeenAt": "2026-10-21T17:20:45.119Z",
+        "lastPollAt": "2026-10-21T17:20:44.950Z",
+        "lastPollOk": null,
+        "appVersion": "2.16.2"
+      },
+      {
+        "name": "Pink",
+        "nativeLastSeenAt": "2026-10-21T17:20:12.955Z",
+        "workerLastSeenAt": "2026-10-21T17:20:44.965Z",
+        "lastPollAt": "2026-10-21T17:20:37.984Z",
+        "lastPollOk": true,
+        "appVersion": "2.16.2"
+      },
+      {
+        "name": "Rot",
+        "nativeLastSeenAt": "2026-10-21T17:20:20.960Z",
+        "workerLastSeenAt": "2026-10-21T17:20:42.757Z",
+        "lastPollAt": "2026-10-21T17:20:38.791Z",
+        "lastPollOk": true,
+        "appVersion": "2.16.2"
+      },
+      {
+        "name": "Schwarz",
+        "nativeLastSeenAt": "2026-10-21T17:20:02.323Z",
+        "workerLastSeenAt": "2026-10-21T17:20:49.105Z",
+        "lastPollAt": "2026-10-21T17:20:45.595Z",
+        "lastPollOk": true,
+        "appVersion": "2.16.2"
+      },
+      {
+        "name": "Türkis",
+        "nativeLastSeenAt": "2026-10-21T17:20:32.879Z",
+        "workerLastSeenAt": "2026-10-21T17:20:36.752Z",
+        "lastPollAt": "2026-10-21T17:20:32.836Z",
+        "lastPollOk": true,
+        "appVersion": "2.16.2"
+      }
+    ]
+  },
+  "separateTrackingRollout": {
+    "status": "in_progress",
+    "ownerChat": "Tracking komplett prüfen",
+    "nativeSourceChange": "4ff3340c1684cbc3609a1bfac34b4218e1bce087",
+    "targetVersion": "2.16.3",
+    "installedVersionOnOrangeAtReadback": "2.16.2",
+    "automaticUpdateAt": "2026-10-21T17:19:53.937532+00:00",
+    "automaticUpdateReason": "build_failed",
+    "automaticUpdateFailure": "Max Monitor bauen fehlgeschlagen (Exit 1): Usage4Claude/Helpers/CredentialStartup.swift:6:1: error: 'nonisolated' modifier cannot be applied to this declaration",
+    "installedAppPreserved": true,
+    "usageErrorAt": "2026-10-21T17:20:10.201Z",
+    "usageError": "Sign-in expired — please sign in again",
+    "usageStale": true,
+    "accountReauthenticationBeingHandledSeparately": true
+  }
 }
