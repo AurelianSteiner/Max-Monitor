@@ -747,6 +747,9 @@
     const items = tasks();
     const devices = machines();
     renderSkillVersions(devices);
+    $("claude-account-summary").hidden = !snapshot;
+    $("claude-account-count").textContent = snapshot ? numberFormat.format(claudeAccountCount(devices)) : "—";
+    $("claude-account-summary").title = "Eingerichtete Claude-Accounts auf allen Macs. Zwei Worker-Accounts zählen als zwei; der zusätzliche Monitoring-Account wird nicht mitgezählt. Macs ohne Account-Meldung zählen nicht mit.";
     const attention = attentionEntries(devices, items);
     for (const [id, status] of [["nav-queue", "queued"], ["nav-running", "running"],
       ["nav-blocked", "blocked"], ["nav-clarification", "clarification"]]) {
@@ -916,6 +919,15 @@
   }
   function machineAccount(machine) {
     return (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
+  }
+  function claudeAccountCount(devices) {
+    return devices.reduce((total, machine) => {
+      // Worker slots are local to each Mac. Their IDs and display names are not
+      // global identities; the separate monitoring login is not another slot.
+      const accounts = machine.claudeAccounts?.accounts;
+      if (accounts?.length) return total + accounts.length;
+      return total + (machineAccount(machine)?.provider === "claude" ? 1 : 0);
+    }, 0);
   }
   function accountActions(machine) {
     const actions=node('div','account-actions');
