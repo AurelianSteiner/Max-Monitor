@@ -101,6 +101,9 @@
     ["blocked", "Blockiert", "blocked"],
     ["completed", "Erledigt", "completed"],
   ];
+  const stageShort = { marked: "Mark.", queued: "Wart.", paused: "Paus.", running: "Läuft",
+    clarification: "PM", blocked: "Block.", completed: "Fertig" };
+  const pipelineOrder = ["newsletter", "upload", "correction", "translation"];
   const timeFormat = new Intl.DateTimeFormat("de-DE", {
     dateStyle: "short",
     timeStyle: "short",
@@ -110,6 +113,10 @@
   const resetFormat = new Intl.DateTimeFormat("de-DE", {
     weekday: "short",
     day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+    timeZone: "Europe/Berlin",
+  });
+  const resetPartsFormat = new Intl.DateTimeFormat("de-DE", {
+    weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
     timeZone: "Europe/Berlin",
   });
   const numberFormat = new Intl.NumberFormat("de-DE");
@@ -464,11 +471,11 @@
   function loading() {
     if (snapshot) return;
     $("machine-grid").replaceChildren(...Array.from({ length: 3 }, () => skeleton("machine")));
-    $("pipeline").replaceChildren(skeleton("flow", 4));
+    $("pipeline").replaceChildren(skeleton("pipeline-loading", 3));
     $("fleet-body").replaceChildren(...Array.from({ length: 4 }, () => {
       const row = node("tr");
       const cell = node("td");
-      cell.colSpan = 6;
+      cell.colSpan = 7;
       cell.append(node("div", "loading-line"));
       row.append(cell);
       return row;
@@ -478,7 +485,7 @@
     $("pipeline").replaceChildren(node("div", "empty-state", message));
     const row = node("tr");
     const cell = node("td", "empty-state", message);
-    cell.colSpan = 6;
+    cell.colSpan = 7;
     row.append(cell);
     $("fleet-body").replaceChildren(row);
   }
@@ -860,17 +867,68 @@
     selectView("queue", status);
     $("queue-heading").focus({ preventScroll: true });
   }
-  function renderPipeline(items) {
-    items = tasksInPeriod(items, pipelinePeriod);
+  function stageHead(label, short, stage) {
+    const cell = node("th");
+    cell.scope = "col";
+    cell.title = label;
+    const head = node("span", "stage-head");
+    if (stage) head.dataset.stage = stage;
+    head.append(node("span", "long", label), node("span", "short", short));
+    head.lastChild.setAttribute("aria-hidden", "true");
+    cell.append(head);
+    return cell;
+  }
+  function stageCount(count, label, onOpen, stage) {
+    const cell = node("td");
+    if (!count) {
+      cell.append(node("span", "stage-count zero", "0"));
+      return cell;
+    }
+    const button = node("button", "stage-count", numberFormat.format(count));
+    button.type = "button";
+    if (stage) {
+      button.dataset.stage = stage;
+      button.dataset.tone = countTone(stage, count);
+    }
+    button.setAttribute("aria-label", `${label}: ${numberFormat.format(count)} Aufgaben anzeigen`);
+    button.title = `${label}: ${numberFormat.format(count)}`;
+    button.addEventListener("click", onOpen);
+    cell.append(button);
+    return cell;
+  }
+  // One row per workflow: Flows, Newsletter and Pop-ups of a workflow are summed
+  // so the whole pipeline reads at a glance. Each count opens exactly its tasks.
+  function pipelineRows(items) {
     const groups = new Map();
     for (const task of items) {
-      const name = workflow(task);
-      if (!groups.has(name)) groups.set(name, { value: workflowKey(task) || "", tasks: [] });
-      groups.get(name).tasks.push(task);
+      const value = task.workflow || "";
+      if (!groups.has(value)) groups.set(value, []);
+      groups.get(value).push(task);
     }
-    const flowOrder = ["Pre-Gen", "Klaviyo-Upload", "Übersetzung"];
-    const order = (name) => { const base = name.split(" · ")[0]; return flowOrder.includes(base) ? flowOrder.indexOf(base) : flowOrder.length; };
-    const flows = [...groups.entries()].sort(([a], [b]) => order(a) - order(b) || a.localeCompare(b));
+    const order = (value) => pipelineOrder.includes(value) ? pipelineOrder.indexOf(value) : pipelineOrder.length;
+    const label = (value) => workflowNames[value] || value || "Workflow";
+    return [...groups.entries()]
+      .sort(([a], [b]) => order(a) - order(b) || label(a).localeCompare(label(b), "de"))
+      .map(([value, group]) => {
+        const counts = new Map(stages.map(([key]) => [key, 0]));
+        // The queue's Blockiert filter includes failures. Use the same bucket so
+        // every count opens exactly its tasks, without counting failures twice.
+        for (const task of group) {
+          const key = stageOf(task) === "failed" ? "blocked" : stageOf(task);
+          counts.set(key, (counts.get(key) || 0) + 1);
+        }
+        const open = group.filter(isOpen);
+        const kinds = new Map();
+        for (const task of open) {
+          const kind = workflow(workflowKey(task)).split(" · ")[1];
+          if (kind) kinds.set(kind, (kinds.get(kind) || 0) + 1);
+        }
+        return { value, name: label(value), counts, open: open.length, kinds };
+      });
+  }
+  function renderPipeline(items) {
+    items = tasksInPeriod(items, pipelinePeriod);
+    const flows = pipelineRows(items);
     const open = items.filter(isOpen).length;
     const done = items.length - open;
     const unknown = items.filter(task => task.status === "completed" && !task.completedAt).length;
@@ -889,48 +947,45 @@
         : "Queue-Quelle noch nicht verbunden."));
       return;
     }
-    $("pipeline").replaceChildren(...flows.map(([name, group]) => {
-      const counts = new Map(stages.map(([key]) => [key, 0]));
-      // The queue's Blockiert filter includes failures. Use the same bucket so
-      // every bar opens exactly its counted tasks, without counting failures twice.
-      for (const task of group.tasks) {
-        const key = stageOf(task) === "failed" ? "blocked" : stageOf(task);
-        counts.set(key, (counts.get(key) || 0) + 1);
+    const table = node("table", "pipeline-table");
+    table.append(node("caption", "sr-only", "Pipeline je Workflow und Status"));
+    const headRow = node("tr");
+    const corner = node("th", "", "");
+    corner.scope = "col";
+    corner.append(node("span", "sr-only", "Workflow"));
+    headRow.append(corner, stageHead("Offen", "Offen"));
+    for (const [key, name] of stages) headRow.append(stageHead(name, stageShort[key], key));
+    headRow.children[1].classList.add("open-total");
+    headRow.lastChild.classList.add("done-total");
+    const head = node("thead");
+    head.append(headRow);
+    const body = node("tbody");
+    for (const { value, name, counts, open, kinds } of flows) {
+      const row = node("tr");
+      const title = node("th");
+      title.scope = "row";
+      const openFlow = node("button", "pipeline-flow", name);
+      openFlow.type = "button";
+      openFlow.dataset.workflow = value;
+      openFlow.title = [`${name} · ${numberFormat.format(open)} offen`,
+        ...[...kinds].map(([kind, count]) => `${kind}: ${numberFormat.format(count)} offen`)].join("\n");
+      openFlow.setAttribute("aria-label", `${name}: alle ${numberFormat.format(open)} offenen Aufgaben anzeigen`);
+      openFlow.addEventListener("click", () => openQueue("open", value, pipelinePeriod));
+      title.append(openFlow);
+      row.append(title);
+      const total = stageCount(open, `${name} · offen`, () => openQueue("open", value, pipelinePeriod));
+      total.className = "open-total";
+      row.append(total);
+      for (const [key, stageName, status] of stages) {
+        const cell = stageCount(counts.get(key), `${name} · ${stageName}`,
+          () => openQueue(status, value, pipelinePeriod), key);
+        if (key === "completed") cell.className = "done-total";
+        row.append(cell);
       }
-      const shown = stages.filter(([key]) => key !== "clarification"
-        || ["newsletter", "correction"].includes(group.value.split(":")[0]) || counts.get(key) > 0);
-      const max = Math.max(1, ...shown.map(([key]) => counts.get(key)));
-      const flow = node("div", "flow");
-      const head = node("div", "flow-head");
-      const openInFlow = group.tasks.filter(isOpen).length;
-      head.append(node("h3", "", name), node("span", "", `${numberFormat.format(openInFlow)} offen`));
-      const bars = node("div", "bars");
-      const labels = node("div", "bar-labels");
-      labels.setAttribute("aria-hidden", "true");
-      for (const [key, label, status] of shown) {
-        const count = counts.get(key);
-        const column = node("button", count ? "bar-col" : "bar-col zero");
-        column.type = "button";
-        column.dataset.stage = key;
-        column.setAttribute("aria-label", `${name} · ${label}: ${numberFormat.format(count)} Aufgaben anzeigen`);
-        const tip = node("span", "bar-tip", `${name} · ${label}: ${numberFormat.format(count)}`);
-        tip.setAttribute("aria-hidden", "true");
-        const value = node("span", "bar-value", numberFormat.format(count));
-        value.dataset.tone = countTone(key, count);
-        value.setAttribute("aria-hidden", "true");
-        value.append(tip);
-        const bar = node("span", "bar");
-        bar.style.height = `${(count / max) * 78}%`;
-        column.append(value, bar);
-        column.addEventListener("click", () => openQueue(status, group.value, pipelinePeriod));
-        bars.append(column);
-        const caption = node("span", "", label);
-        caption.title = label;
-        labels.append(caption);
-      }
-      flow.append(head, bars, labels);
-      return flow;
-    }));
+      body.append(row);
+    }
+    table.append(head, body);
+    $("pipeline").replaceChildren(table);
   }
   function machineAccount(machine) {
     return (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
@@ -944,18 +999,21 @@
       return total + (machineAccount(machine)?.provider === "claude" ? 1 : 0);
     }, 0);
   }
-  function accountActions(machine) {
+  // Compact (overview rows): only states that need action; setup stays in the details.
+  function accountActions(machine,{compact=false}={}) {
     const actions=node('div','account-actions');
-    if(machine.claudeAccounts?.selectionReason)actions.append(node('small','form-hint',machine.claudeAccounts.selectionReason));
+    if(!compact && machine.claudeAccounts?.selectionReason)actions.append(node('small','form-hint',machine.claudeAccounts.selectionReason));
     const phase={installing:'Claude-Account wird eingerichtet…',figma_check:'Figma wird geprüft…',figma_login_required:'Figma-Anmeldung noch bestätigen'}[machine.accountProvisioning?.result?.status];
     if(phase)actions.append(node('small','form-hint',phase));
     if(!snapshot?.capabilities?.canManageClaudeAccounts || !machine.workerId)return actions;
     const full=machine.claudeAccounts?.accounts?.length>=2;
-    const button=node('button','text-button account-add-button',full ? '2 Claude-Accounts eingerichtet' : '+ Claude-Account');
-    button.type='button';button.disabled=full || machine.agentStatus!=='online';
-    button.title=full?'Beide Account-Plätze sind eingerichtet':!machine.accountProvisioning?'Account-Verwaltung auf diesem Mac prüfen':'Account auf diesem Mac hinzufügen';
-    button.setAttribute('aria-label',full?`2 Claude-Accounts auf ${workerName(machine.workerId,machine.name)} eingerichtet`:`Claude-Account auf ${workerName(machine.workerId,machine.name)} hinzufügen`);
-    button.addEventListener('click',event=>{event.stopPropagation();openAccountSetup(machine);});actions.append(button);
+    if(!compact) {
+      const button=node('button','text-button account-add-button',full ? '2 Claude-Accounts eingerichtet' : '+ Claude-Account');
+      button.type='button';button.disabled=full || machine.agentStatus!=='online';
+      button.title=full?'Beide Account-Plätze sind eingerichtet':!machine.accountProvisioning?'Account-Verwaltung auf diesem Mac prüfen':'Account auf diesem Mac hinzufügen';
+      button.setAttribute('aria-label',full?`2 Claude-Accounts auf ${workerName(machine.workerId,machine.name)} eingerichtet`:`Claude-Account auf ${workerName(machine.workerId,machine.name)} hinzufügen`);
+      button.addEventListener('click',event=>{event.stopPropagation();openAccountSetup(machine);});actions.append(button);
+    }
     if(machine.accountProvisioning?.result?.status==='figma_login_required') {
       const figma=node('button','text-button','Figma verbinden');figma.type='button';
       figma.addEventListener('click',event=>{event.stopPropagation();openAccountSetup(machine,'connect-figma');});actions.append(figma);
@@ -1044,7 +1102,7 @@
     $('detail-dialog').addEventListener('close',()=>{token.value='';},{once:true});
     openDetail(`${action==='add-account'?'Claude-Account hinzufügen':'Figma verbinden'} · ${label}`,[form]);
   }
-  function workerAccountColumn(machine, account, compact = false) {
+  function workerAccountColumn(machine, account) {
     const column = node("div", "worker-account-column");
     if (!account) { column.append(node("span", "usage-note", "Kein zweiter Account")); return column; }
     const stale = account.stale || !snapshot || Date.now()-Date.parse(account.updatedAt)>10*60000;
@@ -1059,12 +1117,6 @@
     for (const [label,kind] of [["5 h","session"],["Woche","weekly"]]) {
       const window = account.windows.find(w=>w.kind===kind);
       const measurement = window ? {percent:window.percent,resetsAt:window.reset,usageUpdatedAt:account.updatedAt} : null;
-      if (compact) {
-        const limit = node("div", "worker-account-window");
-        limit.setAttribute("aria-label", `${label} genutzt`);
-        limit.append(node("span","worker-account-window-label",`${label} genutzt`),meter(measurement,stale));
-        limits.append(limit); continue;
-      }
       const limit = node("div", "machine-limit");
       limit.dataset.tone = percentTone(measurement?.percent,limitStale(measurement,stale));
       limit.title = limitTitle(measurement,stale);
@@ -1081,10 +1133,10 @@
     if(note) column.append(node("p","usage-note",note));
     return column;
   }
-  function workerAccountsGrid(machine, compact = false) {
+  function workerAccountsGrid(machine) {
     const grid = node("div","worker-accounts-grid");
     grid.setAttribute("aria-label","Claude-Accounts dieses Macs");
-    for(const account of machine.claudeAccounts.accounts) grid.append(workerAccountColumn(machine,account,compact));
+    for(const account of machine.claudeAccounts.accounts) grid.append(workerAccountColumn(machine,account));
     return grid;
   }
   function claudeAccountIdentity(account) {
@@ -1215,17 +1267,26 @@
     return note;
   }
 
+  // Overview lines keep the reset next to the value: weekday and time within
+  // the coming week, the date beyond it. The tooltip keeps the exact time.
+  function shortReset(resetsAt) {
+    const parts = Object.fromEntries(resetPartsFormat.formatToParts(resetsAt).map(({ type, value }) => [type, value]));
+    return resetsAt - Date.now() < 6 * 86400000
+      ? `${parts.weekday.replace(/\.$/, "")} ${parts.hour}:${parts.minute}` : `${parts.day}.${parts.month}.`;
+  }
   function meter(limit, stale) {
     const value = limit?.percent ?? null;
     const outdated = limitStale(limit, stale);
     const wrap = node("div", `meter${value == null ? " unknown" : ""}${outdated && value != null ? " stale" : ""}`);
     wrap.dataset.tone = percentTone(value, outdated);
-    wrap.title = limitTitle(limit, stale);
     const number = node("b", "", percentText(value));
     number.dataset.tone = wrap.dataset.tone;
-    wrap.append(usageTrack(value), number);
     const reset = limitReset(limit, stale);
-    if (reset) wrap.append(reset);
+    const resetsAt = timestamp(limit?.resetsAt);
+    reset.textContent = resetsAt === null ? "—" : shortReset(resetsAt);
+    wrap.title = `${limitTitle(limit, stale)}\n${reset.title}`;
+    reset.removeAttribute("title");
+    wrap.append(usageTrack(value), number, reset);
     return wrap;
   }
   function sortedMachines(devices) {
@@ -1251,6 +1312,49 @@
       String(a.machine.deviceId || "").localeCompare(String(b.machine.deviceId || ""))
     ).map(({ machine }) => machine);
   }
+  // Overview rows mark the power source with an icon; the tooltip names it.
+  const powerIcons = { Netzteil: "M6 2.5v3M10 2.5v3M4.5 5.5h7V8a3.5 3.5 0 0 1-7 0zM8 11.5v2.5",
+    lädt: "M9 1.5 4 9h4l-1 5.5L12 7H8z" };
+  function lineIcon(path, className) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("aria-hidden", "true");
+    svg.classList.add(className);
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    line.setAttribute("d", path);
+    svg.append(line);
+    return svg;
+  }
+  // One line per Claude account. The account, 5 h and week columns stack the
+  // same accounts in the same order, so every line reads straight across.
+  function fleetAccountLines(machine) {
+    const pool = machine.claudeAccounts?.accounts;
+    if (pool?.length === 2) return pool.map((account) => {
+      const stale = account.stale || !snapshot || Date.now() - Date.parse(account.updatedAt) > 10 * 60000;
+      const identity = claudeAccountIdentity(account);
+      const next = machine.claudeAccounts.selectedAccountId === account.id && account.status === "ready" && !stale;
+      const note = stale ? "Messung veraltet" : account.status === "limited" ? "Limit erreicht"
+        : account.status === "error" ? "Account prüfen" : account.status === "unknown" ? "Wird geprüft…" : "";
+      const blocked = account.blockedUntil && !account.windows.some(w => w.reset === account.blockedUntil)
+        ? `Limit-Reset ${exact(account.blockedUntil)}` : "";
+      const limit = (kind) => {
+        const window = account.windows.find(w => w.kind === kind);
+        return window ? { percent: window.percent, resetsAt: window.reset, usageUpdatedAt: account.updatedAt } : null;
+      };
+      return { name: identity.name, next, stale, note: note || blocked,
+        tone: account.status === "error" && !stale ? "bad" : blocked ? "warn" : "unknown",
+        title: [identity.email || identity.name, next ? "Nächster Start" : "", note, blocked].filter(Boolean).join("\n"),
+        session: limit("session"), weekly: limit("weekly") };
+    });
+    const account = machineAccount(machine);
+    if (!account) return [];
+    const identity = claudeAccountIdentity(account);
+    const stale = usageStale(machine) || Boolean(machine.usageError);
+    return [{ name: identity.name, next: false, stale, note: "",
+      title: [`Claude-Monitoring-Account: ${identity.email || "E-Mail nicht gemeldet"}`,
+        stale ? `Letzte Messung ${relative(machine.usageUpdatedAt)}` : ""].filter(Boolean).join("\n"),
+      session: machineLimit(machine, account, "session"), weekly: machineLimit(machine, account, "weekly") }];
+  }
   function renderFleet(devices) {
     const online = devices.filter((machine) => machine.status === "online").length;
     const affected = devices.filter(machine => workerFailureReason(machine)).length;
@@ -1266,7 +1370,7 @@
     if (!devices.length) {
       const row = node("tr");
       const cell = node("td", "empty-state", "Noch kein Mac erfasst. Verbinde Max Monitor auf jedem Mac mit diesem Team-Server.");
-      cell.colSpan = 6;
+      cell.colSpan = 7;
       row.append(cell);
       $("fleet-body").replaceChildren(row);
       return;
@@ -1288,33 +1392,37 @@
       open.title = label;
       open.setAttribute("aria-label", `${label} · ${statusNames[displayStatus] || "Unbekannt"} · Details`);
       const deviceName = machine.deviceName || (machine.name !== machine.workerId ? machine.name : null);
-      open.title = [label, deviceName && deviceName !== label ? `macOS: ${deviceName}` : ""].filter(Boolean).join("\n");
+      // Account, Figma and selection details stay one hover away; the row
+      // itself only grows for states that need action.
+      const accountIdentity = machineAccountIdentity(machine);
+      const figmaIdentity = machineFigmaIdentity(machine);
+      open.title = [label, deviceName && deviceName !== label ? `macOS: ${deviceName}` : "",
+        accountIdentity.text, machine.claudeAccounts?.selectionReason || "", figmaIdentity.text].filter(Boolean).join("\n");
       identity.append(open);
       if (!machine.workerId) identity.append(node("small", "", "ohne Worker-ID"));
-      const accountIdentity = machineAccountIdentity(machine);
-      const accountLabel = node("small", "fleet-account", accountIdentity.text);
-      accountLabel.title = accountIdentity.title;
-      identity.append(accountLabel);
-      identity.append(accountActions(machine));
-      const figmaIdentity = machineFigmaIdentity(machine);
-      const figmaLabel = node("small", "fleet-account fleet-figma-account", figmaIdentity.text);
-      figmaLabel.title = figmaIdentity.title;
-      identity.append(figmaLabel);
+      const actions = accountActions(machine, { compact: true });
+      if (actions.childElementCount) identity.append(actions);
       name.append(signal, identity);
       nameCell.append(name);
       const active = activeTasks(machine);
-      const taskCell = node("td");
+      const taskCell = node("td", "fleet-work");
+      const line = node("span", "fleet-task-line");
+      if (active.length) line.append(taskKindBadge(active[0]));
       const current = node("span", failure ? "fleet-task fleet-issue" : active.length ? "fleet-task" : "fleet-task idle",
         failure || (active.length ? active[0].title || active[0].id : idleLabel(machine)));
       if (failure) current.title = machineAttentionReasons(machine).join("\n");
       if (active.length && !failure) current.title = active.map((task) => task.title || task.id).join("\n");
-      taskCell.append(current);
-      if (active.length) taskCell.append(taskKindBadge(active[0]));
+      line.append(current);
+      const load = machineLoad(machine);
+      const more = [active.length > 1 ? `+${active.length - 1}` : "", load && active.length ? loadText(load).replace(/ /g, "") : ""].filter(Boolean).join(" · ");
+      if (more) {
+        const extra = node("span", "fleet-more", more);
+        extra.title = [active.length > 1 ? `${active.length - 1} weitere Aufgaben` : "", load && active.length ? `Belegte Plätze ${loadText(load)}` : ""].filter(Boolean).join(" · ");
+        line.append(extra);
+      }
+      taskCell.append(line);
       if (failure && active.length) taskCell.append(node("span", "fleet-sub", `Zuletzt: ${active[0].title || active[0].id}`));
       else if (active[0]?.status === "queued") taskCell.append(node("span", "fleet-sub", "reserviert · startet gleich"));
-      const load = machineLoad(machine);
-      const more = [active.length > 1 ? `+ ${active.length - 1} weitere` : "", load && active.length ? `Plätze ${loadText(load)}` : ""].filter(Boolean).join(" · ");
-      if (more) taskCell.append(node("span", "fleet-sub", more));
       const blocked = blockedCorrections(machine);
       if (blocked.length) {
         const summary = node("span", "fleet-sub fleet-issue", blockedCorrectionLabel(blocked));
@@ -1322,36 +1430,40 @@
         taskCell.append(summary);
       }
       const [battery, source] = batteryText(machine);
-      const batteryCell = node("td", "fleet-battery", battery);
+      const batteryCell = node("td", "fleet-battery");
       batteryCell.dataset.tone = batteryTone(machine);
       batteryCell.title = source === "veraltet" ? "Keine aktuelle Akku-Messung der Mac-App"
         : battery === "—" ? "Akku noch nicht gemeldet" : `Akku: ${battery}${source ? ` · ${source}` : ""}`;
-      if (source && source !== "Akku") batteryCell.append(node("small", "", ` · ${source}`));
-      const account = machineAccount(machine);
-      const stale = usageStale(machine) || Boolean(machine.usageError);
-      const sessionCell = node("td");
-      const weeklyCell = node("td");
-      if (machine.claudeAccounts?.accounts?.length===2) {
-        sessionCell.colSpan = 2;
-        sessionCell.classList.add("fleet-account-pool");
-        sessionCell.append(workerAccountsGrid(machine,true));
-        weeklyCell.hidden = true;
-        row.classList.add("has-limit-reset");
-      } else if (account) {
-        sessionCell.append(meter(machineLimit(machine, account, "session"), stale));
-        weeklyCell.append(meter(machineLimit(machine, account, "weekly"), stale));
-        row.classList.add("has-limit-reset");
-        if (stale) sessionCell.title = weeklyCell.title = `Letzte Messung ${relative(machine.usageUpdatedAt)}`;
+      const power = powerIcons[source];
+      if (power) batteryCell.append(lineIcon(power, "power-icon"));
+      batteryCell.append(battery);
+      if (source === "veraltet") batteryCell.append(node("small", "", " · veraltet"));
+      const accountCell = node("td", "fleet-accounts");
+      const lines = fleetAccountLines(machine);
+      if (lines.length > 1) accountCell.classList.add("pool");
+      const sessionCell = node("td", "fleet-limits");
+      const weeklyCell = node("td", "fleet-limits");
+      if (lines.length) {
+        for (const item of lines) {
+          const accountName = node("span", `fleet-account-name${item.next ? " next" : ""}`, item.name);
+          accountName.title = item.title;
+          if (item.note) accountName.dataset.tone = item.tone;
+          if (item.next) accountName.setAttribute("aria-label", `${item.name} · nächster Start`);
+          accountCell.append(accountName);
+          sessionCell.append(meter(item.session, item.stale));
+          weeklyCell.append(meter(item.weekly, item.stale));
+        }
       } else {
         const unbound = node("span", "fleet-unbound", "kein Account");
         unbound.title = "Monitoring-Account auf diesem Worker-Mac verbinden";
-        sessionCell.append(unbound);
+        accountCell.append(unbound);
+        sessionCell.append(node("span", "fleet-unbound", "—"));
         weeklyCell.append(node("span", "fleet-unbound", "—"));
       }
       const seenAt = machine.lastSeenAt || machine.receivedAt || machine.seenAt;
       const seen = node("td", "fleet-seen", relative(seenAt).replace(/^vor /, ""));
       seen.title = exact(seenAt);
-      row.append(nameCell, taskCell, batteryCell, sessionCell, weeklyCell, seen);
+      row.append(nameCell, taskCell, batteryCell, accountCell, sessionCell, weeklyCell, seen);
       row.addEventListener("click", () => machineDetails(machine));
       return row;
     }));
