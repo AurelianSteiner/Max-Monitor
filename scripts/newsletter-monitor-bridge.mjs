@@ -14,7 +14,7 @@ import { cleanupErrorCopies, createErrorCleanupWriter } from './error-copy-clean
 import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
 import { applyPmOwners, createPmRoutingReader } from './pm-owner.mjs';
 import taskState from './task-state.cjs';
-import { checkpointBlocker, applyBlockerContexts, blockerContext, BLOCKER_OWNERS } from './blocker-context.mjs';
+import { checkpointBlocker, applyBlockerContexts, blockerContext, setupOwner, BLOCKER_OWNERS } from './blocker-context.mjs';
 import { createStatusAudit, saveStatusAudit } from './status-reconciliation.mjs';
 
 const require = createRequire(import.meta.url);
@@ -1289,12 +1289,15 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
       row.blockedReason = currentReason || (!status?.unbound && old?.attemptId === row.attemptId && old.blockedReason
         && !unreadable(old)
         ? parseBlockedReason(`:warning: blockiert: ${old.blockerReason || old.blockedReason}`) : undefined);
-      if (status?.pmQuestion || row.phase === 'PM-Rückfrage offen'
-        || (!currentReason && old?.attemptId === row.attemptId && old.phase === 'PM-Rückfrage offen' && row.blockedReason)) row.phase = 'PM-Rückfrage offen';
+      // Nachkontrolle 21.10.2026: the ❓ of a customer setup gap or missing master
+      // data is that blocker's status, never a PM question (blocker-context.mjs setupOwner).
+      const question = !setupOwner(row.blockerOwner, row.blockedReason);
+      if (question && (status?.pmQuestion || row.phase === 'PM-Rückfrage offen'
+        || (!currentReason && old?.attemptId === row.attemptId && old.phase === 'PM-Rückfrage offen' && row.blockedReason))) row.phase = 'PM-Rückfrage offen';
       else if (row.blockedReason && row.status === 'blocked' && row.workflow === 'correction') row.phase = 'Korrektur blockiert';
-      if (status?.pmQuestion) Object.assign(row, { blockerReason: row.blockedReason, reasonCode: 'pm_decision_pending', responsibleRole: 'PM',
+      if (question && status?.pmQuestion) Object.assign(row, { blockerReason: row.blockedReason, reasonCode: 'pm_decision_pending', responsibleRole: 'PM',
         nextStep: 'Die offene Entscheidung im bestehenden Rückfragen-Thread klären; vorhandene Arbeit erhalten.' });
-      else if (!currentReason && row.blockedReason && old?.attemptId === row.attemptId && old.reasonCode === 'pm_decision_pending') {
+      else if (question && !currentReason && row.blockedReason && old?.attemptId === row.attemptId && old.reasonCode === 'pm_decision_pending') {
         Object.assign(row, { blockerReason: row.blockedReason, reasonCode: old.reasonCode, responsibleRole: old.responsibleRole, nextStep: old.nextStep });
       }
     }
