@@ -3,6 +3,19 @@
     <channel>
         <title>Max Monitor</title>
         <item>
+            <title>2.16.3</title>
+            <pubDate>Wed, 21 Oct 2026 17:23:25 +0000</pubDate>
+            <sparkle:version>2.16.3</sparkle:version>
+            <sparkle:shortVersionString>2.16.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[Komprimierte Geräte- und Kontingentmeldungen mit geprüfter Empfangsgröße.]]></description>
+            <enclosure
+                url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.16.3/Max-Monitor-2.16.3.dmg"
+                sparkle:edSignature="/0Twn57Kp7hJN0+ddlZJGftJ05P1K5sx8oPoZB3XT/ETuTf2mqX6e4PV1Igj7KDFX9xAcaXJbnukK4ejD3VqBw=="
+                length="5850727"
+                type="application/octet-stream"/>
+        </item>
+        <item>
             <title>2.16.2</title>
             <pubDate>Wed, 21 Oct 2026 16:45:14 +0000</pubDate>
             <sparkle:version>2.16.2</sparkle:version>
