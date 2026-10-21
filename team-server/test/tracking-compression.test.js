@@ -4,8 +4,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { once } = require('node:events');
-const { execFileSync } = require('node:child_process');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 const { gzipSync, gunzipSync } = require('node:zlib');
+const runFile = promisify(execFile);
 
 test('tracking accepts bounded gzip bodies and records observed transport, preserving legacy clients', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tracking-compression-'));
@@ -54,8 +56,9 @@ test('tracking accepts bounded gzip bodies and records observed transport, prese
     const source = path.resolve(__dirname, '../../Usage4Claude/Helpers/TrackingHTTPCompression.swift');
     const main = path.join(dir, 'main.swift'), executable = path.join(dir, 'gzip-native');
     fs.writeFileSync(main, `import Foundation\nlet raw = Data(base64Encoded: "${raw.toString('base64')}")!\nFileHandle.standardOutput.write(TrackingHTTPCompression.gzip(raw)!)\n`);
-    execFileSync('xcrun', ['swiftc', source, main, '-o', executable], { stdio: 'pipe', timeout: 60000 });
-    const nativeBody = execFileSync(executable);
+    // Keep the receiver and its keep-alive timers responsive during a slow build.
+    await runFile('xcrun', ['swiftc', source, main, '-o', executable], { timeout: 60000 });
+    const { stdout: nativeBody } = await runFile(executable, { encoding: 'buffer' });
     assert.deepEqual(gunzipSync(nativeBody), raw);
     const answer = await request(route, nativeBody, member.token, 'gzip');
     assert.equal(answer.status, 200);
