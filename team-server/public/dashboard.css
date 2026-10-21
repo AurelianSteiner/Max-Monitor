@@ -230,6 +230,7 @@ main:focus { outline: none; }
 }
 .panel-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; min-height: 18px; }
 .panel-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.fleet-sort-note { margin: 0 0 8px; }
 .panel-foot { margin-top: auto; padding-top: 10px; align-self: flex-start; }
 .count { margin-left: 4px; font-size: 12px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
 .overview {
@@ -421,7 +422,16 @@ h2:focus { outline: none; }
 .datum-value small { font-size: 11px; font-weight: 400; color: var(--muted); }
 .machine-account { font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .machine-account.unbound { color: var(--muted); }
+.fleet-name .fleet-figma-account, .machine-figma-account { white-space: normal; overflow-wrap: anywhere; }
 .machine-limits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.worker-accounts-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.worker-account-column { min-width: 0; display: grid; gap: 4px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.worker-account-heading { min-width: 0; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; margin-bottom: 4px; }
+.worker-account-heading > strong { overflow-wrap: anywhere; font-weight: 600; }
+.worker-account-selected { color: var(--ink-2); font-size: 10px; }
+.worker-account-column .usage-line { gap: 8px; flex-wrap: wrap; }
+.worker-account-column .usage-note { margin: 0; }
+@media(max-width: 480px) { .worker-accounts-grid { gap: 12px; } }
 .usage-line { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 11px; color: var(--muted); margin-bottom: 5px; }
 .usage-line strong { color: var(--ink); font-weight: 500; font-size: 12px; font-variant-numeric: tabular-nums; }
 .usage-note { font-size: 12px; color: var(--warn); line-height: 1.4; }
@@ -663,6 +673,13 @@ dialog.wide { max-width: 1060px; }
   .fleet-row td:nth-child(4)::before { content: "5 h genutzt"; }
   .fleet-row td:nth-child(5)::before { content: "Woche genutzt"; }
   .fleet-row td:nth-child(4)::before, .fleet-row td:nth-child(5)::before { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+  .fleet-table.account-columns .fleet-row { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+  .fleet-table.account-columns .fleet-row td:nth-child(1) { grid-column: 1; }
+  .fleet-table.account-columns .fleet-row td:nth-child(3) { grid-column: 2; }
+  .fleet-table.account-columns .fleet-row td:nth-child(4) { grid-column: 1; }
+  .fleet-table.account-columns .fleet-row td:nth-child(5) { grid-column: 2; }
+  .fleet-table.account-columns .fleet-row td:nth-child(4)::before { content: "Claude-Account 1"; }
+  .fleet-table.account-columns .fleet-row td:nth-child(5)::before { content: "Claude-Account 2"; }
   .fleet-row:hover td { background: transparent; }
   .queue-toolbar, .log-toolbar { display: grid; }
   .status-tabs { width: 100%; }

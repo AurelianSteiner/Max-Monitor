@@ -3,6 +3,7 @@ const ID = /^[a-z0-9][a-z0-9._-]{0,79}$/i;
 const { DEVICE_ID } = require('./worker-control');
 const { validateSkillRelease, skillReleaseFresh } = require('./skill-versions');
 const { validateCapabilities, publicCapabilities, validateIntegrationContract } = require('./integration-contract');
+const { validateClaudeAccounts, publicClaudeAccounts } = require('./claude-accounts');
 const FRESH_MS = 45000;
 function validateReport(raw, now = Date.now()) {
   const fail = () => { throw new Error('Ungültiger Worker-Bericht'); };
@@ -42,9 +43,19 @@ function validateReport(raw, now = Date.now()) {
     || !Number.isFinite(Date.parse(raw.service.lastPollAt)))) fail();
   const maintenance = raw.maintenance;
   if (maintenance && typeof maintenance.ok !== 'boolean') fail();
+  let figmaAccount;
+  if (raw.figmaAccount != null) {
+    const email = text(raw.figmaAccount.email, 254, true);
+    const observedAt = date(raw.figmaAccount.observedAt);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !observedAt
+      || Date.parse(observedAt) > now + 30000 || !['worker-whoami', 'mcp-whoami'].includes(raw.figmaAccount.source)) fail();
+    figmaAccount = { email, observedAt, source: raw.figmaAccount.source };
+  }
   return { schema: 1, workerId: raw.workerId, deviceId: raw.deviceId, sampledAt: new Date(at).toISOString(), receivedAt: new Date(now).toISOString(),
+    claudeAccounts: validateClaudeAccounts(raw.claudeAccounts),
     workerVersion: text(raw.workerVersion, 80), workerRevision: text(raw.workerRevision, 80),
     skillRelease: validateSkillRelease(raw.skillRelease, now),
+    ...(figmaAccount ? { figmaAccount } : {}),
     // Optional integration telemetry must never discard an otherwise valid poll.
     rsHubMcp: validateCapabilities(raw.rsHubMcp, now),
     integrationContract: validateIntegrationContract(raw.integrationContract, now),
@@ -58,6 +69,8 @@ function publicReport(report, now = Date.now()) {
   if (!report) return {};
   const fresh = now - Date.parse(report.sampledAt) <= FRESH_MS && now - Date.parse(report.receivedAt) <= FRESH_MS;
   return { agentLastSeenAt: report.receivedAt, agentStatus: fresh ? 'online' : 'silent',
+    ...(report.claudeAccounts ? {claudeAccounts:publicClaudeAccounts(report.claudeAccounts,now)} : {}),
+    ...(report.figmaAccount ? { figmaAccount: report.figmaAccount } : {}),
     ...(report.workerVersion || report.workerRevision ? { workerVersion: report.workerVersion, workerRevision: report.workerRevision,
       workerVersionObservedAt: report.sampledAt, workerVersionSource: 'worker-observer' } : {}),
     ...(report.rsHubMcp ? { rsHubMcp: publicCapabilities(report.rsHubMcp, now) } : {}),

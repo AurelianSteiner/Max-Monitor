@@ -309,6 +309,11 @@
         : `Newsletter-Worker meldet sich seit über 15 Minuten nicht${machine.status === "online" ? " – Mac-App ist separat erreichbar" : ""}`);
     if (machine.workerId && !machine.workerStatus && machine.telemetrySource !== "worker")
       reasons.push("Worker-Betriebsstatus noch nicht gemeldet");
+    const pool = machine.claudeAccounts?.accounts;
+    if(pool?.length===2) {
+      const ready=pool.filter(a=>a.status==='ready' && !a.stale && Date.now()-timestamp(a.updatedAt)<=10*60000);
+      if(!ready.length) reasons.push(pool.every(a=>a.status==='limited') ? "Claude-Limit erreicht: beide Accounts" : "Claude-Accounts werden geprüft");
+    } else {
     if (machine.usageError || machine.usageStatus === "error")
       reasons.push(`Claude-Kontingente konnten nicht geprüft werden${machine.usageError ? `: ${machine.usageError}` : ""}`);
     if (!limits.length) reasons.push(machine.monitoringAccountId
@@ -339,6 +344,7 @@
           ? `Letzter gemeldeter Claude-Wert: 100 %${label ? ` · ${label}` : ""}`
           : `Claude-Limit erreicht${label ? `: ${label}` : ""}`,
       );
+    }
     }
     if (
       (!machine.nativeStatus || machine.nativeStatus === "online") &&
@@ -959,7 +965,37 @@
   function machineAccount(machine) {
     return (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
   }
+  function workerAccountColumn(machine, account) {
+    const column = node("div", "worker-account-column");
+    if (!account) { column.append(node("span", "usage-note", "Kein zweiter Account")); return column; }
+    const selected = machine.claudeAccounts?.selectedAccountId === account.id;
+    const heading = node("div", "worker-account-heading");
+    const name = node("strong", "", account.name); name.title = account.name;
+    heading.append(name);
+    if (selected) heading.append(node("span", "worker-account-selected", "Nächster Start"));
+    column.append(heading);
+    const stale = account.stale || !snapshot || Date.now()-Date.parse(account.updatedAt)>10*60000;
+    for (const [label,kind] of [["5 h","session"],["Woche","weekly"]]) {
+      const window = account.windows.find(w=>w.kind===kind);
+      const line = node("div", "usage-line");
+      const remaining = window ? Math.max(0,100-window.percent) : null;
+      line.append(node("span", "", label), node("strong", "", remaining == null ? "—" : `${numberFormat.format(remaining)} % frei`));
+      column.append(line);
+      if(window) column.append(limitReset({percent:window.percent,resetsAt:window.reset,usageUpdatedAt:account.updatedAt},stale));
+    }
+    const note = stale ? "Messung veraltet" : account.status==='limited' ? "Limit erreicht"
+      : account.status==='error' ? "Account prüfen" : account.status==='unknown' ? "Wird geprüft…" : "";
+    if(note) column.append(node("p","usage-note",note));
+    return column;
+  }
+  function workerAccountsGrid(machine) {
+    const grid = node("div","worker-accounts-grid");
+    grid.setAttribute("aria-label","Claude-Accounts dieses Macs");
+    for(const account of machine.claudeAccounts.accounts) grid.append(workerAccountColumn(machine,account));
+    return grid;
+  }
   function machineAccountIdentity(machine) {
+    if(machine.claudeAccounts?.accounts?.length===2) return {text:"2 Claude-Accounts · automatische Auswahl",title:"Lokale Account-Bezeichnungen; Kontingente direkt aus Claude Code",email:null};
     const account = machineAccount(machine);
     // Older Macs sent the email as the account name. Only use that fallback
     // when it is an address; a display name does not identify the login.
@@ -974,6 +1010,15 @@
         account.name && account.name !== email ? `Bezeichnung: ${account.name}` : ""]
         .filter(Boolean).join("\n");
     return { text, title, email };
+  }
+  function machineFigmaIdentity(machine) {
+    const account = machine.figmaAccount;
+    const email = typeof account?.email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account.email) ? account.email : null;
+    return { text: `Figma · ${email || "noch nicht gemeldet"}`,
+      title: email ? account.source === "mcp-whoami"
+        ? `Direkt über die Figma-Verbindung dieses Macs bestätigt: ${email}\nGeprüft am ${exact(account.observedAt)}`
+        : `Zuletzt vom Figma-Werkzeug auf diesem Mac gemeldet: ${email}\nLauf vom ${exact(account.observedAt)}`
+        : "Noch keine erfolgreiche Figma-Account-Abfrage aus einem eigenen Lauf dieses Macs gemeldet" };
   }
   function machineLimit(machine, account, kind) {
     if (!account || !Array.isArray(machine.limits)) return null;
@@ -1088,13 +1133,33 @@
     return wrap;
   }
   function sortedMachines(devices) {
-    return devices.slice().sort(
-      (a, b) =>
-        (machineDisplayStatus(a) === "online") - (machineDisplayStatus(b) === "online") ||
-        String(a.name).localeCompare(String(b.name)),
-    );
+    const ranked = devices.map((machine) => {
+      const account = machineAccount(machine);
+      const selected=machine.claudeAccounts?.accounts.find(a=>a.id===machine.claudeAccounts.selectedAccountId);
+      const weekly = selected ? selected.windows.find(w=>w.kind==='weekly') : machineLimit(machine, account, "weekly");
+      const session = selected ? selected.windows.find(w=>w.kind==='session') : machineLimit(machine, account, "session");
+      const percent = (limit) => Number.isFinite(limit?.percent) && limit.percent >= 0
+        ? limit.percent : Infinity;
+      const hasError = Boolean(workerFailureReason(machine) || machine.usageError ||
+        machine.usageStatus === "error" ||
+        ["failed", "blocked", "offline", "silent"].includes(machineDisplayStatus(machine)));
+      // The weekly cap always comes last, even when that worker also has errors.
+      const rank = Number.isFinite(weekly?.percent) && weekly.percent >= 100 ? 2
+        : hasError ? 0 : 1;
+      return { machine, rank, weekly: percent(weekly), session: percent(session) };
+    });
+    return ranked.sort((a, b) =>
+      a.rank - b.rank || a.weekly - b.weekly || a.session - b.session ||
+      workerName(a.machine.workerId, a.machine.name).localeCompare(
+        workerName(b.machine.workerId, b.machine.name), "de", { numeric: true }) ||
+      String(a.machine.deviceId || "").localeCompare(String(b.machine.deviceId || ""))
+    ).map(({ machine }) => machine);
   }
   function renderFleet(devices) {
+    const accountColumns = devices.some(machine=>machine.claudeAccounts?.accounts?.length===2);
+    document.querySelector('.fleet-table')?.classList.toggle('account-columns',accountColumns);
+    if($("fleet-claude-first")) $("fleet-claude-first").textContent = accountColumns ? "Claude-Account 1" : "5 h genutzt";
+    if($("fleet-claude-second")) $("fleet-claude-second").textContent = accountColumns ? "Claude-Account 2" : "Woche genutzt";
     const online = devices.filter((machine) => machine.status === "online").length;
     const affected = devices.filter(machine => workerFailureReason(machine)).length;
     const onlineCount = node("span", "", `${numberFormat.format(online)} von ${numberFormat.format(devices.length)} online`);
@@ -1138,6 +1203,10 @@
       const accountLabel = node("small", "fleet-account", accountIdentity.text);
       accountLabel.title = accountIdentity.title;
       identity.append(accountLabel);
+      const figmaIdentity = machineFigmaIdentity(machine);
+      const figmaLabel = node("small", "fleet-account fleet-figma-account", figmaIdentity.text);
+      figmaLabel.title = figmaIdentity.title;
+      identity.append(figmaLabel);
       name.append(signal, identity);
       nameCell.append(name);
       const active = activeTasks(machine);
@@ -1168,7 +1237,17 @@
       const stale = usageStale(machine) || Boolean(machine.usageError);
       const sessionCell = node("td");
       const weeklyCell = node("td");
-      if (account) {
+      if (machine.claudeAccounts?.accounts?.length===2) {
+        sessionCell.append(workerAccountColumn(machine,machine.claudeAccounts.accounts[0]));
+        weeklyCell.append(workerAccountColumn(machine,machine.claudeAccounts.accounts[1]));
+        row.classList.add("has-limit-reset");
+      } else if (accountColumns && account) {
+        const single = {id:account.accountId,name:account.email || account.name,status:"ready",stale,
+          updatedAt:account.usageUpdatedAt || machine.usageUpdatedAt,
+          windows:["session","weekly"].flatMap(kind=>{const w=machineLimit(machine,account,kind);return w ? [{kind,percent:w.percent,reset:w.resetsAt}] : [];})};
+        sessionCell.append(workerAccountColumn(machine,single));
+        weeklyCell.append(workerAccountColumn(machine,null));
+      } else if (account) {
         sessionCell.append(meter(machineLimit(machine, account, "session"), stale));
         weeklyCell.append(meter(machineLimit(machine, account, "weekly"), stale));
         row.classList.add("has-limit-reset");
@@ -1261,7 +1340,14 @@
       const accountLabel = node("p", account ? "machine-account" : "machine-account unbound", accountIdentity.text);
       accountLabel.title = accountIdentity.title;
       card.append(accountLabel);
-      if (account) {
+      const figmaIdentity = machineFigmaIdentity(machine);
+      const figmaLabel = node("p", "machine-account machine-figma-account", figmaIdentity.text);
+      figmaLabel.title = figmaIdentity.title;
+      card.append(figmaLabel);
+      if (machine.claudeAccounts?.accounts?.length===2) {
+        accountLabel.textContent = "2 Claude-Accounts · automatische Auswahl";
+        card.append(workerAccountsGrid(machine));
+      } else if (account) {
         const limitGroup = node("div", "machine-limits");
         const stale = usageStale(machine) || Boolean(machine.usageError);
         const outdatedLabels = [];
@@ -1811,8 +1897,10 @@
         "Version",
         machine.appVersion || machine.workerVersion || "Unbekannt",
       ),
-      detailField("Claude-Monitoring-Account", account ? accountIdentity.text
+      detailField(machine.claudeAccounts ? "Claude-Accounts" : "Claude-Monitoring-Account", machine.claudeAccounts ? accountIdentity.text : account ? accountIdentity.text
         : "Auf diesem Worker-Mac unter Queue & Macs → Monitoring-Account verbinden", true),
+      detailField("Figma-Account", machineFigmaIdentity(machine).text, true),
+      ...(machine.figmaAccount ? [detailField(machine.figmaAccount.source === "mcp-whoami" ? "Figma-Account geprüft" : "Figma zuletzt verwendet", exact(machine.figmaAccount.observedAt))] : []),
       ...(account && account.name !== accountIdentity.email
         ? [detailField("Account-Bezeichnung", account.name, true)] : []),
       detailField("Kontingente geprüft", exact(machine.usageUpdatedAt)),
@@ -1906,7 +1994,7 @@
           ),
         );
     }
-    const children = [grid, list];
+    const children = [...(machine.claudeAccounts?.accounts?.length===2 ? [workerAccountsGrid(machine)] : []), grid, list];
     if (machine.workerId) {
       const button = node(
         "button",
