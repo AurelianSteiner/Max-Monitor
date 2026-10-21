@@ -4,6 +4,7 @@ const { DEVICE_ID } = require('./worker-control');
 const { validateSkillRelease, skillReleaseFresh } = require('./skill-versions');
 const { validateCapabilities, publicCapabilities, validateIntegrationContract } = require('./integration-contract');
 const { validateClaudeAccounts, publicClaudeAccounts } = require('./claude-accounts');
+const { validateEndpoint } = require('./account-provisioning');
 const FRESH_MS = 45000;
 function validateReport(raw, now = Date.now()) {
   const fail = () => { throw new Error('Ungültiger Worker-Bericht'); };
@@ -53,6 +54,7 @@ function validateReport(raw, now = Date.now()) {
   }
   return { schema: 1, workerId: raw.workerId, deviceId: raw.deviceId, sampledAt: new Date(at).toISOString(), receivedAt: new Date(now).toISOString(),
     claudeAccounts: validateClaudeAccounts(raw.claudeAccounts),
+    accountProvisioning: validateEndpoint(raw.accountProvisioning),
     workerVersion: text(raw.workerVersion, 80), workerRevision: text(raw.workerRevision, 80),
     skillRelease: validateSkillRelease(raw.skillRelease, now),
     ...(figmaAccount ? { figmaAccount } : {}),
@@ -70,6 +72,7 @@ function publicReport(report, now = Date.now()) {
   const fresh = now - Date.parse(report.sampledAt) <= FRESH_MS && now - Date.parse(report.receivedAt) <= FRESH_MS;
   return { agentLastSeenAt: report.receivedAt, agentStatus: fresh ? 'online' : 'silent',
     ...(report.claudeAccounts ? {claudeAccounts:publicClaudeAccounts(report.claudeAccounts,now)} : {}),
+    ...(report.accountProvisioning ? {accountProvisioning:report.accountProvisioning} : {}),
     ...(report.figmaAccount ? { figmaAccount: report.figmaAccount } : {}),
     ...(report.workerVersion || report.workerRevision ? { workerVersion: report.workerVersion, workerRevision: report.workerRevision,
       workerVersionObservedAt: report.sampledAt, workerVersionSource: 'worker-observer' } : {}),

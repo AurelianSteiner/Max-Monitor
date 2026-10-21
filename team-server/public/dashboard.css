@@ -431,7 +431,20 @@ h2:focus { outline: none; }
 .worker-account-selected { color: var(--ink-2); font-size: 10px; }
 .worker-account-column .usage-line { gap: 8px; flex-wrap: wrap; }
 .worker-account-column .usage-note { margin: 0; }
-@media(max-width: 480px) { .worker-accounts-grid { gap: 12px; } }
+.account-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.account-add-button { min-height: 32px; text-align: left; }
+.account-setup-form { display: grid; gap: 12px; }
+.account-field { display: grid; gap: 6px; }
+.account-setup-form .account-field > label, .account-setup-form .account-field > input, .account-setup-form .form-hint, .account-setup-form .account-setup-status { margin: 0; }
+.account-setup-status:empty { display: none; }
+.account-setup-form label { font-size: 13px; font-weight: 500; }
+.account-setup-form input { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--surface,#fff); }
+.account-setup-form input:focus-visible { outline: 2px solid var(--ink-2); outline-offset: 2px; }
+.account-setup-form .button { justify-self: start; min-height: 44px; }
+.account-setup-status { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.account-setup-status[data-state=error] { color: var(--st-failed); }
+.account-setup-status[data-state=ready] { color: var(--st-completed,#178047); }
+@media(max-width: 480px) { .worker-accounts-grid { gap: 12px; } .account-add-button { min-height: 44px; } }
 .usage-line { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 11px; color: var(--muted); margin-bottom: 5px; }
 .usage-line strong { color: var(--ink); font-weight: 500; font-size: 12px; font-variant-numeric: tabular-nums; }
 .usage-note { font-size: 12px; color: var(--warn); line-height: 1.4; }

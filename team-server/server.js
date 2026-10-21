@@ -45,6 +45,7 @@ const remoteAccess = require("./remote-access");
 const effortConfig = require('./effort-config');
 const planning = require('./planning');
 const { distribution } = require('./distribution');
+const accountProvisioning = require('./account-provisioning');
 
 const PORT = process.env.PORT === undefined ? 8080 : Number(process.env.PORT);
 const HOST = process.env.HOST || undefined;
@@ -414,7 +415,7 @@ function visibleFleet(teamId, who) {
   const workers = new Set(machines.map((machine) => machine.workerId).filter(Boolean));
   return {
     ...snapshot,
-    capabilities: { canDeleteMachines: ["admin", "super"].includes(who.role) },
+    capabilities: { canDeleteMachines: ["admin", "super"].includes(who.role),canManageClaudeAccounts:["admin","super"].includes(who.role) },
     machines,
     events: snapshot.events.filter((entry) => entry.type.startsWith("machine_")
       ? devices.has(entry.deviceId || entry.entityId)
@@ -546,6 +547,26 @@ const server = http.createServer((req, res) => {
   // Read current identities, not the filtered dashboard or cached queue source.
   const controlMatch = rest.match(/^\/workers\/([^/]+)\/control$/);
   const reportMatch = rest.match(/^\/workers\/([^/]+)\/report$/);
+  const accountMatch=rest.match(/^\/workers\/([^/]+)\/claude-accounts$/);
+  if(accountMatch && ['GET','POST'].includes(req.method)) {
+    const workerId=accountMatch[1];
+    if(!WORKER_ID.test(workerId))return send(res,400,{error:'Ungültiger Mac'});
+    if(req.method==='GET')return fleetResult(res,()=>({order:accountProvisioning.status(teamDir(teamId),workerId)}));
+    if(!['admin','super'].includes(who.role))return send(res,403,{error:'Nur Admins dürfen Claude-Accounts hinzufügen.'});
+    return readBody(req,(error,raw)=>{
+      if(error)return send(res,413,{error:'Account-Übertragung zu groß'});
+      try {
+        const body=JSON.parse(raw),machines=fleet.snapshot(teamId).machines;
+        const target=machines.find(m=>m.workerId===workerId && m.deviceId===body.deviceId);
+        const permission=controlForWorker(workerId,[ownerIdentity(teamId,true),...readMembers(teamId,true)],machines,body.deviceId);
+        const report=fleet.workerReportStatus(teamId,workerId);
+        if(!target || !['enabled','disabled'].includes(permission.reason) || report.agentStatus!=='online' || !report.accountProvisioning)
+          return send(res,409,{error:'Dieser Mac ist noch nicht für die Account-Einrichtung bereit. Ansicht nach seinem nächsten Abgleich aktualisieren.'});
+        const order=accountProvisioning.enqueue(teamDir(teamId),{workerId,deviceId:body.deviceId,teamId,endpoint:report.accountProvisioning},body);
+        fleet.notify(teamId);return send(res,202,{order});
+      }catch(e){return send(res,e.status||400,{error:e.status?e.message:'Verschlüsselte Account-Übertragung ungültig.'});}
+    },8192);
+  }
   if (reportMatch && ['POST', 'GET'].includes(req.method)) {
     if (who.role !== 'super') return send(res, 403, { error: 'Nur der Hub darf direkte Worker-Meldungen übertragen' });
     if (!WORKER_ID.test(reportMatch[1])) return send(res, 400, { error: 'Ungültige Worker-ID' });
@@ -560,7 +581,8 @@ const server = http.createServer((req, res) => {
       return fleetResult(res, () => {
         const result = fleet.workerReport(teamId, body);
         if (result.accepted && body.deviceId) fleet.linkWorker(teamId, body.workerId, body.deviceId);
-        return { ok: true, ...result };
+        const accountCommand=result.accepted ? accountProvisioning.deliver(teamDir(teamId),require('./worker-reports').validateReport(body),teamId) : null;
+        return { ok: true, ...result,...(accountCommand?{accountCommand}:{}) };
       });
     }, 64 * 1024);
   }

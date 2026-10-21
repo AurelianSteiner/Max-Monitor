@@ -24,6 +24,7 @@
     "scripts/worker-remote.mjs",
     "team-server/effort-config.js",
     "team-server/claude-accounts.js",
+    "team-server/account-provisioning.js",
     "team-server/distribution.js",
     "team-server/quota-scores.js",
     "team-server/enrollment.js",

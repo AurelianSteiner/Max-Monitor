@@ -965,6 +965,82 @@
   function machineAccount(machine) {
     return (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
   }
+  function accountActions(machine) {
+    const actions=node('div','account-actions');
+    if(machine.claudeAccounts?.selectionReason)actions.append(node('small','form-hint',machine.claudeAccounts.selectionReason));
+    const phase={installing:'Claude-Account wird eingerichtet…',figma_check:'Figma wird geprüft…',figma_login_required:'Figma-Anmeldung noch bestätigen'}[machine.accountProvisioning?.result?.status];
+    if(phase)actions.append(node('small','form-hint',phase));
+    if(!snapshot?.capabilities?.canManageClaudeAccounts || !machine.workerId)return actions;
+    const full=machine.claudeAccounts?.accounts?.length>=2;
+    const button=node('button','text-button account-add-button',full ? '2 Claude-Accounts eingerichtet' : '+ Claude-Account');
+    button.type='button';button.disabled=full || !machine.accountProvisioning || machine.agentStatus!=='online';
+    button.title=full?'Beide Account-Plätze sind eingerichtet':!machine.accountProvisioning?'Account-Verwaltung wird beim nächsten Worker-Update bereitgestellt':'Account auf diesem Mac hinzufügen';
+    button.setAttribute('aria-label',full?`2 Claude-Accounts auf ${workerName(machine.workerId,machine.name)} eingerichtet`:`Claude-Account auf ${workerName(machine.workerId,machine.name)} hinzufügen`);
+    button.addEventListener('click',event=>{event.stopPropagation();openAccountSetup(machine);});actions.append(button);
+    if(machine.accountProvisioning?.result?.status==='figma_login_required') {
+      const figma=node('button','text-button','Figma verbinden');figma.type='button';
+      figma.addEventListener('click',event=>{event.stopPropagation();openAccountSetup(machine,'connect-figma');});actions.append(figma);
+    }
+    return actions;
+  }
+  async function encryptedAccount(machine,body,action) {
+    if(!crypto?.subtle)throw Error('Diese Ansicht benötigt HTTPS für die Account-Einrichtung.');
+    const from64=value=>Uint8Array.from(atob(value),c=>c.charCodeAt(0));
+    const to64=value=>btoa(String.fromCharCode(...new Uint8Array(value)));
+    const id=crypto.randomUUID(),endpoint=machine.accountProvisioning,expiresAt=new Date(Date.now()+15*60000).toISOString();
+    const publicKey=await crypto.subtle.importKey('spki',from64(endpoint.publicKey),{name:'RSA-OAEP',hash:'SHA-256'},false,['encrypt']);
+    const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt']);
+    const iv=crypto.getRandomValues(new Uint8Array(12));
+    const aad=new TextEncoder().encode([credentials.teamId,machine.workerId,machine.deviceId,id,action,expiresAt].join('|'));
+    const ciphertext=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:aad},key,new TextEncoder().encode(JSON.stringify(body)));
+    const wrappedKey=await crypto.subtle.encrypt({name:'RSA-OAEP'},publicKey,await crypto.subtle.exportKey('raw',key));
+    return {id,action,expiresAt,keyId:endpoint.keyId,deviceId:machine.deviceId,iv:to64(iv),wrappedKey:to64(wrappedKey),ciphertext:to64(ciphertext)};
+  }
+  function openAccountSetup(machine,action='add-account') {
+    const label=workerName(machine.workerId,machine.name),form=node('form','account-setup-form');
+    const intro=node('p','form-hint',action==='connect-figma'?`Figma wird auf ${label} geprüft und bei Bedarf im Browser verbunden.`:`Der zusätzliche Claude-Account wird auf ${label} eingerichtet. Die bestehende Anmeldung bleibt erhalten.`);
+    const name=node('input'),token=node('input');
+    name.id='claude-account-name';name.name='accountName';name.autocomplete='off';name.maxLength=160;name.placeholder='Zum Beispiel Team 2…';
+    token.id='claude-account-token';token.name='oauthToken';token.type='password';token.autocomplete='off';token.spellcheck=false;token.required=action==='add-account';token.placeholder='sk-ant-oat01-…';
+    const nameLabel=node('label','','Account-Name (optional)');nameLabel.htmlFor=name.id;
+    const tokenLabel=node('label','','OAuth-Token');tokenLabel.htmlFor=token.id;
+    const status=node('p','account-setup-status');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+    const submit=node('button','button primary',action==='connect-figma'?'Figma verbinden':'Account hinzufügen');submit.type='submit';
+    const privacy=node('p','form-hint','Der Token wird nur auf dem ausgewählten Mac gespeichert. Figma wird anschließend automatisch geprüft.');
+    const nameField=node('div','account-field'),tokenField=node('div','account-field');nameField.append(nameLabel,name);tokenField.append(tokenLabel,token);
+    form.append(intro,...(action==='add-account'?[nameField,tokenField,privacy]:[]),status,submit);
+    const messages={queued:`Wartet auf ${label}…`,installing:'Claude-Token wird auf dem Mac geprüft und gespeichert…',figma_check:'Figma-Verbindung wird auf dem Mac geprüft…',ready:'Bereit · Claude eingerichtet und Figma verbunden.',figma_login_required:`Claude ist eingerichtet. Figma-Anmeldung auf ${label} im geöffneten Browser bestätigen.`,expired:'Die Übertragung ist abgelaufen. Bitte erneut hinzufügen.',invalid_token:'Claude hat den Token nicht bestätigt. Vollständigen Token prüfen.',invalid_name:'Account-Name ungültig.',accounts_full:'Auf diesem Mac sind bereits zwei Accounts eingerichtet.',primary_missing:'Der bestehende Claude-Token fehlt auf dem Mac.',duplicate_account:'Dieser Token ist bereits eingerichtet.',keychain_locked:`Schlüsselbund auf ${label} entsperren und erneut versuchen.`,environment_override:'Auf dem Mac überschreibt eine Umgebungsvariable die Account-Auswahl.',configuration_error:'Claude-Einrichtung auf diesem Mac prüfen.',busy:'Auf dem Mac läuft bereits eine Account-Einrichtung.',failed:'Einrichtung nicht abgeschlossen. Den Mac prüfen und erneut versuchen.'};
+    form.addEventListener('submit',async event=>{
+      event.preventDefault();submit.disabled=true;status.dataset.state='working';
+      let secret=token.value.replace(/\s/g,'');
+      try {
+        if(action==='add-account' && !/^sk-ant-oat01-[\w-]{80,}$/.test(secret))throw Error('Bitte einen vollständigen OAuth-Token einfügen.');
+        status.textContent='Wird sicher an den ausgewählten Mac übertragen…';
+        const envelope=await encryptedAccount(machine,action==='add-account'?{token:secret,name:name.value.trim()||'Claude 2'}:{},action);
+        secret=null;token.value='';
+        const route=`/workers/${encodeURIComponent(machine.workerId)}/claude-accounts`;
+        const result=await consumptionRequest(route,'POST',envelope);let order=result.order;
+        const until=Date.now()+4*60000;
+        while(form.isConnected && $('detail-dialog').open && Date.now()<until) {
+          status.textContent=messages[order?.status]||'Der Mac prüft die Einrichtung…';
+          if(!['queued','installing','figma_check'].includes(order?.status))break;
+          await new Promise(resolve=>setTimeout(resolve,2000));order=(await consumptionRequest(route)).order;
+        }
+        status.dataset.state=order?.status==='ready'?'ready':order?.status==='figma_login_required'?'warning':'error';
+        if(['ready','figma_login_required'].includes(order?.status)) {
+          submit.hidden=true;name.disabled=true;token.disabled=true;nameField.hidden=true;tokenField.hidden=true;privacy.hidden=true;await refresh();
+          const showMac=node('button','button secondary','Mac anzeigen');showMac.type='button';
+          showMac.addEventListener('click',()=>{$('detail-dialog').close();selectView('machines');});form.append(showMac);
+          if(order.status==='figma_login_required') {
+            const reconnect=node('button','button secondary','Figma erneut verbinden');reconnect.type='button';reconnect.addEventListener('click',()=>openAccountSetup(machine,'connect-figma'));form.append(reconnect);
+          }
+        } else submit.disabled=false;
+      }catch(error){status.textContent=error.message;status.dataset.state='error';submit.disabled=false;}
+      finally{secret=null;token.value='';}
+    });
+    $('detail-dialog').addEventListener('close',()=>{token.value='';},{once:true});
+    openDetail(`${action==='add-account'?'Claude-Account hinzufügen':'Figma verbinden'} · ${label}`,[form]);
+  }
   function workerAccountColumn(machine, account) {
     const column = node("div", "worker-account-column");
     if (!account) { column.append(node("span", "usage-note", "Kein zweiter Account")); return column; }
@@ -972,7 +1048,7 @@
     const heading = node("div", "worker-account-heading");
     const name = node("strong", "", account.name); name.title = account.name;
     heading.append(name);
-    if (selected) heading.append(node("span", "worker-account-selected", "Nächster Start"));
+    if (selected && account.status==='ready' && !account.stale) heading.append(node("span", "worker-account-selected", "Nächster Start"));
     column.append(heading);
     const stale = account.stale || !snapshot || Date.now()-Date.parse(account.updatedAt)>10*60000;
     for (const [label,kind] of [["5 h","session"],["Woche","weekly"]]) {
@@ -1017,7 +1093,8 @@
   function machineFigmaIdentity(machine) {
     const account = machine.figmaAccount;
     const email = typeof account?.email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account.email) ? account.email : null;
-    return { text: `Figma · ${email || "noch nicht gemeldet"}`,
+    const verified=machine.accountProvisioning?.result?.figma==='connected';
+    return { text: `Figma · ${email || (verified ? 'bei Einrichtung verbunden' : "noch nicht gemeldet")}`,
       title: email ? account.source === "mcp-whoami"
         ? `Direkt über die Figma-Verbindung dieses Macs bestätigt: ${email}\nGeprüft am ${exact(account.observedAt)}`
         : `Zuletzt vom Figma-Werkzeug auf diesem Mac gemeldet: ${email}\nLauf vom ${exact(account.observedAt)}`
@@ -1206,6 +1283,7 @@
       const accountLabel = node("small", "fleet-account", accountIdentity.text);
       accountLabel.title = accountIdentity.title;
       identity.append(accountLabel);
+      identity.append(accountActions(machine));
       const figmaIdentity = machineFigmaIdentity(machine);
       const figmaLabel = node("small", "fleet-account fleet-figma-account", figmaIdentity.text);
       figmaLabel.title = figmaIdentity.title;
@@ -1343,6 +1421,7 @@
       const accountLabel = node("p", account ? "machine-account" : "machine-account unbound", accountIdentity.text);
       accountLabel.title = accountIdentity.title;
       card.append(accountLabel);
+      card.append(accountActions(machine));
       const figmaIdentity = machineFigmaIdentity(machine);
       const figmaLabel = node("p", "machine-account machine-figma-account", figmaIdentity.text);
       figmaLabel.title = figmaIdentity.title;
@@ -1997,7 +2076,7 @@
           ),
         );
     }
-    const children = [...(machine.claudeAccounts?.accounts?.length===2 ? [workerAccountsGrid(machine)] : []), grid, list];
+    const children = [accountActions(machine),...(machine.claudeAccounts?.accounts?.length===2 ? [workerAccountsGrid(machine)] : []), grid, list];
     if (machine.workerId) {
       const button = node(
         "button",
