@@ -33,9 +33,10 @@ test('reports persist independently of minute queue snapshots and reject out-of-
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'direct-reports-')); let clock = now;
   try {
     const store = createFleetStore(directory, () => clock);
-    store.workerReport('TEAM1234', report());
+    store.workerReport('TEAM1234', {...report(),service:{...report().service,lastPollOk:false}});
     store.updateQueue('TEAM1234', { source: { name: 'test', lastSuccessAt: new Date(now).toISOString() }, tasks: [] });
     assert.equal(store.workerReportStatus('TEAM1234', 'mac-1').activity.fresh, true);
+    assert.equal(store.workerReportStatus('TEAM1234','mac-1').service.lastPollOk,false,'a fresh persisted service heartbeat does not turn a failed task poll into success');
     assert.equal(store.workerReport('TEAM1234', { ...report(), sampledAt: new Date(now - 1000).toISOString() }).accepted, false);
     clock += 46000;
     assert.equal(createFleetStore(directory, () => clock).workerReportStatus('TEAM1234', 'mac-1').activity.fresh, false);

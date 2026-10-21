@@ -61,7 +61,7 @@ function validateReport(raw, now = Date.now()) {
     // Optional integration telemetry must never discard an otherwise valid poll.
     rsHubMcp: validateCapabilities(raw.rsHubMcp, now),
     integrationContract: validateIntegrationContract(raw.integrationContract, now),
-    service: { running: raw.service.running, lastPollAt: date(raw.service.lastPollAt) },
+    service: { running: raw.service.running, lastPollAt: date(raw.service.lastPollAt), ...(typeof raw.service.lastPollOk === 'boolean' ? {lastPollOk:raw.service.lastPollOk} : {}) },
     activity: { state: raw.activity.state, acceptingTasks: raw.activity.acceptingTasks, runs,
       ...(occupiedTasks === undefined ? {} : { occupiedTasks }), ...(maxTasks === undefined ? {} : { maxTasks }) },
     maintenance: maintenance ? { ok: maintenance.ok, checkedAt: date(maintenance.checkedAt), summary: text(maintenance.summary, 300, true) } : undefined,
