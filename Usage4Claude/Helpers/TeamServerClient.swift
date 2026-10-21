@@ -299,7 +299,13 @@ final class TeamServerClient {
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         if let body {
-            request.httpBody = body
+            if path == "/v1/reports" || path.hasSuffix("/heartbeat") {
+                guard let compressed = TrackingHTTPCompression.gzip(body) else { throw TeamServerError.invalidResponse }
+                request.httpBody = compressed
+                request.setValue("gzip", forHTTPHeaderField: "Content-Encoding")
+            } else {
+                request.httpBody = body
+            }
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
 

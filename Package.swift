@@ -41,6 +41,7 @@ let package = Package(
                 "Models/TeamEnrollment.swift",
                 "Helpers/PrivilegedPower.swift",
                 "Helpers/OAuthGrantFailure.swift",
+                "Helpers/TrackingHTTPCompression.swift",
                 "Views/Dashboard/MascotParadeTiming.swift",
                 "Services/CredentialVault.swift"
             ]

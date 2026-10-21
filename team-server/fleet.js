@@ -709,7 +709,7 @@ function createFleetStore(dataDir, now = Date.now) {
     return changed;
   }
 
-  function heartbeat(teamId, who, raw) {
+  function heartbeat(teamId, who, raw, transport = null) {
     const incoming = validateHeartbeat(raw);
     const state = read(teamId);
     if ((state.deletedDevices || []).includes(incoming.deviceId) || (state.deletedWorkers || []).includes(incoming.workerId)) {
@@ -740,6 +740,7 @@ function createFleetStore(dataDir, now = Date.now) {
       registeredAt: previous ? previous.registeredAt : new Date(time).toISOString(),
       lastSeenAt: new Date(time).toISOString(),
       derivedStatus: "online",
+      ...(transport ? { trackingTransport: { ...transport, receivedAt: new Date(time).toISOString() } } : {}),
     };
     // Usage retrieval and device availability are independent. Preserve the last
     // known usage when this heartbeat reports a provider/API error.

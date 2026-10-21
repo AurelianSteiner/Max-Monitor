@@ -38,6 +38,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { gunzipSync } = require("node:zlib");
 const { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, MAX_PREVIEW_BYTES } = require("./fleet");
 const { EnrollmentError, enrollWorkerMember, validateEnrollment } = require("./enrollment");
 const { controlForWorker, registeredDeviceId, WORKER_ID, DEVICE_ID } = require("./worker-control");
@@ -211,7 +212,15 @@ function readBody(req, callback, maxBytes = MAX_BODY_BYTES, binary = false) {
     chunks.push(chunk);
   });
   req.on("end", () => {
-    const body = Buffer.concat(chunks);
+    if (finished) return;
+    let body;
+    try {
+      const encoding = String(req.headers['content-encoding'] || 'identity').trim().toLowerCase();
+      if (!['identity', 'gzip'].includes(encoding)) throw Error('unsupported body encoding');
+      const wire = Buffer.concat(chunks);
+      body = encoding === 'gzip' ? gunzipSync(wire, { maxOutputLength: maxBytes }) : wire;
+      req.bodyTransport = { encoding, wireBytes: wire.length, decodedBytes: body.length };
+    } catch (error) { return finish(error, null); }
     finish(null, binary ? body : body.toString("utf8"));
   });
   req.on("error", (error) => finish(error, null));
@@ -716,7 +725,7 @@ const server = http.createServer((req, res) => {
         }
       }
       return fleetResult(res, () => rest === "/heartbeat"
-        ? { ok: true, machine: fleet.heartbeat(teamId, who, body) }
+        ? { ok: true, machine: fleet.heartbeat(teamId, who, body, req.bodyTransport) }
         : { ok: true, ...fleet.updateQueue(teamId, body) });
     }, rest === "/queue" ? MAX_QUEUE_BODY_BYTES : MAX_BODY_BYTES);
   }
