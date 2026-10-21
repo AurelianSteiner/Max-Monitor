@@ -919,7 +919,10 @@ async function setupSteps(options, { runner = run, workerReader = readWorker,
 
 async function defaultObserver(options) {
   const { ensureWorkerObserver } = await import('./install-worker-observer.mjs');
-  return ensureWorkerObserver(options, { runner: run });
+  const result=await ensureWorkerObserver(options, { runner: run });
+  const {ensureQuotaObserver}=await import('./install-quota-observer.mjs');
+  await ensureQuotaObserver(options,{runner:run});
+  return result;
 }
 
 // A deferred build (mode 'deferred') is no failure: exit 0 and one JSON line on
