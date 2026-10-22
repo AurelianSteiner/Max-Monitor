@@ -41,3 +41,12 @@
   .planning-count { width: 110px; }
   .planning-row { margin-bottom: 16px; }
 }
+
+@media (prefers-color-scheme: dark) {
+  .planning-row { --slider-color: #c4c1ce; }
+  .planning-row.correction { --slider-color: #a4c17d; }
+  .planning-row.upload { --slider-color: #c7bb9b; }
+  #planning-share-newsletter { background: #c4c1ce; }
+  #planning-share-correction { background: #a4c17d; }
+  #planning-share-upload { background: #c7bb9b; }
+}
