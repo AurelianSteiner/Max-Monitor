@@ -563,7 +563,11 @@ export function freshClaimCycle(before, after) {
   return after.cached === before.cached && after.fallback === before.fallback;
 }
 
-export function parseWorkerIssue(message) {
+// The worker uses its system-notice lifecycle for this per-customer Pre-Gen
+// setup gap. It affects the order's handover, not the Mac's ability to work.
+const customerSetupNotice = value => value?.kind === 'system' && value.stage === 'filestage_zuordnung';
+
+function parseSystemNotice(message) {
   const text = typeof message?.text === 'string' ? message.text : '';
   // Older workers omit metadata only for this exact system-error template.
   const legacy = message?.bot_id && /^(?:⚠️|:warning:) AI-Newsletter-Worker auf Mac `([a-z0-9][a-z0-9._-]{0,79})`: technischer Fehler bei ([A-Za-z0-9_-]+) \(([A-Za-z0-9_-]+)\)\. Lokales Log prüfen\.$/i.exec(text);
@@ -585,6 +589,11 @@ export function parseWorkerIssue(message) {
   return { id: String(message.ts), workerId: value.worker, stage,
     severity: warning ? 'warning' : 'error', message: displayText(safe, 500, `Worker-Fehler bei ${stage}`),
     reportedAt: new Date(time).toISOString() };
+}
+
+export function parseWorkerIssue(message) {
+  if (customerSetupNotice(message?.metadata?.event_payload)) return null;
+  return parseSystemNotice(message);
 }
 
 // Workflow kind, ClickUp ID and monitor task ID of a job in an error copy.
@@ -643,17 +652,18 @@ export function buildBlockedErrors(messages, channelId, tasks = [], { manualUplo
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
   for (const message of messages) {
     if (message.thread_ts && message.thread_ts !== message.ts) continue;
-    const issue = parseWorkerIssue(message);
+    const issue = parseSystemNotice(message);
     const value = message.metadata?.event_type === 'ai_newsletter_fehler' ? message.metadata.event_payload : null;
     if (!value && !issue) continue;
     const time = Number(message.ts) * 1000;
     if (!/^\d+\.\d+$/.test(message.ts) || !Number.isFinite(time) || time <= 0 || time > 8640000000000000) throw new Error('Slack: Fehlermeldung ohne gültige Nachrichten-ID.');
     const lauf = value?.kind === 'lauf';
+    const setup = customerSetupNotice(value);
     // KOR-10: the worker rewrote this copy for a withdrawn order; no open error.
     if (lauf && value.state === WITHDRAWN_RUN_STATE) continue;
     const text = String(message.text || '');
     const jobId = String(value?.task_id || '');
-    const { kind, taskId, sourceId, workflow } = errorJob(jobId, lauf);
+    const { kind, taskId, sourceId, workflow } = errorJob(jobId, lauf || setup);
     const source = tasks.find(task => task.id === sourceId);
     const taskLink = /<(https:\/\/app\.clickup\.com\/t\/[A-Za-z0-9_-]+)\|([^>]+)>/.exec(text);
     // Existing worker copies contain a permalink to their original channel.
@@ -664,11 +674,11 @@ export function buildBlockedErrors(messages, channelId, tasks = [], { manualUplo
     const company = displayText(slackText(text.split('\n')[0]).replace(/[*`]/g, '').split(' · ').slice(1).join(' · '), 200);
     const id = `slack-error:${channelId}:${message.ts}`;
     const updatedAt = new Date(time).toISOString();
-    const context = lauf ? blockerContext(diagnosis, { state: value.state,
-      owner: BLOCKER_OWNERS.has(value.owner) ? value.owner : OWNER_OF_GRUND[value.grund] }) : {};
+    const context = lauf || setup ? blockerContext(diagnosis, { state: value.state,
+      owner: setup ? 'stammdaten' : BLOCKER_OWNERS.has(value.owner) ? value.owner : OWNER_OF_GRUND[value.grund] }) : {};
     if (!(kind === 'upload' && manualUploadIds.has(taskId))) {
       rows.set(id, { ...own(source), ...context, id, status: 'blocked', workflow,
-        title: displayText(slackText(taskLink?.[2] || source?.title || (issue ? `Worker · ${issue.workerId} · ${issue.stage}` : text.split('\n')[0])), 300, 'Fehler in #ai-fehler'),
+        title: displayText(slackText(taskLink?.[2] || source?.title || (setup ? issue?.message : issue ? `Worker · ${issue.workerId} · ${issue.stage}` : text.split('\n')[0])), 300, 'Fehler in #ai-fehler'),
         url: taskLink?.[1] || source?.url, errorUrl,
         company: source?.company || company, workerId: value?.worker || issue?.workerId,
         phase: 'Offen in #ai-fehler', blockedReason: diagnosis, attemptId: value?.run_id,

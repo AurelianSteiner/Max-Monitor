@@ -791,6 +791,12 @@ Worker ohne frischen Heartbeat fällt auch bei weiterhin erreichbarer Mac-App
 auf. Ausstehende ClickUp-Statusupdates und ein unbekannter Worker-Betriebsstatus
 werden ebenfalls angezeigt. Die Warnliste zählt jeden betroffenen Mac einmal.
 
+Kundenbezogene Einrichtungslücken der Stufe `filestage_zuordnung` gehören zu
+den Newsletter-Aufträgen. Auch wenn ältere Worker sie als Slack-Art `system`
+melden, nimmt die Bridge sie nicht in `workerIssues` auf. Sie bleiben mit
+Diagnose als Newsletter-Fehler und Zuständigkeit Stammdaten sichtbar. Der
+Mac-Betriebsstatus und die Aufgabenannahme werden daraus nicht abgeleitet.
+
 Die API übernimmt dafür optional `workerIssues` im Queue-Snapshot:
 `{ id, workerId, stage, severity: "error" | "warning", message, reportedAt }`.
 Fehlt das Feld, bleiben die bisherigen Warnungen bestehen. Eine vollständige

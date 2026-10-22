@@ -785,6 +785,38 @@ test('complete Slack warning scans clear resolved issues; partial scans preserve
   assert.deepEqual((await collect()).workerIssues, []);
 });
 
+test('customer FileStage setup notices remain order errors without marking Orange or Schwarz as failed', async () => {
+  const messages = ['mac-worker-6-64d66918', 'macworker-5-schwarz'].map((worker, i) => ({
+    ts: `1791823000.00000${i}`,
+    text: ':warning: RS-Hub-Einrichtung fehlt für MYPC: Interne/externe FileStage-Stufe nicht eindeutig.\nDer Pre-Gen-Bau läuft weiter.',
+    metadata: { event_type: 'ai_newsletter_fehler', event_payload: { kind: 'system', worker, stage: 'filestage_zuordnung' } },
+  }));
+  for (const message of messages) assert.equal(parseWorkerIssue(message), null);
+  const collect = () => collectSnapshot({ now,
+    config: { clickup: { workspace_id: 'test' }, slack: { channel_id: 'status' }, fehler: { enabled: true, channel_id: 'errors' }, hub: {} },
+    hubFetch: async target => {
+      const url = new URL(target);
+      return url.hostname === 'slack.com'
+        ? response({ ok: true, messages: url.searchParams.get('channel') === 'errors' ? messages : [], has_more: false })
+        : response({ spaces: [], tasks: [] });
+    }, fleetReader: async () => [],
+  });
+  const snapshot = await collect();
+  assert.deepEqual(snapshot.workerIssues, [], 'a complete scan clears previously misclassified worker failures');
+  assert.equal(snapshot.blockedErrors.length, 2, 'both open setup notices stay visible');
+  for (const row of snapshot.blockedErrors) {
+    assert.equal(row.workflow, 'newsletter');
+    assert.equal(row.status, 'blocked');
+    assert.equal(row.responsibleRole, 'Stammdaten (RS Hub/ClickUp)');
+    assert.match(row.blockedReason, /FileStage-Stufe nicht eindeutig/);
+    assert.doesNotMatch(row.title, /^Worker ·/);
+  }
+  messages.push(issueMessage());
+  const mixed = await collect();
+  assert.deepEqual(mixed.workerIssues.map(issue => issue.workerId), ['mac-1'], 'real OAuth failures still count alongside setup gaps');
+  assert.equal(mixed.blockedErrors.length, 3);
+});
+
 test('the next warm-cache snapshot removes deleted worker errors while preserving current errors', async () => {
   const config = { clickup: { workspace_id: 'test' }, slack: { channel_id: 'status' },
     fehler: { enabled: true, channel_id: 'errors' }, hub: {} };
