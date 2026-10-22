@@ -23,7 +23,7 @@ const workerSource=[process.env.AI_NEWSLETTER_CREATION_DIR,path.join(os.homedir(
   .filter(Boolean).map(dir=>path.join(dir,'src/quota-pacing.js')).find(file=>fs.existsSync(file));
 
 test('preview runs the immutable vendored Worker pacing module',()=>{
-  assert.equal(crypto.createHash('sha256').update(fs.readFileSync(require.resolve('../quota-pacing'))).digest('hex'),'d98242f50e66c3f1fd6df66428cce99acdfa81e2819248b265ea55c18f311d8f');
+  assert.equal(crypto.createHash('sha256').update(fs.readFileSync(require.resolve('../quota-pacing'))).digest('hex'),'83d11de658e3b1b1a6b97b5ea0e3119e4760be510bdcbf5452e1a4245d4ac8e6');
 });
 test('vendored pacing module is byte-identical to the Worker source',{skip:workerSource?false:'no ai-newsletter-creation checkout with src/quota-pacing.js'},()=>{
   assert.ok(fs.readFileSync(workerSource).equals(fs.readFileSync(require.resolve('../quota-pacing'))),workerSource);

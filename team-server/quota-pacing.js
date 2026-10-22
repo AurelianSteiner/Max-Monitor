@@ -12,9 +12,12 @@
 //   (g + 0,25 · 5h-Verbrauch · Nähe) / 10. 10 pp Vorsprung vor dem Takt wiegen
 //   eine Aufgabe; gleiche Prozente ergeben genau die Last (1, 2, 3 …).
 //   Sperren je Account (nie überbrückt): 5h-Planung bis 90 % mit einer
-//   Standardabweichung Reserve für laufende und neue Arbeit, Woche bis 100 % mit
-//   1,6 Standardabweichungen, weiche Obergrenze und Vorausstufe für Accounts,
-//   die dem eigenen Takt und dem Flottenmittel weit voraus sind.
+//   Standardabweichung Reserve für laufende und neue Arbeit (nach 60 Minuten
+//   Wartezeit bis 100 %, die Reserve bleibt), Woche bis 100 % mit 1,6
+//   Standardabweichungen, weiche Obergrenze und Vorausstufe für Accounts, die
+//   dem eigenen Takt und dem Flottenmittel weit voraus sind; mehr als 30 Punkte
+//   vor dem eigenen Takt bremst die weiche Obergrenze auch eine Flotte, die
+//   insgesamt vorausläuft (90 % mit Reset in fünf Tagen: 6 → 2, 3 → 1).
 // Laufende Arbeit zählt mit ihrem erwarteten Restverbrauch (lognormale
 // Restlaufzeit). Preise sind Planungswerte, nie Messwerte: eigene Messung
 // (n ≥ 3) zur Flotte hin geschrumpft, sonst Flottenmittel, sonst Festwerte.
@@ -26,7 +29,7 @@ const PACING = {
   gClamp: 40, lambda: 10, mu5: 0.25, tau5H: 1, keyEps: 0.1,
   c5: 90, z5: 1, ageMin: 60, ageC5: 100,
   cW: 100, zW: 1.6,
-  leadL1: 10, tierLA: 48, patienceMin: 15, tierRel: 10,
+  leadL1: 10, absLead: 20, tierLA: 48, patienceMin: 15, tierRel: 10,
   freshMin: 15, shrinkN0: 10, remFloor: 0.1,
 };
 
@@ -117,12 +120,17 @@ function lastSunday(year, month) {
   const end = Date.UTC(year, month + 1, 0, 1);
   return end - new Date(end).getUTCDay() * 24 * HOUR;
 }
+const WEIGHTS = new Map();
 function officeWeight(hourIndex) {
+  if (WEIGHTS.has(hourIndex)) return WEIGHTS.get(hourIndex);
   const at = hourIndex * HOUR + 30 * MINUTE, year = new Date(at).getUTCFullYear();
   const summer = at >= lastSunday(year, 2) && at < lastSunday(year, 9);
   const local = new Date(at + (summer ? 2 : 1) * HOUR);
   const day = local.getUTCDay(), hour = local.getUTCHours();
-  return day >= 1 && day <= 5 && hour >= 8 && hour < 20 ? 1 : 0.1;
+  const weight = day >= 1 && day <= 5 && hour >= 8 && hour < 20 ? 1 : 0.1;
+  if (WEIGHTS.size > 5000) WEIGHTS.clear();
+  WEIGHTS.set(hourIndex, weight);
+  return weight;
 }
 function profileWeight(fromMs, toMs) {
   let total = 0;
@@ -182,7 +190,7 @@ function analyseFleet(macs, nowMs) {
       const windows = windowsOf(slot, nowMs);
       // limited/error: der Anbieter hat abgelehnt oder die Anmeldung fehlt. Ein
       // unbekannter Stand ist keine Sperre, nur keine Meinung (Lastregel).
-      const entry = { slot: slot.slot, worker: mac.worker, cap: mac.maxTasks || 6, costs: slot.costs || null, prices,
+      const entry = { slot: slot.slot, worker: mac.worker, cap: Number.isInteger(mac.maxTasks) ? mac.maxTasks : 6, costs: slot.costs || null, prices,
         known: Boolean(windows), blocked: slot.status === 'limited' || slot.status === 'error', runs: 0 };
       entries.push(entry);
       if (!windows) continue;
@@ -209,12 +217,12 @@ function analyseFleet(macs, nowMs) {
     }
     result.set(mac.worker, entries);
   }
-  // Weiche Obergrenze nur für Accounts, die dem eigenen Takt UND dem Flottenmittel
-  // voraus sind: eine insgesamt vorauslaufende Flotte bremst sich nie selbst aus.
+  // Weiche Obergrenze für Accounts, die dem eigenen Takt UND dem Flottenmittel
+  // voraus sind; ab 30 Punkten vor dem eigenen Takt auch ohne Flottenvergleich.
   const mean = known.length ? known.reduce((sum, entry) => sum + entry.gFull, 0) / known.length : 0;
   for (const entry of known) {
     entry.relLead = entry.gFull - mean;
-    const lead = Math.min(entry.gFull, entry.relLead);
+    const lead = Math.max(Math.min(entry.gFull, entry.relLead), entry.gFull - PACING.absLead);
     entry.softTarget = lead > PACING.leadL1
       ? Math.max(1, Math.floor(entry.cap * Math.exp(-(lead - PACING.leadL1) / PACING.leadL1))) : Infinity;
   }
@@ -238,7 +246,8 @@ function slotRefusal(entry, kind, { extra = [], waitedMs = 0, accepting = false 
     pendW += pW.mean; varW += (spread(pW, next, 1) * pW.mean) ** 2;
   }
   const waitedMin = waitedMs / MINUTE;
-  if (waitedMin >= PACING.ageMin ? entry.u5 + pend5 > PACING.ageC5 : entry.u5 + pend5 + PACING.z5 * Math.sqrt(var5) > PACING.c5) return 'guard_5h';
+  // Lange wartende Arbeit darf das Fenster weiter füllen, aber nie ohne Reserve.
+  if (entry.u5 + pend5 + PACING.z5 * Math.sqrt(var5) > (waitedMin >= PACING.ageMin ? PACING.ageC5 : PACING.c5)) return 'guard_5h';
   if (entry.uW + pendW + PACING.zW * Math.sqrt(varW) > PACING.cW) return 'guard_weekly';
   if (entry.uW + pendW > entry.targetAhead && entry.relLead > PACING.tierRel && !accepting && waitedMin < PACING.patienceMin) return 'paced';
   return null;
@@ -285,7 +294,8 @@ function macKey(entries, load, kind, { extra = new Map(), waitedMs = 0 } = {}) {
     const preference = slotPreference(entry);
     if (!best || preference < best.preference) best = { preference, slot: entry.slot };
   }
-  if (best) return { key: load + best.preference / PACING.lambda, slot: best.slot };
+  // Ein zulässiger Platz ohne bekannten Stand ist neutral (Vorzug 0).
+  if (best && !(open && best.preference > 0)) return { key: load + best.preference / PACING.lambda, slot: best.slot };
   if (open || !(entries || []).length) return { key: load, slot: null };
   return { refusal: refusal || 'limited' };
 }

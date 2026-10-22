@@ -22,7 +22,7 @@ function validateClaudeAccounts(raw) {
       }) };
   });
   if (!ids.has(raw.selectedAccountId)) fail();
-  const reasons=['Account hat freies Kontingent','Account mit freiem Kontingent','Wochenreset naht · verbleibendes Budget nutzen','Beide Accounts am Limit · wartet auf Reset','Kontingente werden geprüft'];
+  const reasons=['Account hat freies Kontingent','Account mit freiem Kontingent','Wochenreset naht · verbleibendes Budget nutzen','Beide Accounts am Limit · wartet auf Reset','Kontingente werden geprüft','Gleichmäßige Auslastung beider Accounts'];
   return { selectedAccountId:raw.selectedAccountId,accounts,...(reasons.includes(raw.selectionReason)?{selectionReason:raw.selectionReason}:{}) };
 }
 function publicClaudeAccounts(raw, now) {
