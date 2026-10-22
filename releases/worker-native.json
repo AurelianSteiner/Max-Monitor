@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": "2.16.4",
-  "sourceRevision": "787b4f0b58f1a28b0d72c6e1ac2839166441fcdf",
-  "sha256": "e2ea1f3e44096d52ffa2e12d6d309e166c6f557167836c8c20873a33d5af9938",
-  "tag": "worker-native-787b4f0b58f1",
+  "version": "2.16.5",
+  "sourceRevision": "d2bbccf495ca1b0bc8447d138eb9892997515381",
+  "sha256": "ee28ae36595b3c1bfc3bc4c046b51e75914e7690d2a820779d74f0ed08d7f62e",
+  "tag": "worker-native-d2bbccf495ca",
   "asset": "Max-Monitor-worker.zip"
 }

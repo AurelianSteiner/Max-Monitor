@@ -3,6 +3,15 @@
     <channel>
         <title>Max Monitor</title>
         <item>
+            <title>2.16.5</title>
+            <pubDate>Thu, 22 Oct 2026 19:51:53 +0000</pubDate>
+            <sparkle:version>2.16.5</sparkle:version>
+            <sparkle:shortVersionString>2.16.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[Dark Mode für Übersicht, Queue, Macs, Log, Verbrauch und Dialoge. Die Darstellung folgt System, Hell oder Dunkel; laufende Newsletter-Worker bleiben vom App-Update unabhängig.]]></description>
+            <enclosure url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.16.5/Max-Monitor-2.16.5.dmg" sparkle:edSignature="Rr/l2998FrzR0whLI3jwU562U3wPwLOAaj0uG0k7HA+SuFBR1k2S566c8FSooPf0H5/DTT1aydjlhbcShpybBg==" length="5900641" type="application/octet-stream" />
+        </item>
+        <item>
             <title>2.16.4</title>
             <pubDate>Thu, 22 Oct 2026 18:39:26 +0000</pubDate>
             <sparkle:version>2.16.4</sparkle:version>
