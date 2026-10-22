@@ -22,6 +22,9 @@ Worker sind beim Upgrade aktiviert; andere Zugänge zunächst deaktiviert.
 Eine laufende App übernimmt Änderungen innerhalb einer Minute. Ausschalten
 blendet Geräte und Kontingente aus und sperrt weitere Meldungen, ohne die
 gespeicherten Daten zu löschen. Erneutes Einschalten stellt die Ansicht wieder her.
+Der ausgeschaltete Eintrag eines registrierten Macs blendet diesen samt
+Worker-Störungen auch dann aus, wenn seine App über einen anderen aktivierten
+Zugang meldet, etwa als Teaminhaber.
 
 Alle Macs verbinden sich mit **demselben Team-Relay und derselben Team-ID**. Das
 Repository verteilt den Programmcode; das Relay speichert die gemeinsamen Daten.
