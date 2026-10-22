@@ -31,6 +31,7 @@ let package = Package(
                 "Models/ProviderType.swift",
                 "Helpers/SmartRefreshPolicy.swift",
                 "Services/OAuthTokenCache.swift",
+                "Services/OAuthUsageTransport.swift",
                 "Helpers/ResetTimeChange.swift",
                 "Models/CodexUsageData.swift",
                 "Helpers/NotificationNames.swift",
