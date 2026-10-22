@@ -1,6 +1,5 @@
 `../quota-pacing.js` is an unchanged source snapshot from
-`ai-newsletter-creation`, commit `pending` (filled in by the integrator after
-the worker change is merged), file `src/quota-pacing.js`. SHA-256:
+`ai-newsletter-creation`, commit `2c389a333b2bb2bb0f62aecfa9c72b49b452b264`, file `src/quota-pacing.js`. SHA-256:
 `83d11de658e3b1b1a6b97b5ea0e3119e4760be510bdcbf5452e1a4245d4ac8e6`.
 
 The dashboard runs this exact module (`fleetMacs`, `analyseFleet`, `macKey`,
