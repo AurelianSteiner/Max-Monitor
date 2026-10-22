@@ -3,6 +3,15 @@
     <channel>
         <title>Max Monitor</title>
         <item>
+            <title>2.16.4</title>
+            <pubDate>Thu, 22 Oct 2026 18:39:26 +0000</pubDate>
+            <sparkle:version>2.16.4</sparkle:version>
+            <sparkle:shortVersionString>2.16.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[Claude-Kontingent: Lesende Abfragen nach kurzzeitigen TLS- und Verbindungsabbrüchen einmal auf einer neuen Verbindung wiederholen.]]></description>
+            <enclosure url="https://github.com/AurelianSteiner/Max-Monitor/releases/download/v2.16.4/Max-Monitor-2.16.4.dmg" sparkle:edSignature="p3wRa27UPpvAknXP1cTYKCnqVmWmg+UPYzWFqM4Hl9mKSp04RnFm2uDWmihgVM9/b30gwecQPOSTDMh+se/IAA==" length="5900702" type="application/octet-stream"/>
+        </item>
+        <item>
             <title>2.16.3</title>
             <pubDate>Wed, 21 Oct 2026 17:23:25 +0000</pubDate>
             <sparkle:version>2.16.3</sparkle:version>
