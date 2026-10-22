@@ -75,9 +75,25 @@ test('global averages work for accounts without their own task history; account 
   for (const mean of s.averages) { mean.five_hour_pp.n = 1; mean.weekly_pp.n = 1; }
   assert.equal(cap(s).accounts, 2); assert.equal(model.initial(cap(s)).newsletter, 200);
 });
-test('unknown or stale counters stay unavailable rather than silently becoming zero usage', () => {
+test('an account without current windows is left out, never counted as zero usage', () => {
   const s = fixture(); delete s.accounts[0].windows.five_hour;
-  assert.equal(cap(s, 'current').available, false); assert.equal(cap(s, 'full').available, true);
+  const current = cap(s, 'current');
+  assert.equal(current.available, true); assert.equal(current.skipped, 1);
+  assert.deepEqual(current.budgets, { fiveHour: 600, weekly: 600 });
+  assert.equal(model.initial(current).newsletter, 600);
+  assert.equal(cap(s, 'full').available, true); assert.equal(cap(s, 'full').skipped, 0); assert.equal(model.initial(cap(s, 'full')).newsletter, 700);
+  for (const account of s.accounts) account.windows.seven_day.at -= 901;
+  assert.equal(cap(s, 'current').available, false, 'no account with current windows');
+  assert.equal(model.initial(cap(s, 'current')).newsletter, 0);
+});
+test('a retired Mac with empty windows does not blank current planning', () => {
+  const s = fixture(); s.accounts.push({ id: 'macbook-von-till-main-2', windows: {} });
+  const current = cap(s, 'current');
+  assert.equal(current.available, true); assert.equal(current.skipped, 1); assert.equal(current.accounts, 8);
+  assert.equal(model.initial(current).newsletter, 700);
+});
+test('unknown or stale shared inputs stay unavailable rather than silently becoming zero usage', () => {
+  const s = fixture();
   s.generated_at = new Date(NOW - 180001).toISOString(); assert.equal(cap(s).available, false);
   const missing = fixture(); missing.averages[0].weekly_pp.mean = null;
   assert.equal(cap(missing).available, false); assert.equal(model.maximum(cap(missing), 'newsletter'), 0);

@@ -5,7 +5,8 @@
   const number = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
   function draw(changed) {
     const cap = model.capacity(connected ? data?.planning?.evidence : null, mode, period);
-    const message = !connected ? 'Verbinde den Team-Server.' : !cap.available ? 'Limits oder Verbrauchswerte werden aktualisiert…' : '';
+    const message = !connected ? 'Verbinde den Team-Server.' : !cap.available ? 'Limits oder Verbrauchswerte werden aktualisiert…'
+      : cap.skipped ? `${cap.skipped} ${cap.skipped === 1 ? 'Account' : 'Accounts'} ohne aktuelle Limits nicht eingerechnet.` : '';
     $('planning-message').textContent = message;
     $('planning-message').hidden = !message;
     if (cap.available) mix = !mix || !edited ? model.initial(cap) : model.balance(cap, mix, changed || 'upload');

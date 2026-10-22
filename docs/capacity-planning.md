@@ -38,8 +38,12 @@ oder garantierter Liefertermin.
 
 Die UI verändert keine Aufträge, Policies oder gespeicherten Teampläne. Der
 frühere Schreib-Endpunkt `/planning` ist entfernt; alte Planungsdateien werden
-nicht mehr gelesen. Bei fehlender Verbindung, veralteten Limits oder fehlenden
-Verbrauchswerten bleiben die Regler deaktiviert, statt Kapazität zu erfinden.
+nicht mehr gelesen. Ein Account ohne beide aktuellen Fenster (etwa eines
+stillgelegten oder schweigenden Macs) wird in der aktuellen Kapazität
+ausgelassen statt als unverbraucht gezählt; der Hinweis nennt die Anzahl der
+ausgelassenen Accounts. Bei fehlender Verbindung, fehlenden Verbrauchswerten
+oder ohne einen einzigen Account mit aktuellen Limits bleiben die Regler
+deaktiviert, statt Kapazität zu erfinden.
 
 Prüfung:
 

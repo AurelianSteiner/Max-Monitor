@@ -30,3 +30,11 @@ test('emails preserve exact account names independently of aliases and the monit
   assert.equal(accepted.accounts[1].email,'till2@example.test');
   value.accounts[0].email='not an email';assert.throws(()=>validateClaudeAccounts(value));
 });
+
+test('the pacing selection reason reaches the dashboard', () => {
+  const { validateClaudeAccounts } = require('../claude-accounts');
+  const window = { kind: 'weekly', percent: 10, reset: '2026-10-28T12:00:00.000Z' };
+  const raw = { selectedAccountId: 'account-2', selectionReason: 'Gleichmäßige Auslastung beider Accounts',
+    accounts: [{ id: 'primary', name: 'tuck1', status: 'ready', windows: [window] }, { id: 'account-2', name: 'till2', status: 'ready', windows: [window] }] };
+  assert.equal(validateClaudeAccounts(raw).selectionReason, 'Gleichmäßige Auslastung beider Accounts');
+});

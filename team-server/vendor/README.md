@@ -1,14 +1,22 @@
-`../quota-scores.js` is an unchanged source snapshot from
-`ai-newsletter-creation`, commit `2da287c17aba86ee0619a80870e89c166394d39b`,
-`src/quota-distribution.js` (introduced in `5d99e87c`). SHA-256:
-`9dadd5456f4491e39d7cb57fbbea96ff06956914be95f69a2b6219140a1c7509`.
+`../quota-pacing.js` is an unchanged source snapshot from
+`ai-newsletter-creation`, commit `2c389a333b2bb2bb0f62aecfa9c72b49b452b264`, file `src/quota-pacing.js`. SHA-256:
+`83d11de658e3b1b1a6b97b5ea0e3119e4760be510bdcbf5452e1a4245d4ac8e6`.
 
-The dashboard uses this exact function, also serialized into the Sales Hub by the
-workers. Update this snapshot and its digest test whenever the worker scoring
-contract changes. Do not create a second scoring formula in the UI.
+The dashboard runs this exact module (`fleetMacs`, `analyseFleet`, `macKey`,
+`slotRefusal`), the same one each worker uses to order Macs and gate its own
+Claude accounts. It replaces the former `quota-scores.js` snapshot of
+`src/quota-distribution.js`. Update this snapshot, its digest here and the
+digest test in `test/distribution.test.js` together whenever the worker pacing
+contract changes. Do not create a second scoring formula in the UI. With
+`AI_NEWSLETTER_CREATION_DIR` (default `~/Documents/AI Newsletter Creation`)
+pointing at a checkout that contains `src/quota-pacing.js`, the test also
+asserts that both files are byte-identical; without one it is skipped.
 
 The read-only preview covers Pre-Gen, correction, translation and upload. Sales
 has a separate admission policy and is not represented by this preview. It uses
-the same bounded Hub heartbeat and active reservation register as worker intake,
-but does not simulate access for a particular task or a worker's preference-wait
-timer. A highlighted preference is not an assignment or a promise of capacity.
+the same bounded Hub heartbeats (including each worker's optional
+`quota_slots`), Max Monitor's per-worker quota row as fallback and the active
+reservation register as worker intake, but does not simulate access for a
+particular task, the worker's preference wait or how long a task has been
+waiting (`waitedMs` is 0). A highlighted preference is not an assignment or a
+promise of capacity.

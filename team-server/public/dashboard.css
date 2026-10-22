@@ -121,6 +121,7 @@ a { color: inherit; }
   .consumption-table tbody tr { display: block; padding-block: 8px 12px; border-bottom: 1px solid var(--line); }
   .consumption-table tbody th { display: block; width: 100%; border: 0; }
   .effort-table tbody th:first-child { width: 100%; }
+  .distribution-table tbody th:first-child { width: 100%; }
   .consumption-table td { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; text-align: right; padding-block: 4px; }
   .usage-panel:not([hidden]) .consumption-table tr:not(.effort-secondary) td::before { content: attr(data-label); font: 12px/1.4 -apple-system, sans-serif; color: var(--muted); text-align: left; white-space: normal; }
   .effort-table td:last-child { display: block; }

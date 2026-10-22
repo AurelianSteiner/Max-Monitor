@@ -10,18 +10,19 @@
     const accounts = new Map();
     for (const account of source?.accounts || []) accounts.set(account.id, account);
     const budgets = { fiveHour: 0, weekly: 0 }, costs = {};
-    let available = fresh(Date.parse(source?.generated_at), now, 180000) && accounts.size > 0;
+    const current = value => Number.isFinite(value?.used) && value.used >= 0 && value.used <= 100
+      && fresh(value.at * 1000, now, 900000)
+      && (Number.isFinite(value.reset) && value.reset * 1000 > now || value.used === 0 && value.reset === null);
+    let counted = 0;
     for (const account of accounts.values()) {
-      for (const [key, window] of [['fiveHour', 'five_hour'], ['weekly', 'seven_day']]) {
-        const value = account.windows?.[window];
-        if (mode === 'full') budgets[key] += 100;
-        else if (Number.isFinite(value?.used) && value.used >= 0 && value.used <= 100
-          && fresh(value.at * 1000, now, 900000)
-          && (Number.isFinite(value.reset) && value.reset * 1000 > now
-            || value.used === 0 && value.reset === null)) budgets[key] += 100 - value.used;
-        else available = false;
-      }
+      const windows = [['fiveHour', 'five_hour'], ['weekly', 'seven_day']].map(([key, window]) => [key, account.windows?.[window]]);
+      // A silent or retired Mac's account without both current windows is left
+      // out of current capacity: it neither blocks the panel nor counts as unused.
+      if (mode !== 'full' && !windows.every(([, value]) => current(value))) continue;
+      for (const [key, value] of windows) budgets[key] += mode === 'full' ? 100 : 100 - value.used;
+      counted += 1;
     }
+    let available = fresh(Date.parse(source?.generated_at), now, 180000) && counted > 0;
     // Same Max plan on every account: exactly the shared means from Verbrauch.
     // Day is a daily rate within the seven-day allowance. The 5-hour limit
     // constrains that same pace; it is not an extra daily allowance.
@@ -31,7 +32,7 @@
       if (![fiveHour, weekly].every(n => Number.isFinite(n) && n > 0)) available = false;
       costs[kind] = { fiveHour: fiveHour * 5 / (period === 'day' ? 24 : 168), weekly: weekly * (period === 'day' ? 7 : 1) };
     }
-    return { available, budgets, costs, accounts: accounts.size, mode, period };
+    return { available, budgets, costs, accounts: accounts.size, skipped: accounts.size - counted, mode, period };
   }
   function maximum(cap, kind, mix = zero()) {
     if (!cap.available) return 0;

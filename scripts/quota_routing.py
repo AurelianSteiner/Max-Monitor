@@ -1,8 +1,59 @@
 """Bounded read-only inputs for the distribution preview; no task content."""
+from datetime import datetime
 import json
+import math
 from pathlib import Path
 import re
 import sqlite3
+
+SLOT_NAMES = ('single', 'primary', 'account-2')
+SLOT_STATES = ('ready', 'limited', 'error', 'unknown')
+RUN_KINDS = ('newsletter', 'correction', 'upload', 'translation', 'sales')
+# The worker's toISOString() form. Stricter than Date.parse in
+# validQuotaSlots (src/quota-pacing.js): anything accepted here passes there.
+ISO_TIME = re.compile(r'([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})')
+
+
+def iso_time(value):
+    if not isinstance(value, str) or len(value) > 40:
+        return False
+    match = ISO_TIME.fullmatch(value)
+    if not match:
+        return False
+    try:
+        datetime(*map(int, match.groups()[:6]))
+    except ValueError:
+        return False
+    zone = match[7]
+    return zone == 'Z' or (int(zone[1:3]) <= 23 and int(zone[4:]) <= 59)
+
+
+def quota_window(value, reset_required=False):
+    return (isinstance(value, dict) and sorted(value) == ['reset', 'used']
+            and isinstance(value['used'], (int, float)) and not isinstance(value['used'], bool)
+            and math.isfinite(value['used']) and 0 <= value['used'] <= 100
+            and (iso_time(value['reset']) or (value['reset'] is None and not reset_required)))
+
+
+def valid_quota_slots(value):
+    """Python twin of validQuotaSlots: 1-2 account slots, <= 12 runs each."""
+    if not isinstance(value, list) or not 1 <= len(value) <= 2:
+        return False
+    names = set()
+    for slot in value:
+        if not isinstance(slot, dict) or sorted(slot) != ['at', 'five_hour', 'runs', 'seven_day', 'slot', 'status']:
+            return False
+        if slot['slot'] not in SLOT_NAMES or slot['slot'] in names or slot['status'] not in SLOT_STATES:
+            return False
+        names.add(slot['slot'])
+        runs = slot['runs']
+        if (not iso_time(slot['at']) or not quota_window(slot['five_hour']) or not quota_window(slot['seven_day'], True)
+                or not isinstance(runs, list) or len(runs) > 12):
+            return False
+        if not all(isinstance(run, dict) and sorted(run) == ['kind', 'started'] and run['kind'] in RUN_KINDS
+                   and iso_time(run['started']) for run in runs):
+            return False
+    return True
 
 
 def hub_runtime(hub=Path('/opt/rs-hub')):
@@ -31,9 +82,14 @@ def routing_inputs(hub=Path('/opt/rs-hub')):
                 if file.stat().st_size > 65536:
                     continue
                 raw = json.loads(file.read_text())
-                if not re.fullmatch(r'[a-z0-9][a-z0-9._-]{0,79}', str(raw.get('worker_id', '')), re.I):
+                if not isinstance(raw, dict) or not re.fullmatch(r'[a-z0-9][a-z0-9._-]{0,79}', str(raw.get('worker_id', '')), re.I):
                     continue
-                fleet.append({k: raw[k] for k in ('worker_id', 'seen_at', 'annahme', 'plaetze', 'occupied_tasks', 'max_tasks') if k in raw})
+                entry = {k: raw[k] for k in ('worker_id', 'seen_at', 'annahme', 'plaetze', 'occupied_tasks', 'max_tasks') if k in raw}
+                # Per-account quota of the worker itself; an invalid field is
+                # dropped, never the heartbeat (intake and load stay visible).
+                if valid_quota_slots(raw.get('quota_slots')):
+                    entry['quota_slots'] = raw['quota_slots']
+                fleet.append(entry)
             except (OSError, ValueError, TypeError):
                 continue
         register = root / 'state/worker-reservations'
