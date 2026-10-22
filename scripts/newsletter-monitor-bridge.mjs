@@ -855,7 +855,7 @@ function fleetSeen(workers) {
 // tasks may carry statusSince (the worker's status epoch, readStatusEpochs).
 // admission: the worker's admission predicates (workerAdmission, loadWorkerAdmission).
 // workers: the Macs' heartbeats read from the RS Hub (parseObservedWorkers).
-export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, figmaBoardUrl, admission = workerAdmission(), workers } = {}) {
+export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, figmaBoardUrl, admission = workerAdmission(), workers, unavailableCorrectionSources = new Set() } = {}) {
   const updatedAt = new Date(now).toISOString();
   const seenAt = fleetSeen(workers);
   const rows = [];
@@ -1002,6 +1002,9 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
     const phase = paused && claim.portable ? 'Wartet · Fortsetzung in der zentralen Queue' : paused ? active ? 'Pausiert · wartet außerhalb der Worker-Plätze' : 'Wartet · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : lagging ? RESERVATION_LAG_PHASE : 'Worker meldet sich nicht mehr'
       : status === 'completed' ? 'Korrektur abgeschlossen' : claim.awaitingPm ? 'PM-Rückfrage offen'
         : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
+    // Apply this after selecting the current attempt so an unavailable source
+    // cannot expose an older success as the result of its latest failed run.
+    if (unavailableCorrectionSources.has(claim.taskId) && status !== 'completed' && (!active || paused && claim.portable)) continue;
     const task = tasks.find(task => task.id === claim.taskId);
     // A terminal/portable attempt is history after a human moves the order on.
     // Keep genuinely live writers visible; never call a manual handoff success.
@@ -1725,13 +1728,22 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const queueOptions = { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl, admission, workers: observedWorkers };
   // Completed/manual source tasks disappear from the tag/start-status queries.
   // Read missing sources of visible unfinished corrections before deciding that
-  // their old reservation still describes an order. Failure preserves the cache.
+  // their old reservation still describes an order. A deleted source is no order;
+  // other failures preserve the complete cache.
   const missing = [...new Set(buildQueue(tasks, claims, workflows, queueOptions)
     .filter(row => row.workflow === 'correction' && row.status !== 'completed' && row.run
       && !tasks.some(task => task.id === row.run.taskId)).map(row => row.run.taskId))];
+  const unavailable = new Set();
   try {
     for (const id of missing) {
-      const task = await requestJson(hubFetch, `https://api.clickup.com/api/v2/task/${encodeURIComponent(id)}`, 'ClickUp');
+      let task;
+      try { task = await requestJson(hubFetch, `https://api.clickup.com/api/v2/task/${encodeURIComponent(id)}`, 'ClickUp'); }
+      catch (error) {
+        if (error.status !== 404) throw error;
+        unavailable.add(id);
+        warn(`ClickUp: Korrekturquelle ${id} nicht mehr verfügbar (HTTP 404); historische Reservierungen werden ausgelassen, laufende Arbeiten und Abschlüsse bleiben sichtbar.`);
+        continue;
+      }
       if (task.id !== id || !taskStatus(task) || !Array.isArray(task.tags)) throw Error('ClickUp: Korrekturquelle unvollständig.');
       if (CORRECTION_STATUSES[normalizeStatus(taskStatus(task))]) {
         const epochs = await readStatusEpochs(hubFetch, [task], { refusals: epochRefusals, now });
@@ -1742,7 +1754,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   } catch (error) {
     return { source: { name: SOURCE_NAME, error: displayText(error.message, 300, 'Korrekturquelle nicht lesbar.') } };
   }
-  const queue = buildQueue(tasks, claims, workflows, queueOptions);
+  const queue = buildQueue(tasks, claims, workflows, { ...queueOptions, unavailableCorrectionSources: unavailable });
   // Keep a confirmed date after its source thread leaves the history window.
   // Any currently visible attempt prevents borrowing an older success.
   retainCompletionDates(queue, previousTasks, claims);
@@ -1760,9 +1772,10 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
   const manualUploadIds = new Set(tasks.filter(task => admission.manualUpload(task)).map(task => task.id));
   const blockedErrors = errorChannel ? buildBlockedErrors(errorMessages, errorChannel, queue, { manualUploadIds }) : undefined;
+  const unavailableDetail = unavailable.size ? ` · ${unavailable.size} nicht mehr verfügbare Korrekturquelle${unavailable.size === 1 ? '' : 'n'}` : '';
   return { tasks: queue, ...(blockedErrors === undefined ? {} : { blockedErrors }), workerIssues, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
     name: SOURCE_NAME, lastSuccessAt: new Date(now).toISOString(),
-    detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${started} im Startstatus${parkedDetail}${refused ? ` · ${refused} ohne lesbaren Statusbeginn` : ''} · ${claims.length} Reservierungen${registerDetail ? ` · ${registerDetail}` : ''}${blockedErrors ? ` · ${blockedErrors.length} offen in #ai-fehler` : ''}${fleetDetail ? ` · ${fleetDetail}` : ''}`,
+    detail: `${queue.length} Aufgaben · ${variants.length} Tags · ${started} im Startstatus${parkedDetail}${refused ? ` · ${refused} ohne lesbaren Statusbeginn` : ''} · ${claims.length} Reservierungen${registerDetail ? ` · ${registerDetail}` : ''}${unavailableDetail}${blockedErrors ? ` · ${blockedErrors.length} offen in #ai-fehler` : ''}${fleetDetail ? ` · ${fleetDetail}` : ''}`,
   } };
 }
 
