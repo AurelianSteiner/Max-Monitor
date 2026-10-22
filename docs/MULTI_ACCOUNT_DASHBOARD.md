@@ -106,6 +106,11 @@ zum offiziellen `scripts/build.sh`:
   `Config/Usage4Claude.entitlements` werden vor dem Signieren aufgelöst — `codesign`
   kennt keine Build-Variablen, sonst landeten die Sparkle-mach-lookup-Ausnahmen
   wörtlich im Bundle
+- ohne `SDKROOT` prüft das Skript, ob die Standard-SDK SwiftUI ohne das Makro-Plugin
+  `SwiftUIMacros` übersetzt (das nur Xcode mitliefert; ab `MacOSX27.sdk` ist `@State`
+  ein Makro). Wenn nicht, baut es mit der neuesten installierten SDK, die das kann, und
+  nennt sie im Log; `./scripts/build_without_xcode.sh --print-sdk` zeigt die Wahl
+  ohne zu bauen. Eine gesetzte `SDKROOT` gilt unverändert
 
 Name und Bundle-ID sind überschreibbar, um parallel zu einer bestehenden Installation
 zu laufen (getrennte Einstellungen und Keychain):
