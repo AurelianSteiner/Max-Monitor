@@ -1,5 +1,9 @@
 # Änderungen
 
+## 2.16.5
+
+- **Dark Mode für die gesamte Übersicht.** Queue, Macs, Log, Verbrauch und Dialoge folgen der gewählten Darstellung System, Hell oder Dunkel. Fenster und eingebettete Oberfläche wechseln gemeinsam; Statusfarben und Workflow-Markierungen bleiben gut lesbar.
+
 ## 2.15
 
 - **Verbrauch & Aufwand.** Neuer Reiter zwischen Queue & Macs und Account Limits mit zentralen Aufwandseinstellungen je Produktionsphase und dem zuletzt bestätigten Stand jedes Macs. Neue Phasen übernehmen die Einstellungen, laufende Phasen und ihre Fortsetzungen behalten ihren Stand.
