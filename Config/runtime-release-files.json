@@ -45,7 +45,7 @@
     "team-server/public/planning-model.js",
     "team-server/public/planning.js",
     "team-server/public/planning.css",
-    "team-server/quota-scores.js",
+    "team-server/quota-pacing.js",
     "team-server/remote-access.js",
     "team-server/server.js",
     "team-server/skill-versions.js",

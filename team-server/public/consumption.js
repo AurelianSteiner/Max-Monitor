@@ -7,6 +7,12 @@
   const date=new Intl.DateTimeFormat('de-DE',{dateStyle:'short',timeStyle:'short',timeZone:'Europe/Berlin'});
   let data=null, request=null, busy=false, dirty=false, saving=false, generation=0, draftRevision=null;
   let distributionKind='newsletter';
+  // Reason codes of team-server/distribution.js; the last five are the Worker's account guards.
+  const reasons={unavailable:'Vorschau nicht verfügbar',stale_worker:'Keine aktuelle Worker-Meldung',not_accepting:'Nimmt keine Aufträge an',
+    missing_slots:'Plätze unbekannt',full:'Alle Plätze belegt',kind_full:'Keine Plätze für diese Art',limited:'Account am Limit',
+    guard_5h:'5h-Fenster ausgelastet',guard_weekly:'Wochenkontingent fast leer',soft_cap:'Bremst: dem Takt voraus',paced:'Wartet: dem Takt voraus'};
+  // A Mac with one account has nothing to choose; two accounts name the chosen one.
+  const slots={primary:'Account 1','account-2':'Account 2'};
   function node(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
   function status(text,error=false){$('effort-status').textContent=text;$('effort-status').dataset.error=String(error);}
   function average(metric){return metric?.mean==null?'—':`≈ ${numeric.format(metric.mean)}`;}
@@ -20,12 +26,15 @@
     for(const row of rows){
       const tr=node('tr',row.preferred?'distribution-preferred':'');
       const mac=node('th');mac.scope='row';
-      mac.append(node('span','',row.name),node('span','distribution-detail',row.preferred?'Bevorzugt':row.reason?'Derzeit ausgeschlossen':'Alternative'));tr.append(mac);
+      mac.append(node('span','',row.name),node('span',row.reason?'distribution-warning':'distribution-detail',row.preferred?'Bevorzugt':row.reason?reasons[row.reason]||'Derzeit ausgeschlossen':'Alternative'));
+      if(slots[row.slot])mac.append(node('span','distribution-detail',slots[row.slot]));
+      tr.append(mac);
       for(const [name,label] of [['five_hour','5 h frei'],['seven_day','Woche frei']]){
         const w=row.windows[name];const cell=node('td');cell.dataset.label=label;
         const content=node('div');const value=node('span','distribution-number',w.remaining===null?'Unbekannt':`${percent.format(w.remaining)} %`);
         if(w.at)value.title=`Gemessen ${date.format(new Date(w.at*1000))} · Berlin`;content.append(value);
         content.append(node('span','distribution-detail',w.reset?`Reset ${date.format(new Date(w.reset*1000))}`:name==='five_hour'&&w.fresh?'Fenster noch nicht gestartet':'Reset unbekannt'));
+        if(Number.isFinite(w.target))content.append(node('span','distribution-detail',`Takt: ${percent.format(Math.max(0,100-w.target))} % frei`));
         if(!w.fresh)content.append(node('span','distribution-warning',w.remaining===null?'Keine Messung':'Veraltet'));
         cell.append(content);tr.append(cell);
       }

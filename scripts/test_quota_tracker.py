@@ -60,6 +60,38 @@ def pool_fleet(at=NOW, selected='account-2', worker='mac-1', device='device-a'):
     return data
 
 
+def bound_machine(worker, account, five_reset, five=50, weekly_reset=RESET, at=NOW, device=None):
+    uid = 'uuid-' + account
+    machine = {'workerId': worker, 'name': worker, 'monitoringAccountId': uid,
+               'accounts': [{'accountId': uid, 'name': account, 'provider': 'claude', 'usageUpdatedAt': at}],
+               'limits': [{'accountId': uid, 'kind': 'weekly', 'percent': 40, 'resetsAt': weekly_reset, 'usageUpdatedAt': at},
+                          {'accountId': uid, 'kind': 'session', 'percent': five, 'resetsAt': five_reset, 'usageUpdatedAt': at}]}
+    if device:
+        machine['deviceId'] = device
+    return machine
+
+
+def pool_report(worker, device, account_2_five, at=NOW, weekly_reset=RESET):
+    iso = ledger_module.iso
+    return {'workerId': worker, 'deviceId': device, 'sampledAt': iso(at), 'receivedAt': iso(at),
+            'claudeAccounts': {'selectedAccountId': 'account-2', 'accounts': [
+                {'id': 'primary', 'name': 'Claude 1', 'status': 'ready', 'updatedAt': iso(at),
+                 'windows': [{'kind': 'weekly', 'percent': 60, 'reset': iso(weekly_reset + 7200)}]},
+                {'id': 'account-2', 'name': 'Claude 2', 'status': 'ready', 'updatedAt': iso(at),
+                 'windows': [{'kind': 'session', 'percent': 90, 'reset': iso(account_2_five)},
+                             {'kind': 'weekly', 'percent': 30, 'reset': iso(weekly_reset)}]}]}}
+
+
+def stream(worker, five_reset, run, at=NOW + 60, five=94, weekly_reset=RESET):
+    windows = {'seven_day': {'percent': 30, 'reset': weekly_reset}}
+    if five_reset is not None:
+        windows['five_hour'] = {'percent': five, 'reset': five_reset}
+    return {'schema': 1, 'worker': worker, 'runs': [{'run_id': run, 'task_id': run + '@1', 'title': 'T', 'customer': 'C',
+                                                     'kind': 'newsletter', 'started': NOW, 'state': 'running'}],
+            'events': [{'id': 'quota-' + run, 'event_type': 'quota', 'run_id': run, 'at': at,
+                        'time_quality': 'timestamp', 'windows': windows}]}
+
+
 class LedgerTests(unittest.TestCase):
     def setUp(self):
         self.ledger = ledger_module.Ledger(":memory:")
@@ -582,6 +614,115 @@ class LedgerTests(unittest.TestCase):
                            'windows': {'seven_day': {'percent': 30, 'reset': RESET}}}}, NOW)
         q = self.ledger.scheduling([], NOW)['workers']['mac-1']
         self.assertEqual(q['windows']['seven_day'], {'used': 30, 'reset': RESET, 'at': NOW})
+
+    def stream_samples(self):
+        return sorted(tuple(r) for r in self.ledger.db.execute(
+            "SELECT account,worker,window,percent FROM samples WHERE source='stream'"))
+
+    def test_colliding_weekly_reset_of_another_macs_pool_slot_never_overwrites_a_bound_account(self):
+        """21.10.2026: Lila's account-2 stream was exported as Schwarz's quota."""
+        schwarz, lila = NOW + 3600, NOW + 7200
+        for registered in (True, False):
+            with self.subTest(pool_report=registered):
+                self.ledger = ledger_module.Ledger(':memory:')
+                data = {'machines': [bound_machine('mac-s', 'aurelian@rss.example', schwarz, five=100),
+                                     bound_machine('mac-l', 'lila@rss.example', lila, weekly_reset=RESET + 3600, device='device-l')],
+                        'workerReports': [pool_report('mac-l', 'device-l', lila)] if registered else []}
+                self.ledger.fleet(data, NOW)
+                self.ledger.ingest(stream('mac-l', lila, 'run-l'), NOW + 120)
+                self.ledger.ingest(stream('mac-s', schwarz, 'run-s', five=100), NOW + 120)
+                self.ledger.materialize()
+                self.assertEqual(self.stream_samples(), [('aurelian@rss.example', 'mac-s', 'five_hour', 100),
+                                                         ('aurelian@rss.example', 'mac-s', 'seven_day', 30)])
+                q = self.ledger.scheduling([], NOW + 120)['workers']['mac-s']
+                self.assertEqual(q['windows']['five_hour']['used'], 100)
+        self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM pool_resets').fetchone()[0], 0)
+
+    def test_pool_slot_fingerprints_make_an_unconfirmed_collision_ambiguous(self):
+        lila = NOW + 7200
+        data = {'machines': [bound_machine('mac-s', 'aurelian@rss.example', NOW + 3600),
+                             bound_machine('mac-l', 'lila@rss.example', lila, weekly_reset=RESET + 3600, device='device-l')],
+                'workerReports': [pool_report('mac-l', 'device-l', lila)]}
+        self.ledger.fleet(data, NOW)
+        rows = {tuple(r) for r in self.ledger.db.execute('SELECT window,reset,worker FROM pool_resets')}
+        self.assertEqual(rows, {('five_hour', lila, 'mac-l'), ('seven_day', RESET, 'mac-l'), ('seven_day', RESET + 7200, 'mac-l')})
+        # Weekly reset alone: Schwarz's account and Lila's slot both match.
+        self.assertIsNone(self.ledger.resolve(RESET, None, 'mac-s', NOW + 60))
+        self.assertEqual(self.ledger.resolve(RESET, NOW + 3600, 'mac-s', NOW + 60), 'aurelian@rss.example')
+        self.assertIsNone(self.ledger.resolve(RESET, lila, 'mac-l', NOW + 60), 'a pool slot is never an account')
+        self.assertIsNone(self.ledger.resolve(RESET + 7200, None, 'mac-l', NOW + 60))
+
+    def test_same_weekly_reset_with_different_5h_resets_on_different_workers_never_merges(self):
+        first, second = NOW + 3600, NOW + 7200
+        self.ledger.fleet({'machines': [bound_machine('mac-1', 'a@example.com', first, five=20),
+                                        bound_machine('mac-2', 'b@example.com', second, five=70)]}, NOW)
+        self.ledger.ingest(stream('mac-1', first, 'run-1', five=21), NOW + 120)
+        self.ledger.ingest(stream('mac-2', second, 'run-2', five=71), NOW + 120)
+        self.ledger.ingest(stream('mac-2', None, 'run-3', at=NOW + 90), NOW + 120)
+        self.ledger.materialize()
+        self.assertEqual(self.stream_samples(), [('a@example.com', 'mac-1', 'five_hour', 21), ('a@example.com', 'mac-1', 'seven_day', 30),
+                                                 ('b@example.com', 'mac-2', 'five_hour', 71), ('b@example.com', 'mac-2', 'seven_day', 30)])
+        workers = self.ledger.scheduling([], NOW + 120)['workers']
+        self.assertEqual((workers['mac-1']['windows']['five_hour']['used'], workers['mac-2']['windows']['five_hour']['used']), (21, 71))
+        # An unbound worker is accepted only with the 5h reset as cross-confirmation.
+        self.assertIsNone(self.ledger.resolve(RESET, NOW + 9000, 'mac-9', NOW + 60))
+        self.assertEqual(self.ledger.resolve(RESET, second, 'mac-9', NOW + 60), 'b@example.com')
+        self.assertIsNone(self.ledger.resolve(RESET, second, 'mac-1', NOW - 5 * 3600),
+                          'without a covering window both accounts stay candidates')
+
+    def test_fresh_report_without_pool_forgets_it_but_a_silent_observer_keeps_it(self):
+        data = pool_fleet()
+        self.ledger.fleet(data, NOW)
+        self.assertEqual(self.ledger.scheduling([], NOW)['workers']['mac-1']['source'], 'worker_pool')
+        report = data['workerReports'][0]
+        report.pop('claudeAccounts')
+        report.update(sampledAt=ledger_module.iso(NOW - 50), receivedAt=ledger_module.iso(NOW - 50))
+        self.ledger.fleet(data, NOW)
+        self.assertEqual(self.ledger.scheduling([], NOW)['workers']['mac-1']['source'], 'worker_pool', 'an old report is no proof')
+        revision = self.ledger.setting('average_pending')['revision']
+        report.update(sampledAt=ledger_module.iso(NOW + 10), receivedAt=ledger_module.iso(NOW + 10))
+        self.ledger.fleet(data, NOW + 10)
+        q = self.ledger.scheduling([], NOW + 10)['workers']['mac-1']
+        self.assertNotIn('source', q)
+        self.assertEqual(q['account'], ledger_module.identifier('a@example.com')[:24])
+        self.assertEqual(self.ledger.setting('worker_pool_scheduling'), {})
+        self.assertGreater(self.ledger.setting('average_pending')['revision'], revision, 'losing the last pool republishes')
+
+    def test_workers_absent_for_a_day_lose_pool_and_binding_and_are_no_longer_exported(self):
+        data = pool_fleet()
+        data['machines'][0]['lastSeenAt'] = ledger_module.iso(NOW)
+        data['machines'].append(bound_machine('mac-2', 'b@example.com', NOW + 7200))
+        self.ledger.fleet(data, NOW)
+        self.assertEqual(sorted(self.ledger.scheduling([], NOW)['workers']), ['mac-1', 'mac-2'])
+        later = NOW + 86400 + 60
+        data['workerReports'] = []
+        data['machines'][1] = bound_machine('mac-2', 'b@example.com', later + 3600, at=later)
+        self.ledger.fleet(data, later)
+        self.ledger.fleet(data, later + 15)
+        self.assertEqual(sorted(self.ledger.scheduling([], later + 15)['workers']), ['mac-2'])
+        self.assertEqual(self.ledger.setting('worker_pool_scheduling'), {})
+        self.assertEqual([tuple(r) for r in self.ledger.db.execute('SELECT worker,until FROM bindings ORDER BY worker')],
+                         [('mac-1', later), ('mac-2', None)], 'the stale row never reopens its binding')
+        self.assertNotIn('mac-1', self.ledger.setting('worker_seen'))
+        # The same Mac back in Fleet starts a new binding.
+        data['machines'][0]['lastSeenAt'] = ledger_module.iso(later + 30)
+        self.ledger.fleet(data, later + 30)
+        self.assertEqual(sorted(self.ledger.scheduling([], later + 30)['workers']), ['mac-1', 'mac-2'])
+        self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM bindings WHERE worker=? AND until IS NULL', ('mac-1',)).fetchone()[0], 1)
+
+    def test_a_hub_heartbeat_keeps_a_worker_live_and_legacy_memory_expires_by_its_own_age(self):
+        data = fleet(NOW, 20)
+        data['machines'][0]['lastSeenAt'] = ledger_module.iso(NOW - 3 * 86400)
+        data['observedWorkers'] = [{'workerId': 'mac-1', 'lastSeenAt': ledger_module.iso(NOW - 600)}]
+        self.ledger.fleet(data, NOW)
+        self.assertIn('mac-1', self.ledger.scheduling([], NOW)['workers'])
+        # Pool memory written before the liveness bookkeeping existed.
+        retired = ledger_module.pool_observation(pool_fleet(NOW - 2 * 86400, worker='retired', device='old')['workerReports'][0],
+                                                 'retired', 'old')
+        self.ledger.meta('worker_pool_scheduling', {'retired': retired})
+        self.ledger.fleet(data, NOW + 15)
+        self.assertEqual(self.ledger.setting('worker_pool_scheduling'), {})
+        self.assertNotIn('retired', self.ledger.scheduling([], NOW + 15)['workers'])
 
 class WorkerTests(unittest.TestCase):
     def test_finished_sales_recovers_session_and_subagents_without_active_receipt(self):

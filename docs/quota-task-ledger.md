@@ -368,14 +368,34 @@ API-Readback, tatsächlich gespeicherte neue Messdaten und Browserprüfung.
 The compact summary now includes `scheduling.workers`: a hashed shared account ID,
 per-window measurement timestamps/reset/usage, and per-account/task-kind mean,
 standard deviation and sample count. The worker's existing authenticated Fleet
-read carries this optional evidence. The worker applies the 55/20/25 budget,
-5h headroom and physical load preference; no new admission authority is created.
+read carries this optional evidence. Since 21.10.2026 the worker orders Macs and
+gates its own Claude accounts with `src/quota-pacing.js` (weekly pace line,
+5h and weekly guards, soft cap and look-ahead tier); its own per-account
+`quota_slots` heartbeat takes precedence, this row is the fallback. No new
+admission authority is created.
 
-Existing CapacityGate CLI probes export only structured quota windows through
-the passive observer. A matching, unambiguous native account/reset anchor and
-the worker binding are required. Anchors retain identity beyond the 15-minute
-usage freshness limit; they never make old usage fresh. Ambiguous accounts are
-left unknown. Samples and temporary sources remain bounded; tracking is not reset.
+Only live workers are exported: a worker without a Fleet machine row
+(`lastSeenAt`), Hub heartbeat (`observedWorkers`) or observer report for 24 hours
+loses its remembered account pool and its open account binding and is no longer
+part of `scheduling.workers`. A fresh observer report (at most 45 seconds old)
+without `claudeAccounts` forgets the pool at once, so the Mac falls back to its
+bound app account.
+
+Existing CapacityGate CLI probes and stream quota events are attributed to an
+account by reset fingerprint (`resolve`). The universe holds every bound
+account's native/probe resets and the reset fingerprints of both slots of every
+Mac's account pool (`pool_resets`, from `claudeAccounts`). The weekly reset (or
+its preceding cycle) must match exactly one of them; a candidate whose own
+observed 5h window at that time has another reset is excluded. The match must
+be an account the stream's worker was ever bound to, unless the 5h reset matches
+that account as well (cross-confirmation). Pool slots are never returned:
+without provider identity their streams stay unattributed instead of landing on
+an unrelated account with the same weekly reset (21.10.2026: a pool slot's
+stream overwrote another Mac's bound account). Anchors retain identity beyond
+the 15-minute usage freshness limit; they never make old usage fresh. Ambiguous
+accounts are left unknown. Samples and temporary sources remain bounded; pool
+fingerprints are archived and pruned like account anchors after 14 days;
+tracking is not reset.
 
 No fixed Max-plan token price, cross-account capacity equivalence or guaranteed
 weekly task count is inferred. Fit predictions require at least three completed
@@ -387,23 +407,45 @@ margin. Existing production caps, permissions and transaction locks remain final
 Der Reiter zeigt die Vorschau für den nächsten Pre-Gen-, Korrektur-, Übersetzungs-
 oder Upload-Auftrag. `quota_routing.py` liest ausschließlich die bestehenden
 Hub-Betriebsmeldungen und das aktivierte Reservierungsregister (`mode=ro`).
-Exportiert werden nur Worker-ID, Zeit, Annahme, Plätze und aktive Aufgabenarten,
-keine Aufgabentexte oder Zugangsdaten. Der begrenzte Snapshot wird mit der
-Verbrauchsübersicht etwa minütlich erneuert. Fehlt das Register, gibt es keine
-scheinbar leere Last und keine Empfehlung.
+Exportiert werden nur Worker-ID, Zeit, Annahme, Plätze, aktive Aufgabenarten und
+das optionale Feld `quota_slots` (Stand je Claude-Account des Macs: Platz,
+Status, Messzeit, 5h- und Wochenfenster, laufende Arbeiten nur mit Art und
+Startzeit), keine Aufgabentexte oder Zugangsdaten. `quota_slots` wird mit
+derselben Form wie `validQuotaSlots` des Workers geprüft (ein bis zwei Plätze,
+höchstens zwölf Läufe je Platz, Zeiten im ISO-Format); ein ungültiges Feld wird
+verworfen, die Betriebsmeldung bleibt. Meldungen über 64 KiB werden weiterhin
+übersprungen. Der begrenzte Snapshot wird mit der Verbrauchsübersicht etwa
+minütlich erneuert. Fehlt das Register, gibt es keine scheinbar leere Last und
+keine Empfehlung.
 
 SQLite-WAL-Leser dürfen im Registerverzeichnis die Koordinationsdateien
 initialisieren. Die Dienst-Sandbox bindet die Datenbank und eine vorhandene WAL
 weiterhin schreibgeschützt ein; die Verbindung nutzt ausschließlich `mode=ro`.
 Kein exklusiver Lock und kein `immutable`-Lesen einer laufenden Datenbank.
 
-`team-server/distribution.js` verwendet den unveränderten Worker-Scorer aus
-`quota-scores.js` (Provenienz: `team-server/vendor/README.md`). Frische Meldung,
-Annahme, Art-Plätze, physisches Maximum, geteilte Account-Reservierungen und
-Kontingentpuffer werden berücksichtigt. Innerhalb der Worker-Toleranz von 0,03
-sind Macs gleichrangig. Ohne aktuelle Kontingente gilt die bisherige absolute
+`team-server/distribution.js` verwendet das unveränderte Worker-Modul
+`quota-pacing.js` (Provenienz: `team-server/vendor/README.md`). Aus den
+Betriebsmeldungen (jede mit dem Max-Monitor-Stand des Macs als Rückfall) und den
+aktiven Reservierungen entsteht mit `fleetMacs` und `analyseFleet` derselbe
+Flottenstand wie beim Worker. Je Aufgabenart erhält jeder sichtbare Mac den
+Schlüssel aus `macKey`: Last plus Vorsprung seines besten zulässigen Accounts vor
+dem Wochentakt (Bürozeiten Mo–Fr 8–20 Uhr) und Nähe zu einem vollen 5h-Fenster,
+in Aufgaben gerechnet (10 Prozentpunkte = eine Aufgabe). Bei gleichen Prozenten
+zählt nur die Last: jeder Mac eine Aufgabe, dann zwei, dann drei. Kleinerer
+Schlüssel heißt bevorzugt; innerhalb von 0,1 sind Macs gleichrangig.
+
+Ausgeschlossen werden weiterhin Macs ohne frische Meldung, ohne Annahme, ohne
+bekannte oder freie Plätze. Dazu kommen die Sperren des Workers je Account, die
+nie überbrückt werden: „Account am Limit“ (`limited`), „5h-Fenster ausgelastet“
+(`guard_5h`, Planung bis 90 % mit Reserve), „Wochenkontingent fast leer“
+(`guard_weekly`), „Bremst: dem Takt voraus“ (`soft_cap`) und „Wartet: dem Takt
+voraus“ (`paced`). Die Tabelle nennt den Grund, bei Macs mit zwei Accounts den
+gewählten (Account 1 oder Account 2) und im Wochenfenster, wie viel laut Takt
+jetzt frei sein sollte. Ohne aktuelle Kontingente gilt die bisherige absolute
 Lastverteilung. Alte Restwerte bleiben mit Kennzeichnung sichtbar.
 
 Die Vorschau reserviert keine Arbeit, simuliert keinen aufgabenspezifischen
-Zugang und keine schon laufende Präferenz-Wartefrist. Sales behält seinen
+Zugang, keine schon laufende Präferenz-Wartefrist und keine Wartezeit eines
+freien Auftrags (die 60-Minuten-Lockerung des 5h-Plans und die 15-Minuten-Geduld
+der Vorausstufe greifen erst beim Worker). Sales behält seinen
 gesonderten Annahmeweg. Die Ansicht ersetzt keine Startfreigabe.

@@ -32,6 +32,12 @@ DEFAULT_DB = "/var/lib/max-monitor-quota/ledger.sqlite"
 DEFAULT_FLEET = "/var/lib/max-monitor/RSMACS01/fleet.json"
 AVERAGE_SNAPSHOT_SECONDS = 12 * 3600
 AVERAGE_WINDOW_SECONDS = 5 * 86400
+# A worker absent from Fleet machines and heartbeats this long is retired:
+# its pool memory and open account binding end and it is no longer exported.
+LIVE_SECONDS = 24 * 3600
+# Five-hour resets of one window agree to the second across sources; a
+# minute apart they belong to different windows (or different accounts).
+FIVE_HOUR_TOLERANCE = 60
 
 
 def stamp(value):
@@ -57,6 +63,15 @@ def identifier(value):
 
 def number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def within(at, now, age):
+    return number(at) and -30 <= now - at <= age
+
+
+def pool_account(worker, device, slot):
+    """Local identity of one pool slot; never a provider account identity."""
+    return identifier(['worker_pool_slot', worker, device, slot])[:24]
 
 
 def pool_observation(report, worker, device):
@@ -93,7 +108,7 @@ def pool_observation(report, worker, device):
                 windows_valid = False
                 break
             windows[name] = {'used': percent, 'reset': reset, 'at': stamp(account.get('updatedAt'))}
-    return {'account': identifier(['worker_pool_slot', worker, device, selected if valid else None])[:24],
+    return {'account': pool_account(worker, device, selected if valid else None),
             'report_at': stamp(report.get('sampledAt')), 'received_at': stamp(report.get('receivedAt')),
             'sample_at': stamp(account.get('updatedAt')),
             'status': account.get('status') if windows_valid and account.get('status') in ('ready', 'limited', 'error') else 'unknown',
@@ -147,6 +162,8 @@ class Ledger:
         CREATE TABLE IF NOT EXISTS bindings(worker TEXT,account TEXT,since REAL,until REAL,
           PRIMARY KEY(worker,since));
         CREATE TABLE IF NOT EXISTS account_resets(account TEXT,reset REAL,seen REAL,PRIMARY KEY(account,reset));
+        CREATE TABLE IF NOT EXISTS pool_resets(account TEXT,window TEXT,reset REAL,worker TEXT,seen REAL,
+          PRIMARY KEY(account,window,reset));
         CREATE TABLE IF NOT EXISTS samples(id TEXT PRIMARY KEY,account TEXT,worker TEXT,
           window TEXT,reset REAL,at REAL,percent REAL,quality TEXT,source TEXT);
         CREATE INDEX IF NOT EXISTS samples_account_time ON samples(account,window,at);
@@ -213,7 +230,7 @@ class Ledger:
         if since is None or since > time.time() + 60:
             raise ValueError("Invalid tracking start")
         with self.db:
-            for table in ("samples", "events", "usage_features", "tool_usage", "average_snapshots", "runs", "compact_jobs", "collectors", "worker_settings", "bindings", "account_resets", "accounts", "metadata"):
+            for table in ("samples", "events", "usage_features", "tool_usage", "average_snapshots", "runs", "compact_jobs", "collectors", "worker_settings", "bindings", "account_resets", "pool_resets", "accounts", "metadata"):
                 self.db.execute("DELETE FROM " + table)
             self.meta("schema", SCHEMA)
             self.meta("tracking_since", since)
@@ -246,20 +263,32 @@ class Ledger:
         for link in data.get('workerLinks', []):
             if link.get('workerId') not in explicit:
                 links[link.get('deviceId')].add(link.get('workerId'))
+        machines = []
         for machine in data.get("machines", []):
             linked = links.get(machine.get('deviceId'), set())
             worker = clean(machine.get("workerId") or (next(iter(linked)) if len(linked) == 1 else None), 100)
-            if not worker:
-                continue
+            if worker:
+                machines.append((worker, machine))
+        live = self.expire_workers(data, machines, pool, now)
+        for worker, machine in machines:
+            if worker not in live:
+                continue  # A retired Mac's old row never revives its pool or binding.
             # The report was authenticated and device-bound on ingestion. Use
             # the same exact device link here; names and app login IDs do not
             # identify a worker token. Remember a known pool if its observer
             # later goes silent, so it cannot fall back to the old app quota.
             device = machine.get('deviceId')
             if device:
-                observation = pool_observation(reports.get(worker, {}), worker, device)
+                report = reports.get(worker) or {}
+                observation = pool_observation(report, worker, device)
                 if observation is not None:
                     pool[worker] = observation
+                    self.pool_fingerprints(report, worker, device, now)
+                elif (report.get('deviceId') == device and report.get('claudeAccounts') is None
+                      and within(stamp(report.get('sampledAt')), now, 45) and within(stamp(report.get('receivedAt')), now, 45)):
+                    # A live observer without an account pool: the Mac runs on
+                    # its app account again, so forget the pool at once.
+                    pool.pop(worker, None)
             accounts = machine.get("accounts") or []
             bound = next((a for a in accounts if a.get("accountId") == machine.get("monitoringAccountId")
                           and a.get("provider") == "claude"), None)
@@ -298,7 +327,8 @@ class Ledger:
         public_pool = {worker: {k: v for k, v in pool_scheduling(observation, now).items() if k != 'generated_at'}
                        for worker, observation in pool.items()}
         signature = identifier(public_pool)
-        if public_pool and signature != self.setting('worker_pool_public_signature'):
+        # Also republish when the last pool disappears.
+        if signature != self.setting('worker_pool_public_signature', identifier({})):
             self.meta('worker_pool_public_signature', signature)
             # Account selection/usage changes must publish on the next 15s
             # collector pass instead of waiting for the average heartbeat.
@@ -342,6 +372,78 @@ class Ledger:
         self.meta("last_fleet_sample", iso(now))
         self.db.commit()
 
+    def expire_workers(self, data, machines, pool, now):
+        """Remember each worker's newest evidence; return the live workers.
+
+        Evidence is a Fleet machine row (its lastSeenAt), a Hub heartbeat
+        (observedWorkers) or an observer report. A worker without any for
+        LIVE_SECONDS loses its pool memory and its open account binding.
+        """
+        seen = self.setting('worker_seen', {})
+        before = dict(seen)
+
+        def note(worker, at):
+            if worker and number(at):
+                at = min(at, now)
+                if at > seen.get(worker, float('-inf')):
+                    seen[worker] = at
+        for worker, machine in machines:
+            # Without a time stamp the row in the current fleet file is the evidence.
+            note(worker, stamp(machine['lastSeenAt']) if machine.get('lastSeenAt') else now)
+        for item in data.get('observedWorkers') or []:
+            if isinstance(item, dict):
+                note(clean(item.get('workerId'), 100), stamp(item.get('lastSeenAt')))
+        for report in data.get('workerReports') or []:
+            if isinstance(report, dict):
+                note(clean(report.get('workerId'), 100), stamp(report.get('receivedAt') or report.get('sampledAt')))
+        bound = {row[0] for row in self.db.execute('SELECT DISTINCT worker FROM bindings WHERE until IS NULL')}
+        closed = False
+        for worker in sorted(set(pool) | bound):
+            if worker not in seen:
+                # Memory from before this bookkeeping: its own newest evidence.
+                evidence = [(pool.get(worker) or {}).get('received_at'),
+                            self.db.execute('SELECT MAX(last_seen) FROM accounts WHERE worker=?', (worker,)).fetchone()[0],
+                            self.db.execute('SELECT MAX(since) FROM bindings WHERE worker=?', (worker,)).fetchone()[0]]
+                evidence = [at for at in evidence if number(at)]
+                seen[worker] = min(now, max(evidence)) if evidence else now
+            if now - seen[worker] > LIVE_SECONDS:
+                pool.pop(worker, None)
+                closed |= self.db.execute('UPDATE bindings SET until=? WHERE worker=? AND until IS NULL',
+                                          (now, worker)).rowcount > 0
+        for worker in [w for w, at in seen.items() if now - at > LIVE_SECONDS]:
+            del seen[worker]
+        if closed:
+            self.averages_changed('account_binding')
+        if seen != before:
+            self.meta('worker_seen', seen)
+        return set(seen)
+
+    def pool_fingerprints(self, report, worker, device, now):
+        """Register reset fingerprints of both pool slots for resolve().
+
+        A pool slot has no provider identity, so its stream must never be
+        attributed to a bound account that merely shares a weekly reset.
+        """
+        raw = report.get('claudeAccounts')
+        accounts = raw.get('accounts') if isinstance(raw, dict) else None
+        if not isinstance(accounts, list) or len(accounts) > 2:
+            return
+        for account in accounts:
+            if not isinstance(account, dict) or account.get('id') not in ('primary', 'account-2'):
+                continue
+            seen, windows = stamp(account.get('updatedAt')), account.get('windows')
+            if seen is None or not now - 14 * 86400 <= seen <= now + 60 or not isinstance(windows, list) or len(windows) > 2:
+                continue
+            slot = pool_account(worker, device, account['id'])
+            for value in windows:
+                if not isinstance(value, dict) or value.get('kind') not in WINDOWS:
+                    continue
+                name, reset = WINDOWS[value['kind']], stamp(value.get('reset'))
+                if reset is None or not 0 < reset - seen <= (6 * 3600 if name == 'five_hour' else 8 * 86400):
+                    continue
+                self.db.execute('INSERT INTO pool_resets VALUES(?,?,?,?,?) ON CONFLICT(account,window,reset) '
+                                'DO UPDATE SET seen=MAX(seen,excluded.seen)', (slot, name, reset, worker, seen))
+
     def ingest(self, payload, now=None):
         now = time.time() if now is None else now
         worker = payload.get("worker")
@@ -362,8 +464,9 @@ class Ledger:
             probe = payload.get('probe')
             if isinstance(probe, dict) and isinstance(probe.get('windows'), dict):
                 at = stamp(probe.get('at'))
-                weekly = probe['windows'].get('seven_day') or {}
-                account = self.resolve(stamp(weekly.get('reset')))
+                weekly, five = (probe['windows'].get(name) for name in ('seven_day', 'five_hour'))
+                account = self.resolve(stamp(weekly.get('reset')) if isinstance(weekly, dict) else None,
+                                       stamp(five.get('reset')) if isinstance(five, dict) else None, worker, at)
                 bound = self.db.execute('SELECT account FROM bindings WHERE worker=? AND until IS NULL', (worker,)).fetchone()
                 if account and bound and bound[0] == account and at is not None and max(since, now - 900) <= at <= now + 60:
                     for window in ('five_hour', 'seven_day'):
@@ -527,19 +630,51 @@ class Ledger:
             self.archive_rows({'usage_packets': [{'schema': 1, 'worker': packet['worker'], 'run_id': run_id,
                                                  'observations': kept}]}, now)
 
-    def resolve(self, weekly_reset):
+    def reset_universe(self):
+        """Every observed reset fingerprint by account, pool slots included."""
+        universe = {'seven_day': defaultdict(set), 'five_hour': defaultdict(set), 'pool': set(), 'bound': defaultdict(set)}
+        for row in self.db.execute("""SELECT DISTINCT account,window,reset FROM samples
+                WHERE source IN ('fleet','probe') AND reset IS NOT NULL"""):
+            universe[row['window']][row['account']].add(row['reset'])
+        for row in self.db.execute('SELECT account,reset FROM account_resets'):
+            universe['seven_day'][row['account']].add(row['reset'])
+        for row in self.db.execute('SELECT account,window,reset FROM pool_resets'):
+            universe[row['window']][row['account']].add(row['reset'])
+            universe['pool'].add(row['account'])
+        for row in self.db.execute('SELECT DISTINCT worker,account FROM bindings'):
+            universe['bound'][row['worker']].add(row['account'])
+        return universe
+
+    def resolve(self, weekly_reset, five_reset=None, worker=None, at=None, universe=None):
         """Historical account identity is an explicitly inferred reset fingerprint.
 
-        A unique matching current or preceding cycle is required. Never substitute
-        the account currently logged into the worker after a handoff.
+        A unique matching current or preceding weekly cycle is required among
+        all accounts and every Mac's pool slots, so a collision stays ambiguous.
+        An account whose own observed 5h window at that time has another reset
+        is no match. The result must be an account the stream's worker was ever
+        bound to, unless its 5h reset matches as well (cross-confirmed). Pool
+        slots are never returned. Never substitute the account currently
+        logged into the worker after a handoff.
         """
-        if weekly_reset is None:
+        if not number(weekly_reset):
             return None
-        matches = set()
-        for row in self.db.execute("SELECT DISTINCT account,reset FROM samples WHERE source IN ('fleet','probe') AND window='seven_day' AND reset IS NOT NULL UNION SELECT account,reset FROM account_resets"):
-            if abs(weekly_reset - row["reset"]) < 1 or abs(weekly_reset - (row["reset"] - WEEK)) < 1:
-                matches.add(row["account"])
-        return next(iter(matches)) if len(matches) == 1 else None
+        universe = universe or self.reset_universe()
+        matches = {account for account, resets in universe['seven_day'].items()
+                   if any(abs(weekly_reset - r) < 1 or abs(weekly_reset - (r - WEEK)) < 1 for r in resets)}
+        confirmed = set()
+        if number(five_reset):
+            for account in list(matches):
+                resets = universe['five_hour'].get(account, ())
+                if any(abs(five_reset - r) < FIVE_HOUR_TOLERANCE for r in resets):
+                    confirmed.add(account)
+                elif number(at) and any(r - 5 * 3600 <= at < r for r in resets):
+                    matches.discard(account)
+        if len(matches) != 1:
+            return None
+        account = next(iter(matches))
+        if account in universe['pool']:
+            return None
+        return account if account in universe['bound'].get(worker, ()) or account in confirmed else None
 
     def materialize(self):
         # Reserve the writer before opening the read cursor. In WAL mode a
@@ -547,13 +682,11 @@ class Ledger:
         # to upgrade (SQLITE_BUSY_SNAPSHOT), poisoning every following cycle.
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            resolved = {}
+            universe = self.reset_universe()
             for event in self.db.execute("SELECT * FROM events WHERE event_type='quota' AND at IS NOT NULL"):
                 windows = json.loads(event["windows"])
-                reset = (windows.get("seven_day") or {}).get("reset")
-                if reset not in resolved:
-                    resolved[reset] = self.resolve(reset)
-                account = resolved[reset]
+                account = self.resolve((windows.get("seven_day") or {}).get("reset"), (windows.get("five_hour") or {}).get("reset"),
+                                       event["worker"], event["at"], universe)
                 if not account:
                     continue
                 for window, value in windows.items():
@@ -585,13 +718,11 @@ class Ledger:
             if row["finished"] is not None:
                 j["finished"].append(row["finished"])
         quota_events = defaultdict(list)
-        resolved = {}
+        universe = self.reset_universe()
         for event in self.db.execute("SELECT * FROM events WHERE event_type='quota' AND at>=? ORDER BY at", (cutoff - 3600,)):
             windows = json.loads(event["windows"])
-            reset = (windows.get("seven_day") or {}).get("reset")
-            if reset not in resolved:
-                resolved[reset] = self.resolve(reset)
-            account = resolved[reset]
+            account = self.resolve((windows.get("seven_day") or {}).get("reset"), (windows.get("five_hour") or {}).get("reset"),
+                                   event["worker"], event["at"], universe)
             quota_events[(event["worker"], event["job"])].append((event["at"], account))
         quota_times = {key: [q[0] for q in rows] for key, rows in quota_events.items()}
         messages = defaultdict(list)
@@ -870,6 +1001,7 @@ class Ledger:
                 archived_rows['tool_usage'].extend(dict(r) for r in self.db.execute('SELECT * FROM tool_usage WHERE job=?', (job,)))
             archived_rows["samples"] = [] if replay_sales else [dict(r) for r in self.db.execute("SELECT * FROM samples WHERE at<?", (cutoff - 1800,))]
             archived_rows["account_resets"] = [dict(r) for r in self.db.execute('SELECT * FROM account_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))]
+            archived_rows["pool_resets"] = [dict(r) for r in self.db.execute('SELECT * FROM pool_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))]
             self.archive_rows(archived_rows, now)
             for job in old_jobs:
                 self.db.execute('DELETE FROM usage_features WHERE event_id IN (SELECT id FROM events WHERE job=?)', (job,))
@@ -879,6 +1011,7 @@ class Ledger:
             if not replay_sales:
                 self.db.execute("DELETE FROM samples WHERE at<?", (cutoff - 1800,))
             self.db.execute('DELETE FROM account_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))
+            self.db.execute('DELETE FROM pool_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))
         account_groups = group(by_account)
         return {"schema": 2, "generated_at": iso(now), "tracking_since": iso(since),
                 "average_window": {"days": 5, "from": iso(now - AVERAGE_WINDOW_SECONDS), "to": iso(now), "basis": "finished"},
@@ -980,8 +1113,15 @@ class Ledger:
         Resets must be confirmed by a newer sample, never extrapolated to zero.
         """
         workers = {}
+        seen = self.setting('worker_seen', {})
+
+        def live(worker):
+            # Only workers with Fleet evidence in the last 24 h are exported.
+            return number(seen.get(worker)) and now - seen[worker] <= LIVE_SECONDS
         for binding in self.db.execute('SELECT worker,account FROM bindings WHERE until IS NULL'):
             worker, account = binding['worker'], binding['account']
+            if not live(worker):
+                continue
             windows = {}
             for window in ('five_hour', 'seven_day'):
                 row = self.db.execute("SELECT percent,reset,at FROM samples WHERE account=? AND window=? ORDER BY at DESC LIMIT 1",
@@ -996,7 +1136,8 @@ class Ledger:
         # provider identity evidence, sharing or independence is unknown. This
         # optional preference never replaces the worker's fresh capacity gate.
         for worker, observation in self.setting('worker_pool_scheduling', {}).items():
-            workers[worker] = pool_scheduling(observation, now)
+            if live(worker):
+                workers[worker] = pool_scheduling(observation, now)
         return {'schema': 1, 'generated_at': iso(now), 'workers': workers, 'routing': routing_inputs()}
 
 
