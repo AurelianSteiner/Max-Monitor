@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Statistik</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F5F5F3}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+</style>
+</helmet>
+<div style="min-height: 100%; background: #F5F5F3; font-family: Inter, -apple-system, system-ui, sans-serif; color: #18181B; font-size: 14px">
+  <header style="background: #FFFFFF; border-bottom: 1px solid #E7E5E0">
+    <div style="max-width: 1360px; margin: 0 auto; padding: 12px 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px">
+      <div style="display: flex; align-items: center; gap: 10px">
+        <div style="width: 32px; height: 32px; border-radius: 9px; background: #18181B; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 700">M</div>
+        <span style="font-weight: 600; font-size: 15px">Max Monitor</span>
+        <span style="font-size: 12px; font-weight: 600; color: #1D4ED8; background: #EFF4FF; border-radius: 999px; padding: 3px 9px">Team</span>
+      </div>
+      <nav aria-label="Ansichten" style="display: flex; gap: 4px; background: #F4F4F2; border-radius: 10px; padding: 4px; margin-left: 12px">
+        <a href="Main.dc.html" style="text-decoration: none; color: #52525B; border-radius: 7px; padding: 7px 14px; font-weight: 500">Übersicht</a>
+        <a href="Aufgaben.dc.html" style="text-decoration: none; color: #52525B; border-radius: 7px; padding: 7px 14px; font-weight: 500">Aufgaben</a>
+        <a href="Macs.dc.html" style="text-decoration: none; color: #52525B; border-radius: 7px; padding: 7px 14px; font-weight: 500">Macs</a>
+        <a href="Statistik.dc.html" aria-current="page" style="text-decoration: none; color: #18181B; background: #FFFFFF; box-shadow: 0 1px 2px rgba(0,0,0,0.08); border-radius: 7px; padding: 7px 14px; font-weight: 600">Statistik</a>
+      </nav>
+      <div style="margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 13px; color: #52525B"><span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #16A34A"></span>Live · vor 12 s</div>
+    </div>
+  </header>
+
+  <main style="max-width: 1360px; margin: 0 auto; padding: 24px 32px 48px; display: flex; flex-direction: column; gap: 18px">
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px">
+      <h1 style="margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em">Statistik</h1>
+      <span style="font-size: 12px; font-weight: 600; color: #92400E; background: #FEF3C7; border-radius: 999px; padding: 4px 10px">Beispieldaten</span>
+      <div role="group" aria-label="Zeitraum" style="margin-left: auto; display: flex; background: #EFEEEB; border-radius: 9px; padding: 3px; gap: 2px">
+        <button type="button" aria-pressed="false" style="border: 0; font: inherit; font-size: 13px; font-weight: 500; color: #3F3F46; background: transparent; border-radius: 7px; padding: 6px 12px">Heute</button>
+        <button type="button" aria-pressed="true" style="border: 0; font: inherit; font-size: 13px; font-weight: 600; background: #FFFFFF; border-radius: 7px; padding: 6px 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.08)">7 Tage</button>
+        <button type="button" aria-pressed="false" style="border: 0; font: inherit; font-size: 13px; font-weight: 500; color: #3F3F46; background: transparent; border-radius: 7px; padding: 6px 12px">30 Tage</button>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px">
+      <sc-for list="{{kpis}}" as="k" hint-placeholder-count="4">
+        <div style="background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 14px; padding: 16px 18px">
+          <div style="color: #52525B; font-size: 13px; font-weight: 500">{{k.label}}</div>
+          <div style="font-size: 30px; font-weight: 700; letter-spacing: -0.02em; margin-top: 4px">{{k.value}}</div>
+          <div style="font-size: 12.5px; color: {{k.trendColor}}; font-weight: 600; margin-top: 2px">{{k.trend}}</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(520px, 1fr)); gap: 18px">
+      <section aria-labelledby="done-h" style="background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; padding: 16px 18px">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px">
+          <h2 id="done-h" style="margin: 0; font-size: 16px; font-weight: 600">Erledigt pro Tag</h2>
+          <div style="display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: #52525B">
+            <sc-for list="{{kinds}}" as="k" hint-placeholder-count="4"><span style="display: flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 3px; background: {{k.color}}"></span>{{k.name}}</span></sc-for>
+          </div>
+        </div>
+        <div role="img" aria-label="Erledigte Aufgaben pro Tag, Donnerstag bis heute: 9, 10, 2, 0, 13, 11, 10" style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 14px; align-items: end; height: 230px; margin-top: 16px; padding: 0 4px">
+          <sc-for list="{{days}}" as="d" hint-placeholder-count="7">
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; justify-content: flex-end; height: 100%">
+              <span style="font-size: 12px; font-weight: 600; color: #27272A">{{d.total}}</span>
+              <div style="width: 100%; max-width: 44px; display: flex; flex-direction: column-reverse; gap: 2px">
+                <sc-for list="{{d.segs}}" as="s" hint-placeholder-count="4"><div style="height: {{s.h}}; background: {{s.color}}; border-radius: 3px"></div></sc-for>
+              </div>
+              <span style="font-size: 12px; color: {{d.labelColor}}; font-weight: {{d.labelWeight}}">{{d.label}}</span>
+            </div>
+          </sc-for>
+        </div>
+      </section>
+
+      <section aria-labelledby="lead-h" style="background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; padding: 16px 18px">
+        <h2 id="lead-h" style="margin: 0; font-size: 16px; font-weight: 600">Wie lange dauert eine Aufgabe?</h2>
+        <p style="margin: 4px 0 16px; color: #52525B; font-size: 13px">Von „reserviert“ bis „fertig“. Balken = typisch (Median), heller Bereich = langsamste 10 %.</p>
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          <sc-for list="{{lead}}" as="l" hint-placeholder-count="4">
+            <div style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 110px; gap: 14px; align-items: center">
+              <span style="display: flex; align-items: center; gap: 8px; font-weight: 600"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 3px; background: {{l.color}}"></span>{{l.name}}</span>
+              <div style="position: relative; height: 14px; background: #F4F4F5; border-radius: 7px">
+                <div style="position: absolute; left: 0; top: 0; bottom: 0; width: {{l.p90w}}; background: {{l.light}}; border-radius: 7px"></div>
+                <div style="position: absolute; left: 0; top: 0; bottom: 0; width: {{l.medw}}; background: {{l.color}}; border-radius: 7px"></div>
+              </div>
+              <span style="font-size: 12.5px; color: #3F3F46; text-align: right"><strong>{{l.med}}</strong> · max {{l.p90}}</span>
+            </div>
+          </sc-for>
+          <div style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 110px; gap: 14px; font-size: 11.5px; color: #52525B"><span></span><div style="display: flex; justify-content: space-between"><span>0</span><span>15</span><span>30</span><span>45</span><span>60 min</span></div><span></span></div>
+        </div>
+      </section>
+
+      <section aria-labelledby="why-h" style="background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; padding: 16px 18px">
+        <h2 id="why-h" style="margin: 0; font-size: 16px; font-weight: 600">Warum hängt es?</h2>
+        <p style="margin: 4px 0 14px; color: #52525B; font-size: 13px">12 Blockaden in 7 Tagen – die häufigsten Gründe zuerst.</p>
+        <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px">
+          <sc-for list="{{reasons}}" as="r" hint-placeholder-count="5">
+            <li style="display: grid; grid-template-columns: minmax(0, 1fr) 160px 28px; gap: 12px; align-items: center">
+              <span><span style="font-weight: 600">{{r.label}}</span><span style="display: block; font-size: 12px; color: #52525B">{{r.hint}}</span></span>
+              <div style="height: 8px; background: #F4F4F5; border-radius: 4px; overflow: hidden"><div style="height: 100%; width: {{r.w}}; background: #DC2626; border-radius: 4px"></div></div>
+              <span style="font-weight: 700; text-align: right">{{r.n}}</span>
+            </li>
+          </sc-for>
+        </ol>
+      </section>
+
+      <section aria-labelledby="quota-h" style="background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; padding: 16px 18px; overflow-x: auto">
+        <h2 id="quota-h" style="margin: 0; font-size: 16px; font-weight: 600">Wann wird das Claude-Kontingent knapp?</h2>
+        <p style="margin: 4px 0 14px; color: #52525B; font-size: 13px">Höchste Auslastung des 5-h-Fensters pro Mac und Tag.</p>
+        <div role="img" aria-label="Kontingent-Auslastung pro Mac und Tag" style="display: grid; grid-template-columns: 170px repeat(7, minmax(36px, 1fr)); gap: 4px; min-width: 470px; font-size: 12px">
+          <span></span>
+          <sc-for list="{{dayLabels}}" as="dl" hint-placeholder-count="7"><span style="text-align: center; color: #52525B; font-weight: 500">{{dl}}</span></sc-for>
+          <sc-for list="{{heat}}" as="row" hint-placeholder-count="6">
+            <span style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; align-self: center">{{row.name}}</span>
+            <sc-for list="{{row.cells}}" as="c" hint-placeholder-count="7"><span style="height: 30px; border-radius: 6px; background: {{c.bg}}; color: {{c.fg}}; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 11.5px">{{c.v}}</span></sc-for>
+          </sc-for>
+        </div>
+        <div style="display: flex; gap: 14px; flex-wrap: wrap; margin-top: 12px; font-size: 12px; color: #52525B">
+          <span style="display: flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 12px; height: 12px; border-radius: 3px; background: #DBEAFE"></span>unter 60 %</span>
+          <span style="display: flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 12px; height: 12px; border-radius: 3px; background: #FCD9A8"></span>60–89 %</span>
+          <span style="display: flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 12px; height: 12px; border-radius: 3px; background: #B91C1C"></span>Limit fast erreicht (90 %+)</span>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1080}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const K = [
+      { name: 'Newsletter', color: '#2F6FEB', light: '#C7D7FB' },
+      { name: 'Upload', color: '#EA7A16', light: '#FBD5B3' },
+      { name: 'Übersetzung', color: '#0D9488', light: '#B4E3DE' },
+      { name: 'QA', color: '#7C3AED', light: '#DCCBFB' }
+    ];
+    const raw = [['Do', [4, 2, 1, 2]], ['Fr', [5, 3, 0, 2]], ['Sa', [1, 0, 0, 1]], ['So', [0, 0, 0, 0]], ['Mo', [6, 3, 1, 3]], ['Di', [5, 2, 2, 2]], ['Heute', [5, 2, 1, 2]]];
+    const cell = (v) => {
+      if (v === null) return { v: '–', bg: '#F4F4F5', fg: '#71717A' };
+      if (v >= 90) return { v: v + '', bg: '#B91C1C', fg: '#FFFFFF' };
+      if (v >= 60) return { v: v + '', bg: '#FCD9A8', fg: '#7C2D12' };
+      return { v: v + '', bg: v < 25 ? '#EFF4FF' : '#DBEAFE', fg: '#1E3A8A' };
+    };
+    const heatRaw = [
+      ['macbook-1', [72, 85, 10, 0, 91, 78, 64]],
+      ['macbook-von-till-main-2', [40, 55, 0, 0, 62, 48, 27]],
+      ['macbook-2', [30, 35, 5, 0, 44, 52, 8]],
+      ['newsletter-mac-141b2976', [66, 70, 20, 0, 95, 88, 12]],
+      ['macworker-5-schwarz', [50, 61, 0, 0, 73, 69, 44]],
+      ['macbook-till-main', [22, 18, null, null, null, null, null]]
+    ];
+    const reasons = [
+      ['Klaviyo-Liste nicht gefunden', 'Upload · Liste im Kunden-Account fehlt oder umbenannt', 4],
+      ['Briefing unvollständig', 'Newsletter · Pflichtfelder im Briefing leer', 3],
+      ['Claude-Anmeldung abgelaufen', 'Mac · neu anmelden behebt es sofort', 2],
+      ['Prüfpunkte offen', 'QA · automatische Checks nicht bestanden', 2],
+      ['Mac offline', 'Mac · Aufgabe wurde neu verteilt', 1]
+    ];
+    const lead = [[31, 52], [12, 25], [18, 34], [9, 16]];
+    return {
+      kinds: K,
+      kpis: [
+        { label: 'Erledigt', value: '55', trend: '+12 % gegenüber Vorwoche', trendColor: '#15803D' },
+        { label: 'Typische Dauer', value: '21 min', trend: '−3 min gegenüber Vorwoche', trendColor: '#15803D' },
+        { label: 'Blockiert', value: '18 %', trend: '+4 Punkte – meist Klaviyo-Liste', trendColor: '#B91C1C' },
+        { label: 'Macs verfügbar', value: '87 %', trend: 'macbook-till-main oft offline', trendColor: '#92400E' }
+      ],
+      days: raw.map(([label, n]) => ({
+        label, total: n.reduce((a, b) => a + b, 0),
+        labelColor: label === 'Heute' ? '#18181B' : '#52525B', labelWeight: label === 'Heute' ? '700' : '500',
+        segs: n.map((v, i) => ({ h: (v * 13) + 'px', color: K[i].color })).filter((s) => s.h !== '0px')
+      })),
+      lead: K.map((k, i) => ({ name: k.name, color: k.color, light: k.light, med: lead[i][0] + ' min', p90: lead[i][1] + ' min', medw: Math.round(lead[i][0] / 60 * 100) + '%', p90w: Math.round(lead[i][1] / 60 * 100) + '%' })),
+      reasons: reasons.map(([label, hint, n]) => ({ label, hint, n, w: Math.round(n / 4 * 100) + '%' })),
+      dayLabels: raw.map(([l]) => l),
+      heat: heatRaw.map(([name, vals]) => ({ name, cells: vals.map(cell) }))
+    };
+  }
+}
+</script>
+</body>
+</html>

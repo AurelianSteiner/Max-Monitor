@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Macs</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F5F5F3}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+</style>
+</helmet>
+<div style="min-height: 100%; background: #F5F5F3; font-family: Inter, -apple-system, system-ui, sans-serif; color: #18181B; font-size: 14px">
+  <header style="background: #FFFFFF; border-bottom: 1px solid #E7E5E0">
+    <div style="max-width: 1360px; margin: 0 auto; padding: 12px 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px">
+      <div style="display: flex; align-items: center; gap: 10px">
+        <div style="width: 32px; height: 32px; border-radius: 9px; background: #18181B; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 700">M</div>
+        <span style="font-weight: 600; font-size: 15px">Max Monitor</span>
+        <span style="font-size: 12px; font-weight: 600; color: #1D4ED8; background: #EFF4FF; border-radius: 999px; padding: 3px 9px">Team</span>
+      </div>
+      <nav aria-label="Ansichten" style="display: flex; gap: 4px; background: #F4F4F2; border-radius: 10px; padding: 4px; margin-left: 12px">
+        <a href="Main.dc.html" style="text-decoration: none; color: #52525B; border-radius: 7px; padding: 7px 14px; font-weight: 500">Übersicht</a>
+        <a href="Aufgaben.dc.html" style="text-decoration: none; color: #52525B; border-radius: 7px; padding: 7px 14px; font-weight: 500">Aufgaben</a>
+        <a href="Macs.dc.html" aria-current="page" style="text-decoration: none; color: #18181B; background: #FFFFFF; box-shadow: 0 1px 2px rgba(0,0,0,0.08); border-radius: 7px; padding: 7px 14px; font-weight: 600">Macs</a>
+        <a href="Statistik.dc.html" style="text-decoration: none; color: #52525B; border-radius: 7px; padding: 7px 14px; font-weight: 500">Statistik</a>
+      </nav>
+      <div style="margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 13px; color: #52525B"><span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #16A34A"></span>Live · vor 12 s</div>
+    </div>
+  </header>
+
+  <main style="max-width: 1360px; margin: 0 auto; padding: 24px 32px 48px; display: flex; flex-direction: column; gap: 18px">
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px">
+      <h1 style="margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em">Macs</h1>
+      <span style="font-size: 12px; font-weight: 600; color: #92400E; background: #FEF3C7; border-radius: 999px; padding: 4px 10px">Beispieldaten</span>
+      <div role="group" aria-label="Filter" style="margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap">
+        <button type="button" aria-pressed="true" style="font: inherit; font-size: 13px; font-weight: 600; border: 1px solid #18181B; background: #18181B; color: #FFFFFF; border-radius: 999px; padding: 6px 12px">Alle 6</button>
+        <button type="button" aria-pressed="false" style="font: inherit; font-size: 13px; font-weight: 500; border: 1px solid #E4E4E7; background: #FFFFFF; border-radius: 999px; padding: 6px 12px">Arbeiten 2</button>
+        <button type="button" aria-pressed="false" style="font: inherit; font-size: 13px; font-weight: 500; border: 1px solid #E4E4E7; background: #FFFFFF; border-radius: 999px; padding: 6px 12px">Frei 1</button>
+        <button type="button" aria-pressed="false" style="font: inherit; font-size: 13px; font-weight: 600; border: 1px solid #FECACA; background: #FEF2F2; color: #991B1B; border-radius: 999px; padding: 6px 12px">Probleme 3</button>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+      <section aria-label="Alle Macs" style="flex: 999 1 760px; min-width: 0; background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; overflow-x: auto">
+        <table style="width: 100%; min-width: 820px; border-collapse: collapse; font-size: 13px">
+          <thead>
+            <tr style="text-align: left; color: #52525B; font-size: 12px">
+              <th scope="col" style="padding: 12px 16px; font-weight: 600">Mac</th>
+              <th scope="col" style="padding: 12px 8px; font-weight: 600">Zustand</th>
+              <th scope="col" style="padding: 12px 8px; font-weight: 600">Aufgabe</th>
+              <th scope="col" style="padding: 12px 8px; font-weight: 600">Claude-Kontingent</th>
+              <th scope="col" style="padding: 12px 16px 12px 8px; font-weight: 600; text-align: right">Akku</th>
+            </tr>
+          </thead>
+          <tbody>
+            <sc-for list="{{macs}}" as="m" hint-placeholder-count="6">
+              <tr style="border-top: 1px solid #F0EFEC; background: {{m.rowBg}}">
+                <td style="padding: 12px 16px; vertical-align: top">
+                  <div style="font-weight: 600">{{m.name}}</div>
+                  <div style="color: #52525B; font-size: 12px; margin-top: 2px">{{m.model}}</div>
+                </td>
+                <td style="padding: 12px 8px; vertical-align: top">
+                  <span style="display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12px; color: {{m.fg}}; background: {{m.bg}}; border-radius: 999px; padding: 3px 9px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; background: {{m.dot}}"></span>{{m.state}}</span>
+                  <div style="color: #52525B; font-size: 12px; margin-top: 4px">{{m.seen}}</div>
+                </td>
+                <td style="padding: 12px 8px; vertical-align: top; max-width: 240px">
+                  <div style="font-weight: 500">{{m.task}}</div>
+                  <sc-if value="{{m.hasFix}}" hint-placeholder-val="{{false}}">
+                    <button type="button" style="margin-top: 6px; border: 1px solid #D4D4D8; background: #FFFFFF; font: inherit; font-size: 12px; font-weight: 600; border-radius: 8px; padding: 4px 9px; min-height: 28px">{{m.fix}}</button>
+                  </sc-if>
+                </td>
+                <td style="padding: 12px 8px; vertical-align: top; min-width: 210px">
+                  <div style="display: grid; grid-template-columns: 70px minmax(0, 1fr) 38px; gap: 6px; align-items: center; font-size: 12px">
+                    <span style="color: #52525B">5-h-Fenster</span>
+                    <div style="height: 6px; border-radius: 3px; background: #F0F0F2; overflow: hidden"><div style="height: 100%; width: {{m.q5}}; background: {{m.q5c}}"></div></div>
+                    <span style="text-align: right; font-weight: 600">{{m.q5}}</span>
+                    <span style="color: #52525B">Woche</span>
+                    <div style="height: 6px; border-radius: 3px; background: #F0F0F2; overflow: hidden"><div style="height: 100%; width: {{m.qw}}; background: {{m.qwc}}"></div></div>
+                    <span style="text-align: right; font-weight: 600">{{m.qw}}</span>
+                  </div>
+                </td>
+                <td style="padding: 12px 16px 12px 8px; vertical-align: top; text-align: right; white-space: nowrap; color: #3F3F46">{{m.battery}}</td>
+              </tr>
+            </sc-for>
+          </tbody>
+        </table>
+      </section>
+
+      <aside aria-labelledby="mac-detail" style="flex: 1 1 340px; min-width: 0; background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 16px">
+        <div>
+          <h2 id="mac-detail" style="margin: 0; font-size: 18px; font-weight: 700">macbook-1</h2>
+          <div style="color: #52525B; font-size: 13px; margin-top: 3px">MacBook Pro 16" · M4 Pro · Anna</div>
+          <div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px"><span style="color: #1D4ED8; background: #EFF4FF; border-radius: 999px; padding: 3px 9px; font-weight: 600">Arbeitet</span><span style="color: #3F3F46; background: #F4F4F5; border-radius: 999px; padding: 3px 9px; font-weight: 600">4 heute fertig · Ø 22 min</span></div>
+        </div>
+        <div>
+          <h3 style="margin: 0 0 8px; font-size: 13px; font-weight: 600">Bereitschaft</h3>
+          <ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; font-size: 13px">
+            <sc-for list="{{checks}}" as="c" hint-placeholder-count="4">
+              <li style="display: flex; align-items: center; gap: 9px"><span aria-hidden="true" style="width: 18px; height: 18px; border-radius: 50%; background: {{c.bg}}; color: {{c.fg}}; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700">{{c.icon}}</span><span>{{c.label}}</span><span style="margin-left: auto; color: #52525B; font-size: 12px">{{c.note}}</span></li>
+            </sc-for>
+          </ul>
+        </div>
+        <div>
+          <h3 style="margin: 0 0 8px; font-size: 13px; font-weight: 600">Claude-Kontingent</h3>
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+            <div style="background: #FAFAF9; border: 1px solid #F0EFEC; border-radius: 11px; padding: 10px 12px"><div style="font-size: 12px; color: #52525B">5-h-Fenster</div><div style="font-size: 22px; font-weight: 700">64 %</div><div style="font-size: 12px; color: #52525B">frei ab 21:40</div></div>
+            <div style="background: #FAFAF9; border: 1px solid #F0EFEC; border-radius: 11px; padding: 10px 12px"><div style="font-size: 12px; color: #52525B">Woche</div><div style="font-size: 22px; font-weight: 700">58 %</div><div style="font-size: 12px; color: #52525B">neu ab Sa 18:00</div></div>
+          </div>
+        </div>
+        <div>
+          <h3 style="margin: 0 0 8px; font-size: 13px; font-weight: 600">System</h3>
+          <div style="display: grid; grid-template-columns: 72px minmax(0, 1fr) 70px; gap: 8px; align-items: center; font-size: 12.5px">
+            <span style="color: #52525B">CPU</span><div style="height: 6px; border-radius: 3px; background: #F0F0F2; overflow: hidden"><div style="height: 100%; width: 83%; background: #D97706"></div></div><span style="text-align: right">83 %</span>
+            <span style="color: #52525B">Speicher</span><div style="height: 6px; border-radius: 3px; background: #F0F0F2; overflow: hidden"><div style="height: 100%; width: 71%; background: #2563EB"></div></div><span style="text-align: right">34 / 48 GB</span>
+            <span style="color: #52525B">Platte</span><div style="height: 6px; border-radius: 3px; background: #F0F0F2; overflow: hidden"><div style="height: 100%; width: 72%; background: #2563EB"></div></div><span style="text-align: right">142 GB frei</span>
+          </div>
+          <div style="color: #52525B; font-size: 12px; margin-top: 10px">macOS 26.4.1 · Max Monitor 2.9.1 · Akku 82 %, lädt</div>
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1080}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const q = (v) => (parseInt(v, 10) >= 80 ? '#DC2626' : parseInt(v, 10) >= 60 ? '#D97706' : '#2563EB');
+    const mac = (o) => Object.assign({ rowBg: '#FFFFFF', hasFix: false }, o, { q5c: q(o.q5), qwc: q(o.qw) });
+    return {
+      macs: [
+        mac({ name: 'macbook-1', model: 'MacBook Pro 16" · M4 Pro · Anna', state: 'Arbeitet', fg: '#1D4ED8', bg: '#EFF4FF', dot: '#2563EB', seen: 'Meldung gerade eben', task: 'TISSO Herbst-Newsletter – Mail 01', q5: '64%', qw: '58%', battery: '82 % · lädt', rowBg: '#F8FAFF' }),
+        mac({ name: 'macbook-von-till-main-2', model: 'MacBook Air 15" · M3 · Till', state: 'Arbeitet', fg: '#1D4ED8', bg: '#EFF4FF', dot: '#2563EB', seen: 'Meldung gerade eben', task: 'Upload Bergfreunde Wintersale · 6 %', q5: '27%', qw: '35%', battery: '93 % · lädt' }),
+        mac({ name: 'macbook-2', model: 'MacBook Air 13" · M2', state: 'Frei', fg: '#166534', bg: '#ECFDF3', dot: '#16A34A', seen: 'Meldung gerade eben', task: 'Reserviert: QA Weinhaus Advent', q5: '8%', qw: '22%', battery: '57 %' }),
+        mac({ name: 'newsletter-mac-141b2976', model: 'MacBook Pro 14" · M3 Pro', state: 'Anmeldung abgelaufen', fg: '#991B1B', bg: '#FEF2F2', dot: '#DC2626', seen: 'Meldung gerade eben', task: 'Nimmt keine Aufgaben an', hasFix: true, fix: 'Claude neu anmelden', q5: '12%', qw: '41%', battery: 'Netzteil' }),
+        mac({ name: 'macworker-5-schwarz', model: 'Mac mini · M2 Pro', state: 'Meldung fehlt', fg: '#92400E', bg: '#FFFBEB', dot: '#D97706', seen: 'Still seit 18 min', task: 'Keine Aufgabe', hasFix: true, fix: 'Worker prüfen', q5: '44%', qw: '70%', battery: 'Netzteil' }),
+        mac({ name: 'macbook-till-main', model: 'MacBook Pro · Till', state: 'Offline', fg: '#3F3F46', bg: '#F4F4F5', dot: '#A1A1AA', seen: 'Zuletzt vor 2 h', task: 'Nicht erreichbar', q5: '0%', qw: '17%', battery: '–' })
+      ],
+      checks: [
+        { icon: '✓', bg: '#DCFCE7', fg: '#166534', label: 'Claude angemeldet', note: 'OAuth gültig' },
+        { icon: '✓', bg: '#DCFCE7', fg: '#166534', label: 'Worker läuft', note: 'Worker 2' },
+        { icon: '✓', bg: '#DCFCE7', fg: '#166534', label: 'Meldet sich regelmäßig', note: 'gerade eben' },
+        { icon: '!', bg: '#FEF3C7', fg: '#92400E', label: 'Temperatur erhöht', note: 'CPU 83 %' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "v": 3,
+  "createdOnFiles": {"v": 1, "at": "2026-10-21T20:05:00Z"},
+  "title": "Max Monitor Team-Dashboard Redesign",
+  "launch": {"view": "canvas"},
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {"x": 0, "y": 0, "w": 1440, "h": 1240, "title": "1 · Übersicht", "expand": "fill", "is_interactive": true},
+    "Aufgaben.dc.html": {"x": 1520, "y": 0, "w": 1440, "h": 1240, "title": "2 · Aufgaben (Queue + Verlauf)", "expand": "fill", "is_interactive": true},
+    "Macs.dc.html": {"x": 0, "y": 1360, "w": 1440, "h": 1080, "title": "3 · Macs", "expand": "fill", "is_interactive": true},
+    "Statistik.dc.html": {"x": 1520, "y": 1360, "w": 1440, "h": 1080, "title": "4 · Statistik", "expand": "fill", "is_interactive": true}
+  },
+  "order": ["Main.dc.html", "Aufgaben.dc.html", "Macs.dc.html", "Statistik.dc.html"],
+  "notes": {
+    "headline": {"x": 0, "y": -300, "text": "Max Monitor · Team-Dashboard – Redesign-Vorschlag", "kind": "title1", "maxW": 2960}
+  },
+  "designSystems": []
+}

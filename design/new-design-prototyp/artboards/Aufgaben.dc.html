@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Aufgaben</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F5F5F3}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+</style>
+</helmet>
+<div style="min-height: 100%; background: #F5F5F3; font-family: Inter, -apple-system, system-ui, sans-serif; color: #18181B; font-size: 14px">
+  <header style="background: #FFFFFF; border-bottom: 1px solid #E7E5E0">
+    <div style="max-width: 1360px; margin: 0 auto; padding: 12px 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px">
+      <div style="display: flex; align-items: center; gap: 10px">
+        <div style="width: 32px; height: 32px; border-radius: 9px; background: #18181B; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 700">M</div>
+        <span style="font-weight: 600; font-size: 15px">Max Monitor</span>
+        <span style="font-size: 12px; font-weight: 600; color: #1D4ED8; background: #EFF4FF; border-radius: 999px; padding: 3px 9px">Team</span>
+      </div>
+      <nav aria-label="Ansichten" style="display: flex; gap: 4px; background: #F4F4F2; border-radius: 10px; padding: 4px; margin-left: 12px">
+        <a href="Main.dc.html" style="text-decoration: none; color: #52525B; border-radius: 7px; padding: 7px 14px; font-weight: 500">Übersicht</a>
+        <a href="Aufgaben.dc.html" aria-current="page" style="text-decoration: none; color: #18181B; background: #FFFFFF; box-shadow: 0 1px 2px rgba(0,0,0,0.08); border-radius: 7px; padding: 7px 14px; font-weight: 600">Aufgaben</a>
+        <a href="Macs.dc.html" style="text-decoration: none; color: #52525B; border-radius: 7px; padding: 7px 14px; font-weight: 500">Macs</a>
+        <a href="Statistik.dc.html" style="text-decoration: none; color: #52525B; border-radius: 7px; padding: 7px 14px; font-weight: 500">Statistik</a>
+      </nav>
+      <div style="margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 13px; color: #52525B"><span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #16A34A"></span>Live · vor 12 s</div>
+    </div>
+  </header>
+
+  <main style="max-width: 1360px; margin: 0 auto; padding: 24px 32px 48px; display: flex; flex-direction: column; gap: 18px">
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px">
+      <h1 style="margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em">Aufgaben</h1>
+      <span style="color: #52525B">19 heute · 9 offen</span>
+      <span style="font-size: 12px; font-weight: 600; color: #92400E; background: #FEF3C7; border-radius: 999px; padding: 4px 10px">Beispieldaten</span>
+      <div style="margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center">
+        <label style="display: flex; align-items: center; gap: 8px; border: 1px solid #E4E4E7; border-radius: 9px; padding: 7px 10px; background: #FFFFFF; min-width: 240px">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717A" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+          <span style="position: absolute; left: -9999px">Aufgaben suchen</span>
+          <input type="search" placeholder="Aufgabe, Kunde oder Mac" style="border: 0; outline: none; font: inherit; font-size: 13px; width: 100%; background: transparent">
+        </label>
+        <div role="group" aria-label="Aufgabenart" style="display: flex; gap: 6px; flex-wrap: wrap">
+          <button type="button" aria-pressed="true" style="font: inherit; font-size: 13px; font-weight: 600; border: 1px solid #18181B; background: #18181B; color: #FFFFFF; border-radius: 999px; padding: 6px 12px">Alle</button>
+          <sc-for list="{{kinds}}" as="k" hint-placeholder-count="4">
+            <button type="button" aria-pressed="false" style="font: inherit; font-size: 13px; font-weight: 500; border: 1px solid #E4E4E7; background: #FFFFFF; color: #27272A; border-radius: 999px; padding: 6px 12px; display: flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 9px; height: 9px; border-radius: 3px; background: {{k.color}}"></span>{{k.name}}</button>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+      <div style="flex: 999 1 760px; min-width: 0; overflow-x: auto">
+        <div style="display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: 14px; min-width: 900px">
+          <sc-for list="{{columns}}" as="col" hint-placeholder-count="4">
+            <section style="background: #EFEEEB; border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 8px">
+              <h2 style="margin: 2px 4px 4px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; color: #27272A"><span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: {{col.color}}"></span>{{col.title}}<span style="color: #52525B; font-weight: 500">{{col.count}}</span></h2>
+              <sc-for list="{{col.cards}}" as="c" hint-placeholder-count="3">
+                <article style="background: #FFFFFF; border: {{c.border}}; border-radius: 11px; padding: 11px 12px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.04)">
+                  <div style="display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: #3F3F46"><span aria-hidden="true" style="width: 9px; height: 9px; border-radius: 3px; background: {{c.color}}"></span>{{c.kind}}<span style="margin-left: auto; color: #52525B; font-weight: 500">{{c.time}}</span></div>
+                  <div style="font-weight: 600; line-height: 1.3">{{c.title}}</div>
+                  <div style="font-size: 12.5px; color: #52525B">{{c.meta}}</div>
+                  <sc-if value="{{c.hasProgress}}" hint-placeholder-val="{{false}}">
+                    <div style="display: flex; align-items: center; gap: 8px"><div style="flex: 1 1 auto; height: 5px; border-radius: 3px; background: #EEF2FF; overflow: hidden"><div style="height: 100%; width: {{c.progress}}; background: #2563EB"></div></div><span style="font-size: 11.5px; color: #1D4ED8; font-weight: 600">{{c.progressLabel}}</span></div>
+                  </sc-if>
+                  <sc-if value="{{c.hasReason}}" hint-placeholder-val="{{false}}">
+                    <div style="font-size: 12.5px; color: #991B1B; background: #FEF2F2; border-radius: 7px; padding: 6px 8px">{{c.reason}}</div>
+                    <button type="button" style="align-self: flex-start; border: 1px solid #D4D4D8; background: #FFFFFF; font: inherit; font-size: 12.5px; font-weight: 600; border-radius: 8px; padding: 5px 10px; min-height: 30px">{{c.action}}</button>
+                  </sc-if>
+                </article>
+              </sc-for>
+              <sc-if value="{{col.hasMore}}" hint-placeholder-val="{{false}}">
+                <button type="button" style="border: 0; background: transparent; font: inherit; font-size: 13px; font-weight: 600; color: #1D4ED8; padding: 6px; text-align: left">{{col.more}}</button>
+              </sc-if>
+            </section>
+          </sc-for>
+        </div>
+      </div>
+
+      <aside aria-labelledby="detail-h" style="flex: 1 1 340px; min-width: 0; background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 14px">
+        <div>
+          <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #3F3F46"><span aria-hidden="true" style="width: 9px; height: 9px; border-radius: 3px; background: #2F6FEB"></span>Newsletter · TISSO</div>
+          <h2 id="detail-h" style="margin: 6px 0 0; font-size: 18px; font-weight: 700">TISSO Herbst-Newsletter – Mail 01</h2>
+          <div style="margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; font-size: 12.5px"><span style="color: #1D4ED8; background: #EFF4FF; border-radius: 999px; padding: 3px 9px; font-weight: 600">Läuft · 13 min</span><span style="color: #3F3F46; background: #F4F4F5; border-radius: 999px; padding: 3px 9px; font-weight: 600">macbook-1</span></div>
+        </div>
+        <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column">
+          <sc-for list="{{steps}}" as="s" hint-placeholder-count="5">
+            <li style="display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 7px 0">
+              <span aria-hidden="true" style="width: 18px; height: 18px; border-radius: 50%; border: 2px solid {{s.ring}}; background: {{s.fill}}; box-sizing: border-box; margin-top: 1px"></span>
+              <span style="font-weight: {{s.weight}}; color: {{s.text}}">{{s.label}}</span>
+              <span style="font-size: 12px; color: #52525B">{{s.time}}</span>
+            </li>
+          </sc-for>
+        </ol>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap">
+          <button type="button" style="border: 0; background: #18181B; color: #FFFFFF; font: inherit; font-size: 13px; font-weight: 600; border-radius: 9px; padding: 8px 12px; min-height: 36px">In der Werkstatt zeigen</button>
+          <button type="button" style="border: 1px solid #D4D4D8; background: #FFFFFF; font: inherit; font-size: 13px; font-weight: 600; border-radius: 9px; padding: 8px 12px; min-height: 36px">In ClickUp öffnen</button>
+        </div>
+        <div style="border-top: 1px solid #F0EFEC; padding-top: 12px">
+          <h3 style="margin: 0 0 8px; font-size: 13px; font-weight: 600; color: #27272A">Verlauf heute</h3>
+          <ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px">
+            <sc-for list="{{feed}}" as="e" hint-placeholder-count="6">
+              <li style="display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; font-size: 12.5px"><span style="color: #52525B">{{e.time}}</span><span><span style="font-weight: 600">{{e.who}}</span> <span style="color: #3F3F46">{{e.what}}</span></span></li>
+            </sc-for>
+          </ul>
+          <a href="Aufgaben.dc.html" style="display: inline-block; margin-top: 10px; font-size: 13px; font-weight: 500; text-decoration: none">Ganzen Verlauf zeigen</a>
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1240}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const K = { Newsletter: '#2F6FEB', Upload: '#EA7A16', 'Übersetzung': '#0D9488', QA: '#7C3AED' };
+    const card = (kind, title, meta, time, extra) => Object.assign({ kind, title, meta, time, color: K[kind], border: '1px solid #ECEBE7', hasProgress: false, hasReason: false }, extra || {});
+    return {
+      kinds: Object.keys(K).map((name) => ({ name, color: K[name] })),
+      columns: [
+        { title: 'Wartet', count: '4', color: '#D97706', hasMore: false, cards: [
+          card('QA', 'QA Weinhaus Advent', 'Reserviert für macbook-2', '6 min'),
+          card('Übersetzung', 'Übersetzung Winter NL', 'Noch keinem Mac zugeordnet', '18 min'),
+          card('Newsletter', 'Weinhaus Abverkauf – Mail 03', 'Noch keinem Mac zugeordnet', '9 min'),
+          card('Upload', 'Upload Gartenmarkt Herbst', 'Noch keinem Mac zugeordnet', '3 min')
+        ] },
+        { title: 'Läuft', count: '2', color: '#2563EB', hasMore: false, cards: [
+          card('Newsletter', 'TISSO Herbst-Newsletter – Mail 01', 'macbook-1 · Entwürfe rendern', '13 min', { border: '2px solid #2563EB', hasProgress: true, progress: '60%', progressLabel: 'Schritt 3/5' }),
+          card('Upload', 'Upload Bergfreunde Wintersale', 'macbook-von-till-main-2 · Hochladen', '2 min', { hasProgress: true, progress: '6%', progressLabel: '6 %' })
+        ] },
+        { title: 'Blockiert', count: '3', color: '#DC2626', hasMore: false, cards: [
+          card('Upload', 'Outdoor-Shop Willkommensflow', 'macbook-von-till-main-2', '1 h', { hasReason: true, reason: 'Klaviyo-Liste nicht gefunden', action: 'Liste zuordnen' }),
+          card('Newsletter', 'Weinhaus Abverkauf – Mail 02', 'macbook-1', '42 min', { hasReason: true, reason: 'Briefing unvollständig', action: 'Briefing öffnen' }),
+          card('QA', 'QA Gartenmarkt Frühbucher', 'macbook-2', '25 min', { hasReason: true, reason: '2 Prüfpunkte offen', action: 'Prüfbericht' })
+        ] },
+        { title: 'Fertig heute', count: '10', color: '#16A34A', hasMore: true, more: '6 weitere anzeigen', cards: [
+          card('Newsletter', 'TISSO Herbst-Newsletter – Mail 00', 'macbook-1 · 31 min', '12:48'),
+          card('Upload', 'Bergfreunde Teaser', 'macbook-von-till-main-2 · 9 min', '11:20'),
+          card('QA', 'QA Weinhaus Herbst', 'macbook-2 · 8 min', '10:55'),
+          card('Übersetzung', 'Übersetzung Sale FR', 'macbook-2 · 18 min', '10:12')
+        ] }
+      ],
+      steps: [
+        { label: 'Reserviert', time: '12:35', ring: '#16A34A', fill: '#16A34A', weight: '500', text: '#27272A' },
+        { label: 'Briefing gelesen', time: '12:35', ring: '#16A34A', fill: '#16A34A', weight: '500', text: '#27272A' },
+        { label: 'Entwürfe rendern', time: 'seit 12:43', ring: '#2563EB', fill: '#DBEAFE', weight: '700', text: '#18181B' },
+        { label: 'Freigabe-Check', time: '', ring: '#D4D4D8', fill: '#FFFFFF', weight: '500', text: '#52525B' },
+        { label: 'Nach Klaviyo hochladen', time: '', ring: '#D4D4D8', fill: '#FFFFFF', weight: '500', text: '#52525B' }
+      ],
+      feed: [
+        { time: '19:29', who: 'macworker-5-schwarz', what: 'letzte Meldung – seitdem still' },
+        { time: '12:48', who: 'TISSO – Mail 00', what: 'fertig nach 31 min' },
+        { time: '12:43', who: 'TISSO – Mail 01', what: 'rendert Entwürfe' },
+        { time: '12:39', who: 'newsletter-mac-141b2976', what: 'Claude-Anmeldung abgelaufen' },
+        { time: '12:35', who: 'Outdoor-Shop Willkommensflow', what: 'blockiert: Klaviyo-Liste nicht gefunden' },
+        { time: '12:31', who: 'QA Weinhaus Advent', what: 'für macbook-2 reserviert' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
