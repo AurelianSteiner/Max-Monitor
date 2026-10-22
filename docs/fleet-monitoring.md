@@ -807,6 +807,9 @@ werden dem Worker aus `betrifft` zugeordnet. Ein flottenweit roter Update-Stand
 oder eine unbekannte Systemmeldung bleibt ein sichtbarer Betriebshinweis ohne
 Fehlerflag am meldenden Mac. Die vollständige Fehlerliste und alle gültigen
 Laufbelege bleiben erhalten; eine Anzeige ändert keine Aufgabenannahme.
+Reine Vorwarnungen wie ein bald ablaufender Token bleiben als Hinweis sichtbar,
+setzen einen arbeitenden Mac aber weder auf `blocked` noch auf `failed` und zählen
+nicht als Worker-Störung. Ein tatsächlich abgelaufener Login bleibt ein Fehler.
 
 Die API übernimmt dafür optional `workerIssues` im Queue-Snapshot:
 `{ id, workerId, stage, severity: "error" | "warning", message, reportedAt }`.

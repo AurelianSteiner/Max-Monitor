@@ -41,3 +41,14 @@ test('real worker errors and lost worker heartbeats remain visible independently
   assert.equal(status.machineDisplayStatus({ ...healthy(), workerStatus: 'offline' }), 'offline');
   assert.equal(status.machineDisplayStatus({ ...healthy(), status: 'offline', pendingClickup: 1 }), 'offline');
 });
+
+test('advance token warnings stay visible without marking a working Mac as blocked or failed', () => {
+  const machine = { ...healthy(), workerIssues: [{ severity: 'warning', stage: 'claude',
+    message: 'Der Claude-Token läuft in 12 Tagen ab', reportedAt: new Date().toISOString() }] };
+  assert.equal(status.machineDisplayStatus(machine), 'online');
+  assert.equal(status.workerFailureReason(machine), null);
+  assert.match(status.machineAttentionReasons(machine)[0], /Worker-Warnung/);
+  machine.workerIssues.push({ severity: 'error', stage: 'claude', message: 'not logged in' });
+  assert.equal(status.machineDisplayStatus(machine), 'failed');
+  assert.match(status.workerFailureReason(machine), /nicht angemeldet/);
+});

@@ -384,13 +384,12 @@
     if (machine.activity?.fresh && machine.service?.running === false) return "failed";
     if ((machine.workerIssues || []).some(issue => issue.severity === "error")) return "failed";
     if (machine.workerStatus && machine.workerStatus !== "online") return machine.workerStatus;
-    if ((machine.workerIssues || []).length) return "blocked";
     if (machine.workerId && !machine.workerStatus && machine.telemetrySource !== "worker") return "unknown";
     return machine.status;
   }
   function workerFailureReason(machine) {
     if (machine.activity?.fresh && machine.service?.running === false) return "Worker-Dienst läuft nicht · Wartungsdienst prüft";
-    if ((machine.workerIssues || []).length) return machineAttentionReasons(machine)[0];
+    if ((machine.workerIssues || []).some(issue => issue.severity === "error")) return machineAttentionReasons(machine)[0];
     if (machine.workerStatus && machine.workerStatus !== "online") return `Worker ${statusNames[machine.workerStatus] || machine.workerStatus}`;
     if (machine.workerId && !machine.workerStatus && machine.telemetrySource !== "worker") return "Worker-Status unbekannt";
     return null;
@@ -1564,6 +1563,10 @@
       }
       const failure = workerFailureReason(machine);
       if (failure) card.append(node("p", "usage-note fleet-issue", failure));
+      else {
+        const warning = workerIssues(machine).find(issue => issue.severity === "warning");
+        if (warning) card.append(node("p", "usage-note", workerIssueReason(warning)));
+      }
       const account = machineAccount(machine);
       const accountIdentity = machineAccountIdentity(machine);
       const accountLabel = node("p", account ? "machine-account" : "machine-account unbound", accountIdentity.text);
