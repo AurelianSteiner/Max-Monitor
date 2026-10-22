@@ -25,6 +25,7 @@
     "scripts/task-state.cjs",
     "scripts/worker-admin-hub.mjs",
     "scripts/worker-admin.mjs",
+    "scripts/worker-issue-scope.cjs",
     "scripts/worker-diagnose.py",
     "scripts/worker-remote-hub.mjs",
     "scripts/worker-remote.mjs",

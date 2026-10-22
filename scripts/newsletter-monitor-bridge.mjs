@@ -14,6 +14,7 @@ import { cleanupErrorCopies, createErrorCleanupWriter } from './error-copy-clean
 import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
 import { applyPmOwners, createPmRoutingReader } from './pm-owner.mjs';
 import taskState from './task-state.cjs';
+import issueScope from './worker-issue-scope.cjs';
 import { checkpointBlocker, applyBlockerContexts, blockerContext, setupOwner, BLOCKER_OWNERS } from './blocker-context.mjs';
 import { createStatusAudit, saveStatusAudit } from './status-reconciliation.mjs';
 
@@ -563,10 +564,6 @@ export function freshClaimCycle(before, after) {
   return after.cached === before.cached && after.fallback === before.fallback;
 }
 
-// The worker uses its system-notice lifecycle for this per-customer Pre-Gen
-// setup gap. It affects the order's handover, not the Mac's ability to work.
-const customerSetupNotice = value => value?.kind === 'system' && value.stage === 'filestage_zuordnung';
-
 function parseSystemNotice(message) {
   const text = typeof message?.text === 'string' ? message.text : '';
   // Older workers omit metadata only for this exact system-error template.
@@ -586,14 +583,18 @@ function parseSystemNotice(message) {
     .replace(/((?:api[_-]?key|token|secret|password|passwort)["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, '$1[ENTFERNT]')
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
   const stage = displayText(value.stage || value.tool || value.kind, 80);
-  return { id: String(message.ts), workerId: value.worker, stage,
+  const scope = issueScope.notificationScope(value, text);
+  const target = issueScope.affectedWorker(value);
+  return { id: String(message.ts), workerId: target || value.worker, stage,
+    scope: scope === 'worker' && !target ? 'unknown' : scope,
+    ...(value.stage === 'nachbar' && target ? { betrifft: target } : {}),
     severity: warning ? 'warning' : 'error', message: displayText(safe, 500, `Worker-Fehler bei ${stage}`),
     reportedAt: new Date(time).toISOString() };
 }
 
 export function parseWorkerIssue(message) {
-  if (customerSetupNotice(message?.metadata?.event_payload)) return null;
-  return parseSystemNotice(message);
+  const issue = parseSystemNotice(message);
+  return issue?.scope === 'worker' ? issue : null;
 }
 
 // Workflow kind, ClickUp ID and monitor task ID of a job in an error copy.
@@ -658,12 +659,18 @@ export function buildBlockedErrors(messages, channelId, tasks = [], { manualUplo
     const time = Number(message.ts) * 1000;
     if (!/^\d+\.\d+$/.test(message.ts) || !Number.isFinite(time) || time <= 0 || time > 8640000000000000) throw new Error('Slack: Fehlermeldung ohne gültige Nachrichten-ID.');
     const lauf = value?.kind === 'lauf';
-    const setup = customerSetupNotice(value);
+    const setup = issue?.scope === 'resource';
+    const order = lauf || setup || issue?.scope === 'run';
     // KOR-10: the worker rewrote this copy for a withdrawn order; no open error.
     if (lauf && value.state === WITHDRAWN_RUN_STATE) continue;
     const text = String(message.text || '');
     const jobId = String(value?.task_id || '');
-    const { kind, taskId, sourceId, workflow } = errorJob(jobId, lauf || setup);
+    const job = errorJob(jobId, order);
+    if (!jobId && issue && issue.scope !== 'worker') {
+      const fallback = issue.stage === 'filestage_zuordnung' ? 'newsletter' : order ? 'task-errors' : 'system-notices';
+      Object.assign(job, { kind: fallback, workflow: fallback });
+    }
+    const { kind, taskId, sourceId, workflow } = job;
     const source = tasks.find(task => task.id === sourceId);
     const taskLink = /<(https:\/\/app\.clickup\.com\/t\/[A-Za-z0-9_-]+)\|([^>]+)>/.exec(text);
     // Existing worker copies contain a permalink to their original channel.
@@ -671,20 +678,22 @@ export function buildBlockedErrors(messages, channelId, tasks = [], { manualUplo
     const errorUrl = `https://${workspace}/archives/${encodeURIComponent(channelId)}/p${message.ts.replace('.', '')}`;
     const body = text.split('\n').slice(1).join('\n').replace(/^(.*?[Bb]lockiert:)\s*<https:\/\/app\.clickup\.com\/t\/[^>]+>[^\n]*\n/u, '$1\n');
     const diagnosis = issue?.message || parseBlockedReason(body) || 'Offene Fehlermeldung in #ai-fehler';
-    const company = displayText(slackText(text.split('\n')[0]).replace(/[*`]/g, '').split(' · ').slice(1).join(' · '), 200);
+    const company = displayText(slackText(value?.customer_name || text.split('\n')[0].replace(/[*`]/g, '').split(' · ').slice(1).join(' · ')), 200);
     const id = `slack-error:${channelId}:${message.ts}`;
     const updatedAt = new Date(time).toISOString();
-    const context = lauf || setup ? blockerContext(diagnosis, { state: value.state,
-      owner: setup ? 'stammdaten' : BLOCKER_OWNERS.has(value.owner) ? value.owner : OWNER_OF_GRUND[value.grund] }) : {};
+    const context = order ? blockerContext(diagnosis, { state: value.state,
+      owner: issue?.stage === 'filestage_zuordnung' ? 'stammdaten'
+        : issue?.scope === 'run' ? 'technik' : BLOCKER_OWNERS.has(value.owner) ? value.owner : OWNER_OF_GRUND[value.grund] }) : {};
     if (!(kind === 'upload' && manualUploadIds.has(taskId))) {
       rows.set(id, { ...own(source), ...context, id, status: 'blocked', workflow,
-        title: displayText(slackText(taskLink?.[2] || source?.title || (setup ? issue?.message : issue ? `Worker · ${issue.workerId} · ${issue.stage}` : text.split('\n')[0])), 300, 'Fehler in #ai-fehler'),
+        title: displayText(slackText(taskLink?.[2] || source?.title || (issue?.scope === 'worker' ? `Worker · ${issue.workerId} · ${issue.stage}`
+          : issue ? jobId || issue.message : text.split('\n')[0])), 300, 'Fehler in #ai-fehler'),
         url: taskLink?.[1] || source?.url, errorUrl,
-        company: source?.company || company, workerId: value?.worker || issue?.workerId,
+        company: source?.company || company, workerId: issue?.workerId || value?.worker,
         phase: 'Offen in #ai-fehler', blockedReason: diagnosis, attemptId: value?.run_id,
         progress: undefined, updatedAt });
     }
-    if (!lauf) continue;
+    if (!order) continue;
     for (const { job, attemptId } of causeJobs(value, jobId, id)) {
       const other = errorJob(job, true);
       if (other.kind === 'upload' && manualUploadIds.has(other.taskId)) continue;

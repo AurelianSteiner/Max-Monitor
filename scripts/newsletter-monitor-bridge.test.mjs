@@ -728,13 +728,13 @@ test('installer generates a valid launchd template without including a supplied 
 const issueMessage = (overrides = {}) => ({ ts: '1791374000.001', text: ':red_circle: Mac `mac-1` holt keine Aufgaben\n```Failed to authenticate: OAuth session expired```\nAbhilfe: private path',
   metadata: { event_type: 'ai_newsletter_fehler', event_payload: { kind: 'system', worker: 'mac-1', stage: 'claude' } }, ...overrides });
 
-test('worker diagnostics include auth and arbitrary system/update failures without tasks or secrets', () => {
+test('worker diagnostics include auth and operating system/update failures without tasks or secrets', () => {
   const issue = parseWorkerIssue(issueMessage());
   assert.equal(issue.workerId, 'mac-1');
   assert.equal(issue.severity, 'error');
   assert.match(issue.message, /OAuth session expired/);
   assert.doesNotMatch(JSON.stringify(issue), /private path/);
-  for (const stage of ['clickup_list', 'finalize', 'slack', 'claude']) {
+  for (const stage of ['clickup_list', 'slack', 'claude']) {
     const message = issueMessage({ text: 'Systemfehler\n```HTTP 503\nBearer sensitive-value token=another-secret```' });
     message.metadata.event_payload.stage = stage;
     const parsed = parseWorkerIssue(message);

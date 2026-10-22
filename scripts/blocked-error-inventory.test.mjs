@@ -35,6 +35,7 @@ test('each error message maps to its exact workflow/attempt, even without a Clic
 
 test('system/update errors are represented individually, and diagnostics redact credentials', () => {
   const messages = ['system', 'update'].map((kind, i) => ({ ...error('', `1791823000.00000${i}`, kind),
+    metadata: { event_type: 'ai_newsletter_fehler', event_payload: { kind, worker: 'mac-1', stage: 'update' } },
     text: 'Worker-Fehler\n```HTTP 503 Bearer private-token token=private-key```' }));
   const rows = buildBlockedErrors(messages, channel);
   assert.deepEqual(rows.map(row => row.workflow), ['worker-errors', 'worker-errors']);

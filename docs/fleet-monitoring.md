@@ -791,11 +791,22 @@ Worker ohne frischen Heartbeat fällt auch bei weiterhin erreichbarer Mac-App
 auf. Ausstehende ClickUp-Statusupdates und ein unbekannter Worker-Betriebsstatus
 werden ebenfalls angezeigt. Die Warnliste zählt jeden betroffenen Mac einmal.
 
-Kundenbezogene Einrichtungslücken der Stufe `filestage_zuordnung` gehören zu
-den Newsletter-Aufträgen. Auch wenn ältere Worker sie als Slack-Art `system`
-melden, nimmt die Bridge sie nicht in `workerIssues` auf. Sie bleiben mit
-Diagnose als Newsletter-Fehler und Zuständigkeit Stammdaten sichtbar. Der
-Mac-Betriebsstatus und die Aufgabenannahme werden daraus nicht abgeleitet.
+Die Slack-Art `system` allein beweist keinen gestörten Worker. Die gemeinsame
+Einordnung in `scripts/worker-issue-scope.cjs` unterscheidet Lauf, Ressource,
+Worker und Flotte (`scope: run | resource | worker | fleet`). Sie gilt sowohl
+beim Quellenabgleich als auch im Relay für neue und bereits gespeicherte Meldungen.
+Auftrags-/Lauf-IDs und die bekannten Laufstufen `finalize`/`finalize_wait`
+halten Abschlussfehler beim Lauf. FileStage-Kundenzuordnungen und Figma-Leserechte
+gehören zu den betroffenen Aufträgen. Fehlender Figma-Login oder kontoweiter
+Full-Seat sind dagegen Worker-Zugangsprobleme. Neue Meldungen tragen ihre genaue
+Aufgaben-/Laufbindung; bekannte ältere Vorlagen werden weiterhin eingeordnet.
+
+Nur belegte Betriebsfehler wie Login, Start, Polling, globale Aufgabenabfrage,
+Werkzeuge oder Speicher werden an `workerIssues` übergeben. Nachbarmeldungen
+werden dem Worker aus `betrifft` zugeordnet. Ein flottenweit roter Update-Stand
+oder eine unbekannte Systemmeldung bleibt ein sichtbarer Betriebshinweis ohne
+Fehlerflag am meldenden Mac. Die vollständige Fehlerliste und alle gültigen
+Laufbelege bleiben erhalten; eine Anzeige ändert keine Aufgabenannahme.
 
 Die API übernimmt dafür optional `workerIssues` im Queue-Snapshot:
 `{ id, workerId, stage, severity: "error" | "warning", message, reportedAt }`.

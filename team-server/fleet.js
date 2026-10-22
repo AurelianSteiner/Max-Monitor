@@ -1,6 +1,7 @@
 // Shared fleet/queue state. Provider credentials never belong in this store.
 const fs = require("node:fs");
 const taskState = require("../scripts/task-state.cjs");
+const issueScope = require("../scripts/worker-issue-scope.cjs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { validateReport, publicReport } = require("./worker-reports");
@@ -225,11 +226,19 @@ function validateQueue(body) {
         id: string(raw.id, "workerIssue.id", 120),
         workerId: string(raw.workerId, "workerIssue.workerId", 120),
         stage: string(raw.stage, "workerIssue.stage", 80),
+        ...(raw.scope !== undefined ? { scope: string(raw.scope, "workerIssue.scope", 20) } : {}),
+        // Retain scope evidence through normalization so older source adapters
+        // cannot turn a run notice into a worker failure at this boundary.
+        ...(raw.taskId || raw.task_id ? { taskId: string(raw.taskId || raw.task_id, "workerIssue.taskId", 200) } : {}),
+        ...(raw.runId || raw.run_id ? { runId: string(raw.runId || raw.run_id, "workerIssue.runId", 200) } : {}),
+        ...(raw.betrifft ? { betrifft: string(raw.betrifft, "workerIssue.betrifft", 120) } : {}),
+        ...(raw.art ? { art: string(raw.art, "workerIssue.art", 80) } : {}),
         severity: raw.severity,
         message: diagnostic(raw.message, "workerIssue.message") || "Worker-Fehler ohne Diagnose",
         reportedAt: timestamp(raw.reportedAt, "workerIssue.reportedAt"),
       };
-    });
+    }).filter(issue => issueScope.isWorkerIssue(issue));
+    for (const issue of workerIssues) issue.workerId = issueScope.affectedWorker(issue);
   }
   // Independent worker diagnostics may update even when the task source fails.
   if (source.error) return optionalFields({ source, workerIssues });
@@ -965,13 +974,14 @@ function createFleetStore(dataDir, now = Date.now) {
       const { derivedStatus, ...visible } = worker;
       machines.push({ ...visible, workerVersionObservedAt: worker.lastSeenAt, workerVersionSource: 'hub-heartbeat', name: workerDisplayName(worker.workerId), deviceId: `hub:${worker.workerId}`, telemetrySource: "worker", memberId: null, limits: [], status: machineStatus(worker, time), heartbeatAgeSeconds: Math.max(0, Math.floor((time - Date.parse(worker.lastSeenAt)) / 1000)), usageStale: true, usageStatus: "unavailable" });
     }
-    for (const issue of state.workerIssues || []) {
-      let machine = machines.find(machine => machine.workerId === issue.workerId);
+    for (const issue of (state.workerIssues || []).filter(issue => issueScope.isWorkerIssue(issue))) {
+      const workerId = issueScope.affectedWorker(issue);
+      let machine = machines.find(machine => machine.workerId === workerId);
       if (!machine) {
-        machine = { workerId: issue.workerId, name: workerDisplayName(issue.workerId), deviceId: `hub:${issue.workerId}`, telemetrySource: "worker", limits: [], status: "offline", usageStale: true, usageStatus: "unavailable" };
+        machine = { workerId, name: workerDisplayName(workerId), deviceId: `hub:${workerId}`, telemetrySource: "worker", limits: [], status: "offline", usageStale: true, usageStatus: "unavailable" };
         machines.push(machine);
       }
-      (machine.workerIssues ||= []).push(issue);
+      (machine.workerIssues ||= []).push({ ...issue, workerId });
     }
     for (const machine of machines) {
       const report = (state.workerReports || []).find(report => report.workerId === machine.workerId);

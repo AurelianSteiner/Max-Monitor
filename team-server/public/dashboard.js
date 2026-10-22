@@ -89,6 +89,8 @@
     upload: "Klaviyo-Upload",
     translation: "Übersetzung",
     "worker-errors": "Worker-Fehler",
+    "task-errors": "Lauf-Fehler",
+    "system-notices": "Betriebshinweis",
   };
   // Pipeline stages mirror the ClickUp tags: the trigger tag alone means
   // "markiert"; a state tag or a worker reservation moves a task to "wartet".
