@@ -1,5 +1,5 @@
-/* Max Monitor · Graphit & Limette, light only. Quiet cream surfaces keep the
-   workspace calm; readable green, amber and red communicate available capacity. */
+/* Max Monitor · Graphit & Limette. Appearance follows the browser or native app;
+   semantic tokens keep capacity, workflow and error states readable in both modes. */
 :root {
   color-scheme: light;
   --bg: #f4f2ee;
@@ -31,9 +31,22 @@
   --good: #1e7b45;
   --warn: #93590a;
   --bad: #b42a30;
+  --danger-bg: #b42a30;
   --info: #3451c7;
   --clarification-ink: #246469;
   --track: #ebe7e1;
+  --workflow-pre-gen-bg: #e8efff;
+  --workflow-pre-gen-ink: #244ba8;
+  --workflow-translation-bg: #ddf4f5;
+  --workflow-translation-ink: #17646d;
+  --workflow-correction-bg: #fff0dc;
+  --workflow-correction-ink: #8c4f0b;
+  --workflow-upload-bg: #efe7fb;
+  --workflow-upload-ink: #6737a0;
+  --workflow-sales-bg: #fde9f0;
+  --workflow-sales-ink: #9d315d;
+  --workflow-worker-errors-bg: #fce8e7;
+  --workflow-worker-errors-ink: #a02e2f;
   --shadow: 0 1px 2px rgb(28 27 33 / 4%), 0 4px 16px rgb(28 27 33 / 4%);
   --shadow-float: 0 24px 64px rgb(28 27 33 / 22%);
   --radius: 10px;
@@ -43,6 +56,53 @@
   font-size: 13px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #19191e;
+    --surface: #24242b;
+    --sunken: #1e1e24;
+    --hover: #303038;
+    --line: #383840;
+    --line-strong: #50505b;
+    --ink: #f1f0f4;
+    --ink-2: #d0cdd7;
+    --muted: #aaa6b4;
+    --brand: #303038;
+    --focus: #c3f53c;
+    --primary: #c3f53c;
+    --primary-ink: #1c1b21;
+    --primary-hover: #d0fa70;
+    --st-marked: #a7a3ae;
+    --st-queued: #e6ad4c;
+    --st-paused: #c7a45f;
+    --st-running: #91a7ff;
+    --st-blocked: #f08085;
+    --st-clarification: #7ec6c7;
+    --st-done: #74c99a;
+    --st-failed: #f08085;
+    --good: #87d6a5;
+    --warn: #efc374;
+    --bad: #ff9ca1;
+    --info: #a4b6ff;
+    --clarification-ink: #8cd1d0;
+    --track: #3a3a44;
+    --workflow-pre-gen-bg: #2a3550;
+    --workflow-pre-gen-ink: #b4c9ff;
+    --workflow-translation-bg: #203b40;
+    --workflow-translation-ink: #95d7df;
+    --workflow-correction-bg: #423425;
+    --workflow-correction-ink: #f0c48d;
+    --workflow-upload-bg: #382d48;
+    --workflow-upload-ink: #d0b5f6;
+    --workflow-sales-bg: #422c39;
+    --workflow-sales-ink: #f2b0cd;
+    --workflow-worker-errors-bg: #422b30;
+    --workflow-worker-errors-ink: #ffb2b5;
+    --shadow: 0 1px 2px rgb(0 0 0 / 12%), 0 4px 16px rgb(0 0 0 / 10%);
+    --shadow-float: 0 24px 64px rgb(0 0 0 / 36%);
+  }
 }
 * { box-sizing: border-box; }
 html { background: var(--bg); }
@@ -464,8 +524,8 @@ h2:focus { outline: none; }
 .button.secondary:hover { background: var(--line); }
 .button.primary { background: var(--primary); color: var(--primary-ink); }
 .button.primary:hover { background: var(--primary-hover); }
-.button.danger { background: var(--bad); color: #fff; }
-.button.danger:hover { background: color-mix(in srgb, var(--bad) 85%, #000); }
+.button.danger { background: var(--danger-bg); color: #fff; }
+.button.danger:hover { background: color-mix(in srgb, var(--danger-bg) 85%, #000); }
 .dialog-actions { flex-wrap: wrap; }
 .text-button { padding: 0; border: 0; background: transparent; color: var(--ink-2); font-size: 12px; font-weight: 500; text-align: left; text-decoration: none; }
 .text-button:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
@@ -517,12 +577,12 @@ button.task-title { max-width: 100%; padding: 0; border: 0; background: none; fo
 .workflow-name { display: inline-block; max-width: 100%; padding: 2px 7px; border-radius: 5px; background: var(--sunken); color: var(--ink-2); font-size: 11px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workflow-name[data-workflow="newsletter"],
 .workflow-name[data-workflow="pregen"],
-.workflow-name[data-workflow="pre-gen"] { background: #e8efff; color: #244ba8; }
-.workflow-name[data-workflow="translation"] { background: #ddf4f5; color: #17646d; }
-.workflow-name[data-workflow="correction"] { background: #fff0dc; color: #8c4f0b; }
-.workflow-name[data-workflow="upload"] { background: #efe7fb; color: #6737a0; }
-.workflow-name[data-workflow="sales"] { background: #fde9f0; color: #9d315d; }
-.workflow-name[data-workflow="worker-errors"] { background: #fce8e7; color: #a02e2f; }
+.workflow-name[data-workflow="pre-gen"] { background: var(--workflow-pre-gen-bg); color: var(--workflow-pre-gen-ink); }
+.workflow-name[data-workflow="translation"] { background: var(--workflow-translation-bg); color: var(--workflow-translation-ink); }
+.workflow-name[data-workflow="correction"] { background: var(--workflow-correction-bg); color: var(--workflow-correction-ink); }
+.workflow-name[data-workflow="upload"] { background: var(--workflow-upload-bg); color: var(--workflow-upload-ink); }
+.workflow-name[data-workflow="sales"] { background: var(--workflow-sales-bg); color: var(--workflow-sales-ink); }
+.workflow-name[data-workflow="worker-errors"] { background: var(--workflow-worker-errors-bg); color: var(--workflow-worker-errors-ink); }
 .task-kind { width: fit-content; flex-shrink: 0; vertical-align: middle; }
 .fleet-row .task-kind { margin-top: 4px; }
 .phase { display: block; margin-top: 3px; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -591,6 +651,7 @@ dialog::backdrop { background: rgb(14 13 18 / 45%); backdrop-filter: blur(4px); 
 dialog p { font-size: 13px; margin-bottom: 16px; }
 dialog form > label { display: block; font-size: 12px; color: var(--muted); margin: 14px 0; }
 dialog input { display: block; width: 100%; margin-top: 6px; padding: 10px 12px; border: 0; border-radius: 8px; background: var(--sunken); color: var(--ink); }
+dialog input::placeholder { color: var(--muted); opacity: 1; }
 dialog .form-hint { font-size: 12px; margin: 10px 0; }
 .form-hint { font-size: 12px; color: var(--muted); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
@@ -638,6 +699,7 @@ dialog.wide { max-width: 1060px; }
 }
 .draft-well:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .draft-sheet { position: relative; width: 100%; margin: 0 auto; background: #fff; box-shadow: var(--shadow); }
+.draft-sheet[data-state="loading"] { background: var(--sunken); }
 .draft-sheet img { display: block; width: 100%; height: auto; }
 .draft-state {
   position: absolute; inset: 32px 16px auto; display: flex; flex-direction: column; align-items: center; gap: 12px;
