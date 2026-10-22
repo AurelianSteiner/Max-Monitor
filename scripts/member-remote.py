@@ -47,9 +47,9 @@ def validate_ticket(ticket, team_id, worker_id):
     return ticket
 
 
-def connection_args(ticket, directory, mode, command=None):
+def connection_args(ticket, directory, mode, command=None, identity_file=None):
     root = Path(directory)
-    common = ["-F", "/dev/null", "-i", str(root / "member"), "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
+    common = ["-F", "/dev/null", "-i", str(identity_file or root / "member"), "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
               "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=30", "-o", "PermitLocalCommand=no",
               "-o", f'UserKnownHostsFile="{root / "known_hosts"}"', "-o", f'CertificateFile="{root / "member-cert.pub"}"',
               "-o", "ControlMaster=no", "-o", "ControlPath=none"]
@@ -91,7 +91,10 @@ def main():
     parser.add_argument("worker_id")
     parser.add_argument("--server-url", default="https://api.ruegamer-steiner.de/max-monitor")
     parser.add_argument("--team-id", default="RSMACS01")
-    parser.add_argument("--token-stdin", action="store_true", help="Geschützten Zugangscode aus stdin lesen")
+    credentials = parser.add_mutually_exclusive_group()
+    credentials.add_argument("--token-stdin", action="store_true", help="Geschützten Zugangscode aus stdin lesen")
+    credentials.add_argument("--ticket-stdin", action="store_true", help="Öffentliches, bereits signiertes Max-Monitor-Ticket aus stdin lesen")
+    parser.add_argument("--identity-file", help="Auf diesem Quell-Mac freigegebener privater Ed25519-Schlüssel")
     args, command = parser.parse_known_args()
     if command and command[0] == "--":
         command = command[1:]
@@ -99,24 +102,47 @@ def main():
         parser.error("Fernbefehle ausdrücklich nach -- angeben")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,40}", args.worker_id) or not re.fullmatch(r"[A-Z0-9]{4,16}", args.team_id):
         raise ValueError("Ungültige Mac- oder Team-Kennung")
-    token = sys.stdin.readline(514).strip() if args.token_stdin else getpass.getpass("Persönlicher Max-Monitor-Zugangscode: ")
+    supplied_ticket = None
+    token = None
+    if args.ticket_stdin:
+        raw = sys.stdin.readline(65538)
+        if len(raw.encode()) > 65536:
+            raise ValueError("SSH-Ticket zu groß")
+        supplied_ticket = validate_ticket(json.loads(raw), args.team_id, args.worker_id)
+    else:
+        token = sys.stdin.readline(514).strip() if args.token_stdin else getpass.getpass("Persönlicher Max-Monitor-Zugangscode: ")
     with tempfile.TemporaryDirectory(prefix="max-monitor-remote-") as directory:
         root = Path(directory)
         os.chmod(root, 0o700)
-        subprocess.run(["/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(root / "member")], check=True, capture_output=True)
-        ticket = ticket_request(args.server_url, args.team_id, token, args.worker_id, (root / "member.pub").read_text().strip())
+        identity_file = Path(args.identity_file).expanduser() if args.identity_file else Path.home() / ".ssh/max_monitor_remote_ed25519"
+        if args.identity_file or identity_file.exists():
+            if identity_file.is_symlink() or not identity_file.is_file() or identity_file.stat().st_mode & 0o077:
+                raise ValueError("Der private Quell-Mac-Schlüssel muss eine geschützte reguläre Datei sein")
+            key = public_key(" ".join(subprocess.run(["/usr/bin/ssh-keygen", "-y", "-f", str(identity_file)], check=True,
+                             capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout.split()[:2]))
+        else:
+            if supplied_ticket is not None:
+                raise ValueError("Der freigegebene Quell-Mac-Schlüssel fehlt")
+            identity_file = root / "member"
+            subprocess.run(["/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(identity_file)], check=True, capture_output=True)
+            key = (root / "member.pub").read_text().strip()
+        ticket = supplied_ticket or ticket_request(args.server_url, args.team_id, token, args.worker_id, key)
         token = None
         (root / "member-cert.pub").write_text(ticket["certificate"] + "\n")
         (root / "known_hosts").write_text("max-monitor-team-hub " + ticket["hubHostKey"] + "\nmax-monitor-" + args.worker_id + " " + ticket["worker"]["hostKey"] + "\n")
         for file in [root / "member-cert.pub", root / "known_hosts"]:
             os.chmod(file, 0o600)
         if args.mode == "check":
-            result = subprocess.run(connection_args(ticket, root, "check"), capture_output=True, text=True, timeout=60)
+            result = subprocess.run(connection_args(ticket, root, "check", identity_file=identity_file), capture_output=True, text=True, timeout=60)
             if result.returncode or result.stdout.strip() != ticket["worker"]["username"]:
                 raise ValueError("SSH-Verbindung zum erwarteten Mac-Benutzer konnte nicht bestätigt werden")
             print(json.dumps({"workerId": args.worker_id, "username": ticket["worker"]["username"], "verified": True}))
             return 0
-        return subprocess.call(connection_args(ticket, root, "connect", command))
+        ssh_args = connection_args(ticket, root, "connect", command, identity_file=identity_file)
+        if args.ticket_stdin and not command:
+            with open('/dev/tty', 'rb') as terminal:
+                return subprocess.call(ssh_args, stdin=terminal)
+        return subprocess.call(ssh_args)
 
 
 if __name__ == "__main__":

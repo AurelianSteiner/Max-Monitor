@@ -18,7 +18,8 @@ const SOURCE_FILES = ['team-server/server.js', 'team-server/fleet.js', 'team-ser
   'team-server/public/dashboard.html', 'team-server/public/dashboard.css', 'team-server/public/dashboard.js', 'scripts/enroll-monitor-worker.mjs',
   'team-server/worker-control.js', 'team-server/remote-access.js', 'scripts/member-remote.py', 'scripts/check-worker-control.mjs', 'team-server/worker-reports.js', 'team-server/skill-versions.js', 'scripts/report-monitor-worker.mjs',
   'scripts/worker-remote-hub.mjs', 'scripts/worker-remote.mjs', 'scripts/setup-worker-remote.sh', 'scripts/setup-mac-monitor.mjs',
-  'scripts/install-monitor-hub.mjs', 'scripts/install-monitor-hub.sh', 'scripts/newsletter-monitor-bridge.mjs'];
+  'scripts/install-monitor-hub.mjs', 'scripts/install-monitor-hub.sh', 'scripts/newsletter-monitor-bridge.mjs', 'scripts/error-copy-cleanup.mjs', 'scripts/pm-owner.mjs',
+  'scripts/worker-admin-hub.mjs', 'scripts/worker-admin.mjs', 'scripts/worker-diagnose.py', 'scripts/install-worker-admin.sh'];
 const defaults = { serverURL: 'https://api.ruegamer-steiner.de/max-monitor', teamId: 'RSMACS01', port: 8941, nodeBinary: '/usr/bin/node' };
 
 export function installationSettings(values = {}, previous) {
@@ -39,7 +40,7 @@ export function installationSettings(values = {}, previous) {
 }
 
 export function relayEnvironment(settings) {
-  return `# Managed by Max Monitor Hub installer; root only.\nTEAM_TOKENS=${settings.teamId}:${settings.ownerToken}\nDATA_DIR=/var/lib/max-monitor\nHOST=127.0.0.1\nPORT=${settings.port}\n`;
+  return `# Managed by Max Monitor Hub installer; root only.\nTEAM_TOKENS=${settings.teamId}:${settings.ownerToken}\nDATA_DIR=/var/lib/max-monitor\nHOST=127.0.0.1\nPORT=${settings.port}\nMAX_MONITOR_REMOTE_CLIENT_POLICY_FILE=/etc/max-monitor-remote-policy/${settings.teamId}.json\n`;
 }
 
 export function relayService(settings) {
@@ -47,7 +48,9 @@ export function relayService(settings) {
 }
 
 export function queueService(settings) {
-  return `# Managed by Max Monitor Hub installer\n[Unit]\nDescription=Read-only ClickUp and Newsletter queue monitor\nAfter=network-online.target ${SERVICE}\nWants=network-online.target\nRequires=${SERVICE}\n\n[Service]\nType=simple\nUser=root\nWorkingDirectory=/opt/rs-hub\nExecStart=${settings.nodeBinary} /opt/max-monitor/scripts/newsletter-monitor-bridge.mjs --worker-root /opt/max-monitor/newsletter-source --local-hub /opt/rs-hub --enrollment-config /etc/max-monitor/enrollment.json --cache /var/lib/max-monitor-queue/cache.json --interval 60\nRestart=on-failure\nRestartSec=10\nStateDirectory=max-monitor-queue\nStateDirectoryMode=0700\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadOnlyPaths=/opt/rs-hub /etc/max-monitor\nReadWritePaths=/var/lib/max-monitor-queue\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\n[Install]\nWantedBy=multi-user.target\n`;
+  // Requires stops the bridge on relay restart without starting it again.
+  // The bridge already retries failed publications; keep its poll loop alive.
+  return `# Managed by Max Monitor Hub installer\n[Unit]\nDescription=ClickUp and Newsletter queue monitor with error-copy cleanup\nAfter=network-online.target ${SERVICE}\nWants=network-online.target ${SERVICE}\n\n[Service]\nType=simple\nUser=root\nWorkingDirectory=/opt/rs-hub\nExecStart=${settings.nodeBinary} /opt/max-monitor/scripts/newsletter-monitor-bridge.mjs --worker-root /opt/max-monitor/newsletter-source --local-hub /opt/rs-hub --enrollment-config /etc/max-monitor/enrollment.json --cache /var/lib/max-monitor-queue/cache.json --interval 60 --cleanup-error-copies\nRestart=on-failure\nRestartSec=10\nStateDirectory=max-monitor-queue\nStateDirectoryMode=0700\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadOnlyPaths=/opt/rs-hub /etc/max-monitor\nReadWritePaths=/var/lib/max-monitor-queue\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\n[Install]\nWantedBy=multi-user.target\n`;
 }
 
 export function nginxLocation(settings) {

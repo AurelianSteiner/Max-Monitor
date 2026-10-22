@@ -19,12 +19,19 @@ Bei der Installation wird die bereits vertraute öffentliche Hub-Prüfdatei nach
 SSH-Dienst benötigt dadurch keinen Zugriff auf den geschützten Documents-Ordner
 des Workers. Die strikte Hostschlüsselprüfung bleibt aktiv.
 
-## Zugang für alle Team-Mitglieder
+## Persönlicher Admin-Zugang und bestehende Quell-Macs
 
-Die vier eingerichteten Worker-Macs akzeptieren zusätzlich persönliche Max-Monitor-
-Team-Zugänge. Inhaber, Admin, Mitglied und Gast erhalten nach frischer
-Anmeldung kurzlebige SSH-Zertifikate. Till Main und Till Main 2 sind als Ziele
-ausgenommen.
+Seit dem 18.10.2026 sind die persönlichen Admin-Zugänge **vale mac** und
+**Reli Mac** zusätzlich für alle eingerichteten Worker freigegeben. Der Relay
+verlangt die aktuelle Admin-Rolle; die Bastion vertraut nur den beiden exakten
+Admin-Principals. Der vorhandene persönliche Python-Client kann dafür einen
+temporären lokalen Schlüssel verwenden. Einrichtung und Nutzung stehen in
+[team-remote-access.md](team-remote-access.md).
+
+Die bisherigen Quell-Macs benötigen weiterhin ihren freigegebenen SSH-Schlüssel.
+Ein sonstiger Team-Zugang allein erteilt keinen Fernzugriff. Die Quell-Mac-Freigabe wird
+zusätzlich am SSH-Einstieg des Hubs durchgesetzt. Till Main und Till Main 2 sind
+derzeit als persönliche Macs von der Worker-Zielliste ausgenommen.
 Befehl, Freigabe und Widerruf stehen in [team-remote-access.md](team-remote-access.md).
 Die folgenden Operator-Befehle bleiben für Einrichtung und Wartung gültig.
 

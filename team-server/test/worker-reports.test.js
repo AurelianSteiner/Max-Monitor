@@ -25,6 +25,36 @@ test('reports persist independently of minute queue snapshots and reject out-of-
     assert.equal(createFleetStore(directory, () => clock).workerReportStatus('TEAM1234', 'mac-1').activity.fresh, false);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
+test('running worker versions reach the fleet, prefer newer observations and preserve legacy Hub reports', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'worker-versions-')); let clock = now;
+  try {
+    const store = createFleetStore(directory, () => clock);
+    const queue = version => ({ source: { name: 'test' }, tasks: [], observedWorkers: [{ workerId: 'mac-1',
+      name: 'mac-1', lastSeenAt: new Date(clock).toISOString(), workerVersion: version, workerRevision: 'a'.repeat(40) }] });
+    store.updateQueue('TEAM1234', queue('V1.9'));
+    store.workerReport('TEAM1234', { ...report(), workerVersion: 'V1.10', workerRevision: 'b'.repeat(40) });
+    let machine = store.snapshot('TEAM1234').machines[0];
+    assert.equal(machine.workerVersion, 'V1.10');
+    assert.equal(machine.workerRevision, 'b'.repeat(40));
+    assert.equal(machine.workerVersionReportedAt, new Date(now).toISOString());
+    assert.equal(machine.workerVersionSource, 'agent');
+    clock += 1000;
+    store.updateQueue('TEAM1234', queue('V1.11'));
+    machine = store.snapshot('TEAM1234').machines[0];
+    assert.equal(machine.workerVersion, 'V1.11', 'an older observer cannot overwrite a newer Hub report');
+    assert.equal(machine.workerVersionReportedAt, new Date(clock).toISOString());
+    assert.equal(machine.workerVersionSource, 'hub');
+    const versionReportedAt = machine.workerVersionReportedAt;
+    clock += 200000;
+    store.workerReport('TEAM1234', { ...report(), sampledAt: new Date(clock).toISOString(),
+      service: { running: true, lastPollAt: new Date(clock).toISOString() } });
+    machine = store.snapshot('TEAM1234').machines[0];
+    assert.equal(machine.workerVersion, 'V1.11', 'legacy observers retain Hub version evidence');
+    assert.equal(machine.workerVersionReportedAt, versionReportedAt, 'a versionless live observation cannot refresh old version evidence');
+    assert.equal(machine.workerLastSeenAt, new Date(clock).toISOString());
+    assert.equal(publicReport(validateReport(report(), now), now).workerVersion, undefined);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
 test('local active runs replace old completed tags in the live queue without inventing 100 percent', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'live-queue-'));
   try {
@@ -80,5 +110,27 @@ test('the correction upgrade preserves completion signatures of existing ordinar
     assert.equal(store.snapshot('TEAM1234').queue.tasks[0].taskVersion, existingVersion);
     store.completeTask('TEAM1234', { role: 'super' }, { taskId: 'existing', taskVersion: existingVersion });
     assert.equal(createFleetStore(directory, () => now).snapshot('TEAM1234').queue.tasks[0].status, 'completed');
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('Figma evidence survives activity reports without refreshing its observation time or crossing devices', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'figma-reports-')); let clock = now;
+  try {
+    const store = createFleetStore(directory, () => clock);
+    const figmaAccount = { email: 'figma@example.com', observedAt: new Date(now - 3600000).toISOString(), source: 'worker-whoami' };
+    const queue = { source: { name: 'test' }, tasks: [], observedWorkers: [{ workerId: 'mac-1', name: 'Mac', lastSeenAt: new Date(now).toISOString() }] };
+    store.updateQueue('TEAM1234', queue);
+    store.workerReport('TEAM1234', { ...report(), figmaAccount: { ...figmaAccount, accessToken: 'never-store' } });
+    assert.deepEqual(store.snapshot('TEAM1234').machines[0].figmaAccount, figmaAccount);
+    clock += 1000;
+    store.workerReport('TEAM1234', { ...report(), sampledAt: new Date(clock).toISOString() });
+    assert.deepEqual(store.snapshot('TEAM1234').machines[0].figmaAccount, figmaAccount);
+    assert.throws(() => validateReport({ ...report(), figmaAccount: { ...figmaAccount, email: 'bad' } }, now));
+    assert.throws(() => validateReport({ ...report(), figmaAccount: { ...figmaAccount, observedAt: new Date(now + 60000).toISOString() } }, now));
+    const live = { ...figmaAccount, observedAt: new Date(now).toISOString(), source: 'mcp-whoami' };
+    assert.deepEqual(publicReport(validateReport({ ...report(), figmaAccount: { ...live, accessToken: 'never-store' } }, now), now).figmaAccount, live);
+    clock += 1000;
+    store.workerReport('TEAM1234', { ...report(), deviceId: '00000000-0000-4000-8000-000000000001', sampledAt: new Date(clock).toISOString() });
+    assert.equal(store.snapshot('TEAM1234').machines[0].figmaAccount, undefined);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

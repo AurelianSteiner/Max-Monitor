@@ -14,6 +14,11 @@ alle 60 Sekunden direkt auf dem Hub; sein Cache liegt unter
 `/var/lib/max-monitor-queue`. Bestehende RS-Hub-Daten und API-Routen werden nicht
 als Installationsziele verwendet.
 
+Der Queue-Dienst startet den Relay über `Wants` und wartet beim Start mit `After`
+auf ihn. Er läuft bei Relay-Neustarts weiter und wiederholt fehlgeschlagene
+Veröffentlichungen beim nächsten Abgleich. Eine `Requires`-Abhängigkeit würde den
+Queue-Dienst bei einem Relay-Neustart stoppen, ohne ihn danach wieder zu starten.
+
 ## Vorbereitung und Vorschau
 
 Den aktuellen Checkout mit den Installationsskripten auf den Hub übertragen.
@@ -83,6 +88,17 @@ verhindert ClickUp-/Slack-Schreibzugriffe und Worker-Heartbeat-Schreibeffekte.
 Der Dienst erhält nur Lesezugriff auf `/opt/rs-hub` und die private
 Monitor-Konfiguration; lokale Schreibzugriffe sind auf seinen eigenen Cache
 begrenzt. Die gemeinsamen Service-Schlüssel werden nicht auf Macs übertragen.
+
+Seit 13.10.2026 aktiviert der zentrale Dienst `--cleanup-error-copies`: Nach
+jedem vollständigen Queue-Abgleich werden eigene Bot-Kopien aus `#ai-fehler`
+entfernt, deren genau gebundener Auftrag im frischen Monitor nicht mehr
+blockiert/fehlgeschlagen ist. Der Quellenadapter bleibt GET-only; ausschließlich
+die getrennte Fehlerbereinigung darf `auth.test` und `chat.delete` im fest
+konfigurierten Fehlerkanal aufrufen. Originale Produktions-/PM-Threads,
+menschliche Antworten und unbekannte Bindungen bleiben erhalten. Bei veralteten
+Quellen oder API-Fehlern erfolgt keine weitere Löschung; der nächste Abgleich
+versucht es erneut. Vor der Löschung wird die Kopie privat in
+`/var/lib/max-monitor-queue/error-copy-cleanup.jsonl` gesichert.
 
 ## Wiederherstellung
 

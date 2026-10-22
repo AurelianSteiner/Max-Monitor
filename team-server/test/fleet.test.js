@@ -62,6 +62,35 @@ function task(id = "clickup:newsletter:abc", overrides = {}) {
   return { id, title: "Newsletter erstellen", workflow: "newsletter", status: "queued", tags: ["pre gen.", "pre gen · wartet"], url: "https://app.clickup.com/t/abc", ...overrides };
 }
 
+test("bound Claude email survives persistence; switches and legacy reports do not inherit it", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "max-monitor-account-email-"));
+  const who = { role: "member", member: { id: "worker-1", name: "Worker" } };
+  const account = { accountId: "account-a", name: "Production", provider: "claude", email: "worker@example.com" };
+  try {
+    const store = createFleetStore(directory);
+    const bound = store.heartbeat("DEMO1234", who, heartbeat(deviceA, {
+      accounts: [{ ...account, accessToken: "must-not-persist", refreshToken: "must-not-persist" }],
+    }));
+    assert.equal(bound.accounts[0].email, account.email);
+    assert.equal(createFleetStore(directory).snapshot("DEMO1234").machines[0].accounts[0].email, account.email);
+    assert.ok(!fs.readFileSync(path.join(directory, "DEMO1234/fleet.json"), "utf8").includes("must-not-persist"));
+    assert.throws(() => store.heartbeat("DEMO1234", who, heartbeat(deviceA, {
+      accounts: [{ ...account, email: "x".repeat(255) }],
+    })), /account.email/);
+    const legacy = store.heartbeat("DEMO1234", who, heartbeat());
+    assert.equal(legacy.accounts[0].email, undefined);
+    const switched = store.heartbeat("DEMO1234", who, heartbeat(deviceA, {
+      monitoringAccountId: "account-b", limits: [],
+      accounts: [{ accountId: "account-b", name: "Other account", provider: "claude" }],
+    }));
+    assert.equal(switched.accounts[0].email, undefined);
+    const unlinked = store.heartbeat("DEMO1234", who, heartbeat(deviceA, {
+      monitoringAccountId: undefined, accounts: [account], limits: [],
+    }));
+    assert.deepEqual(unlinked.accounts, []);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("shared authenticated relay supports fleet without changing existing report roles", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "max-monitor-relay-"));
   const oldEnv = { DATA_DIR: process.env.DATA_DIR, TEAM_TOKEN: process.env.TEAM_TOKEN, TEAM_TOKENS: process.env.TEAM_TOKENS };

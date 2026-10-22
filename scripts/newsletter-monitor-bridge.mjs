@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Read-only source adapter. The only write target is the configured Max Monitor relay.
+// Read-only source adapter; optional central maintenance deletes obsolete error copies.
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -8,6 +8,9 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { cleanupErrorCopies, createErrorCleanupWriter } from './error-copy-cleanup.mjs';
+import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
+import { applyPmOwners, createPmRoutingReader } from './pm-owner.mjs';
 
 const require = createRequire(import.meta.url);
 export const SOURCE_NAME = 'ClickUp · AI Newsletter Creation';
@@ -137,11 +140,17 @@ export function parseClaim(message) {
   let url;
   try { const candidate = new URL(link?.[1]); if (candidate.protocol === 'https:' && !candidate.username && !candidate.password && candidate.href.length <= 2000) url = candidate.href; } catch { /* Optional task link. */ }
   const reactions = (Array.isArray(message.reactions) ? message.reactions : []).map(item => item?.name);
+  // Completed corrections replace the parent text and need no separate reaction.
+  // Only the terminal label of this exact claim can confirm completion.
+  const terminalLine = text.split('\n')[1] || '';
+  const completed = kind === 'correction' && value.state === 'final' && /^(?:✅|:white_check_mark:)\s*Fertig:/u.test(terminalLine);
+  const awaitingPm = kind === 'correction' && value.state === 'final' && reactions.includes('question');
   return { taskId: (correction?.[1] ?? translation?.[1] ?? upload?.[1] ?? jobId).replace(/@\d+$/, ''), jobId,
     runId: String(value.run_id), workerId: String(value.worker),
     state: value.state, heartbeat, ts: String(message.ts),
     workflow: typeof value.workflow === 'string' ? value.workflow : translation ? `translation-${translation[2]}` : kind,
-    outcome: reactions.includes('x') ? 'blocked' : reactions.includes('white_check_mark') ? 'completed' : undefined,
+    outcome: completed ? 'completed' : reactions.includes('x') ? 'blocked' : reactions.includes('white_check_mark') ? 'completed' : undefined,
+    awaitingPm,
     url, company: kind === 'correction' ? displayText(text.split('\n')[0].replace(/^\*?Korrektur\s*·\s*/, '').replace(/[*`]/g, ''), 200) : undefined,
     title: displayText((link?.[2] || text.split('\n')[0].replace(/[*`]/g, '')).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 300) };
 }
@@ -165,7 +174,7 @@ export async function listClaims(hubFetch, channelId, { now = Date.now(), maxPag
 
 export function createClaimReader({ ttlMs = 60000 } = {}) {
   const cache = new Map();
-  return async (hubFetch, channelId, options) => {
+  const reader = async (hubFetch, channelId, options) => {
     const old = cache.get(channelId);
     if (old && old.lookbackDays === options.lookbackDays && options.now - old.at < ttlMs) {
       for (const message of old.messages) options.onMessage?.(message);
@@ -181,6 +190,8 @@ export function createClaimReader({ ttlMs = 60000 } = {}) {
     cache.set(channelId, { at: options.now, lookbackDays: options.lookbackDays, claims, messages });
     return claims;
   };
+  reader.invalidate = channelId => cache.delete(channelId);
+  return reader;
 }
 
 export function parseWorkerIssue(message) {
@@ -342,12 +353,13 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
     const fresh = now - claim.heartbeat * 1000 <= staleMinutes * 60000;
     const status = active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : 'blocked' : claim.outcome || 'blocked';
     const phase = active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : 'Worker meldet sich nicht mehr'
-      : status === 'completed' ? 'Korrektur abgeschlossen' : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
+      : status === 'completed' ? 'Korrektur abgeschlossen' : claim.awaitingPm ? 'PM-Rückfrage offen'
+        : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
     const task = tasks.find(task => task.id === claim.taskId);
     rows.push({ id: `correction:${claim.jobId}`, title: displayText(claim.title || task?.name, 300, `Korrektur ${claim.taskId}`),
       url: claim.url || (claim.taskId !== claim.jobId ? `https://app.clickup.com/t/${encodeURIComponent(claim.taskId)}` : undefined), workflow: 'correction',
       company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.workerId, attemptId: claim.runId,
-      phase, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
+      phase, progress: status === 'completed' ? 100 : undefined, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
       run: { id: claim.runId, ts: claim.ts, taskId: claim.taskId, channelId: claim.channelId } });
   }
   return rows.sort((a, b) => a.id.localeCompare(b.id));
@@ -377,6 +389,13 @@ export function parseBlockedReason(text) {
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 500) || null;
 }
 
+function parsePmQuestion(text) {
+  const lines = String(text ?? '').split('\n');
+  if (!/^\*?Unklar\s*[–—-]\s*bitte hier antworten\*?/.test(lines[0])) return null;
+  const questions = lines.slice(1).map(line => /^\s*•\s*Unklar\s*·\s*Kommentar\s+\d+\s*\(.*?\):\s*(.+)$/.exec(line)?.[1]).filter(Boolean);
+  return questions.length ? parseBlockedReason(`:warning: blockiert: ${questions.join(' · ')}`) : null;
+}
+
 export async function readRunStatuses(hubFetch, channelId, threads, { concurrency = 4 } = {}) {
   const pending = [...new Set(threads)];
   const statuses = new Map();
@@ -390,6 +409,7 @@ export async function readRunStatuses(hubFetch, channelId, threads, { concurrenc
         // Only the worker's own bot reply counts, never a person writing in the thread.
         const found = (Array.isArray(result.messages) ? result.messages : [])
           .filter(message => message?.ts !== ts && message?.bot_id).map(message => parseRunStatus(message.text)
+            || (parsePmQuestion(message.text) ? { pmQuestion: parsePmQuestion(message.text) } : null)
             || (parseBlockedReason(message.text) ? { blockedReason: parseBlockedReason(message.text) } : null)).filter(Boolean);
         if (found.length) statuses.set(ts, found.at(-1));
       } catch { /* Progress is optional: the task simply stays "In Bearbeitung". */ }
@@ -503,9 +523,11 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
     const status = statuses.get(row.run?.channelId || channelId)?.get(row.run?.ts);
     if (row.status === 'running' && status?.percent !== undefined) { row.progress = status.percent; row.step = status.step; }
     if (row.status === 'blocked' && row.workflow === 'correction') {
-      row.blockedReason = status?.blockedReason || (old?.attemptId === row.attemptId && old.blockedReason
+      row.blockedReason = status?.pmQuestion || status?.blockedReason || (old?.attemptId === row.attemptId && old.blockedReason
         ? parseBlockedReason(`:warning: blockiert: ${old.blockedReason}`) : undefined);
-      if (row.blockedReason) row.phase = 'Korrektur blockiert';
+      if (status?.pmQuestion || row.phase === 'PM-Rückfrage offen'
+        || (old?.attemptId === row.attemptId && old.phase === 'PM-Rückfrage offen' && row.blockedReason)) row.phase = 'PM-Rückfrage offen';
+      else if (row.blockedReason) row.phase = 'Korrektur blockiert';
     }
     const list = attempts.includes(row) ? (rendered ? rendered.get(row.run.id) : old?.previews)
       : row.status === 'completed' && old?.status === 'completed' ? old.previews : undefined;
@@ -572,6 +594,60 @@ export async function readLocalHubFleet(hub, { fleetDirectory = path.join(hub.hu
   return parseObservedWorkers(rows);
 }
 
+// Mirrors AI Newsletter Creation src/sales-progress.js: completed stages, never elapsed time.
+// Keep split build stages and legacy "build" mutually exclusive for each mail.
+export function salesProgress(job) {
+  if (job.status === 'reserved') return { progress: 0, step: 'Reserviert' };
+  if (job.status === 'done') return { progress: 100, step: 'Fertig' };
+  const monitor = job.monitor || {};
+  const phases = { ideas: 6, opener: 8, mail_build: 10 };
+  const weights = { shop_research: 15, brand_system: 8, briefings: 7, art_director: 9,
+    customer_review: 3, one_sentence: 3, fact_check: 5, desktop_mobile: 5, pdf_export: 4, pdf_review: 4 };
+  const labels = { shop_research: 'Shop-Recherche', brand_system: 'Designsystem', briefings: 'Themen und Briefings',
+    ideas: 'Ideenentwicklung', opener: 'Aufmacher-Gestaltung', mail_build: 'Newsletter-Gestaltung',
+    build: 'Gestaltung', art_director: 'Art-Direction-Prüfung', fixes: 'Korrekturen', customer_review: 'Kundenblick',
+    one_sentence: 'Ein-Satz-Prüfung', fact_check: 'Faktenprüfung', desktop_mobile: 'Desktop- und Mobilprüfung',
+    pdf_export: 'PDF-Export', pdf_review: 'PDF-Sichtprüfung', result_validation: 'Ergebnisvalidierung' };
+  const events = (Array.isArray(monitor.events) ? monitor.events : []).filter(event => event
+    && Object.hasOwn(labels, event.stage) && Number.isInteger(event.mail) && event.mail >= 0 && event.mail <= 3
+    && ['start', 'done', 'blocked'].includes(event.state) && Number.isFinite(Date.parse(event.at)));
+  const latest = new Map();
+  for (const event of events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)))
+    latest.set(event.stage + ':' + event.mail, event);
+  let progress = 5;
+  for (const [stage, weight] of Object.entries(weights)) {
+    if (latest.get(stage + ':0')?.state === 'done') progress += weight;
+    else if (!['shop_research', 'brand_system', 'briefings'].includes(stage))
+      progress += weight * [1, 2, 3].filter(mail => latest.get(stage + ':' + mail)?.state === 'done').length / 3;
+  }
+  const splitStages = Object.keys(phases);
+  for (const mail of [1, 2, 3]) {
+    const split = splitStages.some(stage => latest.has(stage + ':' + mail) || latest.has(stage + ':0'));
+    if (split) {
+      for (const [stage, weight] of Object.entries(phases))
+        if ((latest.get(stage + ':' + mail) || latest.get(stage + ':0'))?.state === 'done') progress += weight / 3;
+    } else if ((latest.get('build:' + mail) || latest.get('build:0'))?.state === 'done') progress += 24 / 3;
+  }
+  const active = [...latest.values()].filter(event => event.state === 'start' && (event.stage !== 'build'
+    || !splitStages.some(stage => latest.has(stage + ':' + event.mail) || latest.has(stage + ':0'))))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const current = active.at(-1);
+  const last = [...latest.values()].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
+  let step = current ? labels[current.stage] : last
+    ? labels[last.stage] + (last.state === 'done' ? ' abgeschlossen' : ' · blockiert') : 'Vorbereitung';
+  if (current?.mail) {
+    const mails = [...new Set(active.filter(event => event.stage === current.stage && event.mail).map(event => event.mail))].sort();
+    step += ' · Mail ' + mails.join(', ');
+  }
+  if (monitor.phase === 'validation') step = 'Ergebnisvalidierung';
+  if (job.status === 'delivery' || monitor.phase === 'delivery') {
+    const files = Array.isArray(job.files) ? job.files : [];
+    progress = Math.max(progress, 95) + Math.min(3, files.filter(file => file?.uploaded === true).length);
+    step = 'PDF-Auslieferung und Slack-Prüfung';
+  }
+  return { progress: Math.min(98, Math.round(progress)), step };
+}
+
 export async function readLocalSales(directory, now = Date.now()) {
   const rows = [];
   const statuses = { reserved: 'queued', running: 'running', delivery: 'running', blocked: 'blocked', done: 'completed' };
@@ -597,10 +673,12 @@ export async function readLocalSales(directory, now = Date.now()) {
       const blockedReason = status === 'blocked' ? displayText(job.reason, 500, 'Sales-Lauf ist blockiert') : undefined;
       // Job state is authoritative. A missing heartbeat must never remove accepted work.
       const awaitingWorker = ['queued', 'running'].includes(status) && now - seen > 30 * 60000;
+      const progress = salesProgress(job);
       rows.push({ id: `sales:${name}`, title: `Sales · ${url.hostname}`, url: url.href, workflow: 'sales', status,
         sourceStatus: job.status, workerId: job.worker, attemptId: displayText(job.owner, 200),
         phase: awaitingWorker ? 'Worker-Meldung ausstehend' : phases[job.status],
-        ...(blockedReason ? { blockedReason } : {}), ...(status === 'completed' ? { progress: 100 } : {}),
+        ...(blockedReason ? { blockedReason } : {}), ...progress,
+        ...(awaitingWorker ? { step: `Worker-Meldung ausstehend · ${progress.step}` } : {}),
         updatedAt: new Date(seen).toISOString() });
     } catch {
       throw new Error(`Sales-Job ${name} konnte nicht vollständig gelesen werden; bisheriger Queue-Stand bleibt erhalten.`);
@@ -630,7 +708,7 @@ export function createLocalHubFetch(hub, { localHub, transport, spawnImpl = spaw
   };
 }
 
-export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, claimReader = listClaims, now = Date.now() }) {
+export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, pmRouting, claimReader = listClaims, now = Date.now() }) {
   validateWorkflows(workflows);
   const issues = new Map();
   const onMessage = message => {
@@ -641,7 +719,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   };
   const errorChannel = config.monitor_channels?.errors || (config.fehler?.enabled ? config.fehler.channel_id : undefined);
   const errorMessages = [];
-  const [taskResult, claimResult, workerResult, issueResult, salesResult] = await Promise.allSettled([
+  const [taskResult, claimResult, workerResult, issueResult, salesResult, questionResult] = await Promise.allSettled([
     (async () => {
       const variants = await discoverTags(hubFetch, config.clickup.workspace_id, workflows);
       return { variants, tasks: await listTasks(hubFetch, config.clickup.workspace_id, variants) };
@@ -657,11 +735,12 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
     errorChannel ? claimReader(hubFetch, errorChannel, { now, lookbackDays: null,
       onMessage: message => { errorMessages.push(message); onMessage(message); } }) : Promise.resolve(),
     Promise.resolve().then(() => salesReader ? salesReader(now) : []),
+    Promise.resolve().then(() => questionReader ? questionReader() : { sets: [], jobs: [] }),
   ]);
   // Clear resolved notices only after every configured warning channel was read completely.
   const workerIssues = claimResult.status === 'fulfilled' && issueResult.status === 'fulfilled' ? [...issues.values()] : undefined;
-  if ([taskResult, claimResult, issueResult, salesResult].some(result => result.status === 'rejected')) {
-    const error = [taskResult, claimResult, issueResult, salesResult].find(result => result.status === 'rejected').reason;
+  if ([taskResult, claimResult, issueResult, salesResult, questionResult].some(result => result.status === 'rejected')) {
+    const error = [taskResult, claimResult, issueResult, salesResult, questionResult].find(result => result.status === 'rejected').reason;
     return { ...(workerIssues === undefined ? {} : { workerIssues }), source: {
       name: SOURCE_NAME, error: displayText(error.message, 300, 'Quellenabfrage fehlgeschlagen.'),
     } };
@@ -672,7 +751,9 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const fleetDetail = workerResult.status === 'rejected'
     ? 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.' : undefined;
   const queue = buildQueue(tasks, claims, workflows, { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl });
+  applyPmQuestions(queue, questionResult.value);
   await addRunDetails(queue, { hubFetch, channelId: config.slack.channel_id, previews, previousTasks, now });
+  await applyPmOwners(queue, tasks, { questions: questionResult.value, routing: pmRouting, now });
   queue.push(...salesResult.value);
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
   const blockedErrors = errorChannel ? buildBlockedErrors(errorMessages, errorChannel, queue) : undefined;
@@ -733,6 +814,7 @@ export function argumentsFrom(argv, env) {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--once') values.once = true;
+    else if (arg === '--cleanup-error-copies') values.cleanupErrorCopies = true;
     else if (arg === '--dry-run') { values.dryRun = true; values.once = true; }
     else if (arg === '--help') values.help = true;
     else if (keys[arg] && argv[index + 1] && !argv[index + 1].startsWith('--')) values[keys[arg]] = argv[++index];
@@ -743,6 +825,8 @@ export function argumentsFrom(argv, env) {
   if (values.enrollmentConfig) {
     if (!values.localHub) throw new Error('--enrollment-config ist nur für den zentralen --local-hub-Modus erlaubt.');
   }
+  if (values.cleanupErrorCopies && (!values.localHub || !values.enrollmentConfig))
+    throw new Error('Fehlerbereinigung ist nur im zentralen Hub-Dienst mit Enrollment-Konfiguration erlaubt.');
   return values;
 }
 
@@ -791,6 +875,9 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const workflows = validateWorkflows(options.workflowsFile ? JSON.parse(await fs.readFile(options.workflowsFile, 'utf8')) : DEFAULT_WORKFLOWS);
   if (options.localHub) config.hub.hub_dir = options.localHub;
   const hubFetch = options.localHub ? createLocalHubFetch(config.hub, { localHub: options.localHub, transport }) : transport.createHubFetch(config.hub);
+  const errorChannel = config.monitor_channels?.errors || (config.fehler?.enabled ? config.fehler.channel_id : undefined);
+  const slackWrite = options.cleanupErrorCopies && !options.dryRun
+    ? createErrorCleanupWriter(config.hub, { localHub: options.localHub, transport, errorChannel }) : undefined;
   let cached;
   try { cached = JSON.parse(await fs.readFile(options.cacheFile, 'utf8')); } catch { /* Fresh installation. */ }
   // Render previews need the Hub's own database and sharp; a Mac bridge has neither.
@@ -802,23 +889,55 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     upload: options.dryRun ? async () => {} : (id, data) => uploadPreview(id, data, options) }) : undefined;
   const controller = new AbortController();
   const claimReader = createClaimReader();
+  const pmRouting = options.localHub ? createPmRoutingReader(options.localHub) : undefined;
+  const saveSnapshot = async snapshot => {
+    await fs.mkdir(path.dirname(options.cacheFile), { recursive: true, mode: 0o700 });
+    const temporary = `${options.cacheFile}.${process.pid}.tmp`;
+    await fs.writeFile(temporary, JSON.stringify(snapshot), { mode: 0o600 });
+    await fs.rename(temporary, options.cacheFile); cached = snapshot;
+  };
+  const readFleet = async () => {
+    const url = relayEndpoint(options.relayUrl, options.teamId);
+    url.pathname = url.pathname.replace(/\/queue$/, '/fleet');
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${options.token}` }, signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error(`Monitor-Abgleich: HTTP ${response.status}.`);
+    return response.json();
+  };
   const stop = () => controller.abort();
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
   try {
     await runSyncLoop(async () => {
       try {
-        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
+        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, pmRouting, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
           previews, previousTasks: cached?.tasks, ...(options.localHub ? { fleetReader: readLocalHubFleet,
-            salesReader: time => readLocalSales(path.join(options.localHub, 'sales-newsletter'), time) } : {}) }), cachedSource: cached?.source,
+            salesReader: time => readLocalSales(path.join(options.localHub, 'sales-newsletter'), time),
+            questionReader: () => readPmQuestions(path.join(options.localHub, '..', 'rs-pm-question-pilot', 'state.sqlite')) } : {}) }), cachedSource: cached?.source,
           publish: snapshot => options.dryRun ? console.log(JSON.stringify(snapshot, null, 2)) : publishSnapshot(snapshot, options),
-          save: options.dryRun ? undefined : async snapshot => {
-            await fs.mkdir(path.dirname(options.cacheFile), { recursive: true, mode: 0o700 });
-            const temporary = `${options.cacheFile}.${process.pid}.tmp`;
-            await fs.writeFile(temporary, JSON.stringify(snapshot), { mode: 0o600 });
-            await fs.rename(temporary, options.cacheFile); cached = snapshot;
-          },
+          save: options.dryRun ? undefined : saveSnapshot,
         });
         if (!options.dryRun) console.log(`${new Date().toISOString()} ${result.ok ? `Queue aktualisiert (${result.snapshot.tasks.length} Aufgaben).` : 'Quelle nicht erreichbar; letzte Queue bleibt erhalten.'}`);
+        if (result.ok && slackWrite) {
+          try {
+            const cleaned = await cleanupErrorCopies({ readFleet, hubFetch, slackWrite, errorChannel,
+              archive: entry => fs.appendFile(path.join(path.dirname(options.cacheFile), 'error-copy-cleanup.jsonl'),
+                JSON.stringify(entry) + '\n', { mode: 0o600 }) });
+            if (cleaned.deleted.length) {
+              claimReader.invalidate(errorChannel);
+              const ids = new Set(cleaned.deleted);
+              const remaining = result.snapshot.blockedErrors.filter(error => !ids.has(error.id));
+              const updated = { ...result.snapshot, blockedErrors: remaining,
+                source: { ...result.snapshot.source, detail: result.snapshot.source.detail.replace(/\d+ offen in #ai-fehler/,
+                  `${remaining.length} offen in #ai-fehler`) } };
+              const latest = await readFleet();
+              if (latest.queue.source.lastSuccessAt === result.snapshot.source.lastSuccessAt) {
+                await publishSnapshot(updated, options); await saveSnapshot(updated);
+              }
+              console.log(`${new Date().toISOString()} ${ids.size} aufgehobene Fehlerkopien entfernt.`);
+            }
+          } catch (error) {
+            console.error(`${new Date().toISOString()} Fehlerbereinigung: ${String(error.message).replaceAll(options.token || '\0', '[REDACTED]').slice(0, 200)}`);
+          }
+        }
         if (!result.ok && options.once) process.exitCode = 1;
       } catch (error) {
         // Never print an upstream response body or a token.

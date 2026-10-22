@@ -85,13 +85,11 @@ final class CredentialVaultTests: XCTestCase {
         XCTAssertFalse(text.contains("sk-ant-ort01"))
     }
 
-    func testCorruptFileIsTreatedAsEmpty() throws {
+    func testCorruptFileIsPreservedAndRejected() throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try Data("not json".utf8).write(to: fileURL)
-        let vault = try CredentialVault(fileURL: fileURL, key: CredentialVault.generateKey())
-        XCTAssertNil(vault.load(key: "accounts"))
-        XCTAssertTrue(vault.save(key: "accounts", value: "[]"))
-        XCTAssertEqual(vault.load(key: "accounts"), "[]")
+        XCTAssertThrowsError(try CredentialVault(fileURL: fileURL, key: CredentialVault.generateKey()))
+        XCTAssertEqual(try Data(contentsOf: fileURL), Data("not json".utf8))
     }
 
     func testRejectsBadKeyLength() {

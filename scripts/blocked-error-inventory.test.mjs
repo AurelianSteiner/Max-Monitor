@@ -63,7 +63,7 @@ test('full inventory reads have no age cutoff, page completely and retain cached
     { now, lookbackDays: null }), /Cursor fehlt/);
 });
 
-test('Slack errors determine all current blockers and are not replaced by old tags or manual completions', t => {
+test('current tasks own the pipeline; old Slack errors cannot undo completions', t => {
   const { store, directory } = storeFor(t);
   const stale = task('blocked', 'old-clickup-tag');
   store.updateQueue('TEAM1234', { source, tasks: [stale] });
@@ -72,24 +72,24 @@ test('Slack errors determine all current blockers and are not replaced by old ta
   const blockedErrors = buildBlockedErrors([error()], channel, [task()]);
   store.updateQueue('TEAM1234', { source, tasks: [stale, task('completed'), task('failed', 'sales:canceled')], blockedErrors });
   const snap = createFleetStore(directory, () => now).snapshot('TEAM1234');
-  assert.equal(snap.queue.tasks.filter(row => row.status === 'blocked').length, 1);
-  assert.equal(snap.queue.tasks.some(row => row.id === stale.id), false);
-  assert.equal(snap.queue.tasks.some(row => row.id === 'sales:canceled'), false);
-  const blocker = snap.queue.tasks.find(row => row.status === 'blocked');
-  assert.equal(blocker.id, blockedErrors[0].id);
-  assert.throws(() => store.completeTask('TEAM1234', {}, { taskId: blocker.id, taskVersion: blocker.taskVersion }),
-    e => e.status === 409 && /#ai-fehler/.test(e.message));
+  assert.equal(snap.queue.tasks.filter(row => row.status === 'blocked').length, 0);
+  assert.equal(snap.queue.tasks.find(row => row.id === stale.id).completion, 'manual');
+  assert.equal(snap.queue.tasks.find(row => row.id === task().id).status, 'completed');
+  assert.equal(snap.queue.tasks.find(row => row.id === 'sales:canceled').status, 'failed');
+  assert.equal(snap.queue.errors[0].id, blockedErrors[0].id);
+  assert.ok(snap.events.some(event => event.entityId === blockedErrors[0].id && event.type === 'task_blocked'));
   store.updateQueue('TEAM1234', { source, tasks: [stale], blockedErrors: [] });
-  assert.deepEqual(store.snapshot('TEAM1234').queue.tasks, []);
-  assert.ok(store.snapshot('TEAM1234').events.some(event => event.entityId === blocker.id && event.type === 'task_removed'));
+  assert.equal(store.snapshot('TEAM1234').queue.tasks[0].status, 'completed');
+  assert.ok(store.snapshot('TEAM1234').events.some(event => event.entityId === blockedErrors[0].id && event.type === 'task_removed'));
 });
 
 test('source failures and malformed error inventory cannot turn open errors into a false zero', t => {
   const { store } = storeFor(t);
   const blockedErrors = buildBlockedErrors([error()], channel);
-  store.updateQueue('TEAM1234', { source, tasks: [], blockedErrors });
+  store.updateQueue('TEAM1234', { source, tasks: [task()], blockedErrors });
   store.updateQueue('TEAM1234', { source: { name: source.name, error: 'Slack unavailable' }, blockedErrors: [] });
-  assert.equal(store.snapshot('TEAM1234').queue.tasks.length, 1);
+  assert.equal(store.snapshot('TEAM1234').queue.errors.length, 1);
+  assert.equal(store.snapshot('TEAM1234').queue.tasks[0].status, 'blocked');
   assert.throws(() => store.updateQueue('TEAM1234', { source, tasks: [] }), e => e.status === 409);
   assert.equal(store.snapshot('TEAM1234').queue.tasks.length, 1);
   for (const mutation of [{ errorUrl: 'javascript:alert(1)' }, { errorUrl: 'https://example.com/archives/x/p1' }, { status: 'completed' }, { id: 'random' }]) {
@@ -109,19 +109,24 @@ test('Sales lifecycle remains visible independently of the Slack error inventory
     const snapshot = createFleetStore(directory, () => now).snapshot('TEAM1234');
     assert.deepEqual(snapshot.queue.tasks.filter(row => row.workflow === 'sales').map(row => [row.id, row.status]),
       sales.map(row => [row.id, row.status]));
-    assert.equal(snapshot.queue.tasks.filter(row => row.id.startsWith('slack-error:')).length, messages.length);
+    assert.equal(snapshot.queue.tasks.filter(row => row.id.startsWith('slack-error:')).length, 0);
+    assert.equal(snapshot.queue.errors.length, messages.length);
   }
   store.updateQueue('TEAM1234', { source: { name: source.name, error: 'Slack unavailable' } });
   assert.equal(store.snapshot('TEAM1234').queue.tasks.filter(row => row.workflow === 'sales').length, sales.length);
 });
 
-test('a retry stays running without erasing its old error until Slack removes that message', t => {
+test('a retry counts once as running while its old error is retained only as history', t => {
   const { store } = storeFor(t);
   store.updateQueue('TEAM1234', { source, tasks: [task()], blockedErrors: buildBlockedErrors([error()], channel) });
   store.workerReport('TEAM1234', { schema: 1, workerId: 'mac-1', sampledAt: new Date(now).toISOString(),
     service: { running: true, lastPollAt: new Date(now).toISOString() }, activity: { state: 'busy', acceptingTasks: true,
       runs: [{ id: task().id, runId: 'retry', title: 'Mail', workflow: 'newsletter', status: 'running' }] } });
-  assert.deepEqual(store.snapshot('TEAM1234').queue.tasks.map(row => row.status).sort(), ['blocked', 'running']);
+  const snapshot = store.snapshot('TEAM1234');
+  assert.deepEqual(snapshot.queue.tasks.map(row => row.status), ['running']);
+  assert.equal(snapshot.queue.tasks[0].blockedReason, undefined);
+  assert.equal(snapshot.queue.tasks[0].errorUrl, undefined);
+  assert.equal(snapshot.queue.errors.length, 1);
   store.updateQueue('TEAM1234', { source, tasks: [task()], blockedErrors: [] });
   assert.deepEqual(store.snapshot('TEAM1234').queue.tasks.map(row => row.status), ['running']);
 });

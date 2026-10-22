@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { installFigmaAccountObserver } from './figma-account-observer.mjs';
 
 const require = createRequire(import.meta.url);
 export const OBSERVER_SOURCE = Object.freeze({
@@ -15,7 +16,7 @@ const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
 export async function ensureWorkerObserver(options, {
   runner, home = os.homedir(), node = process.execPath, platform = process.platform,
-  loadConfig, loadAgent = file => require(file),
+  loadConfig, loadAgent = file => require(file), installFigma = installFigmaAccountObserver,
 } = {}) {
   if (options.check || options.dryRun || platform !== 'darwin') return { installed: false };
   const root = options.workerRoot;
@@ -48,5 +49,7 @@ export async function ensureWorkerObserver(options, {
     }
   }
   agent ||= loadAgent(entry);
-  return agent.installAgent(config, { entry, configFile, home, node, platform });
+  const result = agent.installAgent(config, { entry, configFile, home, node, platform });
+  if (result.installed) installFigma({ home, node });
+  return result;
 }

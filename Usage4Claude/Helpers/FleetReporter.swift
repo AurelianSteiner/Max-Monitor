@@ -105,10 +105,12 @@ final class FleetReporter {
                                battery: BatteryTelemetry, now: Date) -> FleetHeartbeat {
         let account = monitoring.account
         let accountId = account?.id.uuidString.lowercased()
-        let accounts = account.map {
-            [FleetUsageAccount(accountId: $0.id.uuidString.lowercased(), name: String($0.name.prefix(120)),
+        let accounts: [FleetUsageAccount] = account.map {
+            let email = String($0.email.prefix(254)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return [FleetUsageAccount(accountId: $0.id.uuidString.lowercased(), name: String($0.name.prefix(120)),
                 provider: "claude", usageUpdatedAt: monitoring.updatedAt,
-                usageError: monitoring.errorMessage.map { String($0.prefix(500)) })]
+                usageError: monitoring.errorMessage.map { String($0.prefix(500)) },
+                email: email.isEmpty ? nil : email)]
         } ?? []
         var limits: [FleetUsageLimit] = []
         if let account, let data = monitoring.usageData {

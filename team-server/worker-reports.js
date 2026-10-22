@@ -35,9 +35,18 @@ function validateReport(raw, now = Date.now()) {
     || !Number.isFinite(Date.parse(raw.service.lastPollAt)))) fail();
   const maintenance = raw.maintenance;
   if (maintenance && typeof maintenance.ok !== 'boolean') fail();
+  let figmaAccount;
+  if (raw.figmaAccount != null) {
+    const email = text(raw.figmaAccount.email, 254, true);
+    const observedAt = date(raw.figmaAccount.observedAt);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !observedAt
+      || Date.parse(observedAt) > now + 30000 || !['worker-whoami', 'mcp-whoami'].includes(raw.figmaAccount.source)) fail();
+    figmaAccount = { email, observedAt, source: raw.figmaAccount.source };
+  }
   return { schema: 1, workerId: raw.workerId, deviceId: raw.deviceId, sampledAt: new Date(at).toISOString(), receivedAt: new Date(now).toISOString(),
     workerVersion: text(raw.workerVersion, 80), workerRevision: text(raw.workerRevision, 80),
     skillRelease: validateSkillRelease(raw.skillRelease, now),
+    ...(figmaAccount ? { figmaAccount } : {}),
     service: { running: raw.service.running, lastPollAt: date(raw.service.lastPollAt) },
     activity: { state: raw.activity.state, acceptingTasks: raw.activity.acceptingTasks, runs },
     maintenance: maintenance ? { ok: maintenance.ok, checkedAt: date(maintenance.checkedAt), summary: text(maintenance.summary, 300, true) } : undefined,
@@ -47,6 +56,9 @@ function publicReport(report, now = Date.now()) {
   if (!report) return {};
   const fresh = now - Date.parse(report.sampledAt) <= FRESH_MS && now - Date.parse(report.receivedAt) <= FRESH_MS;
   return { agentLastSeenAt: report.receivedAt, agentStatus: fresh ? 'online' : 'silent',
+    ...(report.figmaAccount ? { figmaAccount: report.figmaAccount } : {}),
+    ...(report.workerVersion ? { workerVersion: report.workerVersion, workerRevision: report.workerRevision,
+      workerVersionReportedAt: report.sampledAt, workerVersionSource: 'agent' } : {}),
     activity: { ...report.activity, fresh, sampledAt: report.sampledAt }, service: report.service, maintenance: report.maintenance,
     ...(report.skillRelease ? { skillRelease: { ...report.skillRelease, fresh: fresh && skillReleaseFresh(report.skillRelease, now) } } : {}) };
 }

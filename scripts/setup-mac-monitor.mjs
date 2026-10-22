@@ -292,7 +292,7 @@ export async function nativeCodeUnchanged(from, to, runner = run) {
     const scripts = new Set(['scripts/setup-mac-monitor.mjs','scripts/setup-mac-monitor.sh',
       'scripts/setup-mac-monitor.test.mjs','scripts/newsletter-monitor-bridge.mjs',
       'scripts/newsletter-monitor-bridge.test.mjs','scripts/install-worker-observer.mjs',
-      'scripts/install-worker-observer.test.mjs','scripts/install-monitor-hub.mjs',
+      'scripts/install-worker-observer.test.mjs','scripts/figma-account-observer.mjs','scripts/macos/FigmaAccountProbe.m','scripts/install-monitor-hub.mjs',
       'scripts/install-monitor-hub.test.mjs','scripts/release.sh']);
     return changed.every(file => file.startsWith('team-server/') || scripts.has(file) ||
       file === 'README.md' || file === 'releases/worker-native.json' || file === 'appcast.xml' || file.startsWith('docs/'));

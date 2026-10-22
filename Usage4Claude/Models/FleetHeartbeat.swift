@@ -38,6 +38,7 @@ struct FleetUsageAccount: Encodable, Sendable, Equatable {
     let provider: String
     let usageUpdatedAt: Date?
     let usageError: String?
+    var email: String? = nil
 
     func isStale(now: Date = Date(), maximumAge: TimeInterval = 15 * 60) -> Bool {
         guard let usageUpdatedAt else { return true }

@@ -14,7 +14,7 @@ const MAX_TASKS = 5000;
 const MAX_QUEUE_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_STATE_BYTES = 16 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const TASK_STATUSES = new Set(["queued", "running", "blocked", "completed", "failed"]);
+const TASK_STATUSES = new Set(["queued", "running", "blocked", "clarification", "completed", "failed"]);
 // Newsletter renders are stored next to fleet.json under their own SHA-256.
 // The snapshot carries only small references, never image data.
 const PREVIEW_ID = /^[a-f0-9]{64}$/;
@@ -115,6 +115,7 @@ function validateHeartbeat(body) {
         accountId,
         name: string(raw.name, "account.name", 160),
         provider: string(raw.provider, "account.provider", 80),
+        email: string(raw.email, "account.email", 254, true),
         usageUpdatedAt: timestamp(raw.usageUpdatedAt, "account.usageUpdatedAt", true),
         usageError: diagnostic(raw.usageError, "account.usageError"),
       });
@@ -232,6 +233,9 @@ function validateQueue(body) {
       url,
       figmaUrl,
       company: string(raw.company, "task.company", 200, true),
+      pmOwner: string(raw.pmOwner, "task.pmOwner", 100, true),
+      pmOwnerId: string(raw.pmOwnerId, "task.pmOwnerId", 64, true),
+      pmCheckedAt: timestamp(raw.pmCheckedAt, "task.pmCheckedAt", true),
       sourceStatus: string(raw.sourceStatus, "task.sourceStatus", 120, true),
       workerId: string(raw.workerId, "task.workerId", 120, true),
       phase: string(raw.phase, "task.phase", 160, true),
@@ -389,6 +393,115 @@ function publicTask(task, completions = []) {
   return completion
     ? { ...task, taskVersion: version, status: "completed", phase: "Manuell erledigt", completion: "manual", completedAt: completion.completedAt }
     : { ...task, taskVersion: version };
+}
+
+function currentTask(task) {
+  if (task.completion === "manual" || task.status === "completed") return task;
+  const normalize = value => String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  // ClickUp review is downstream of Pre-Gen. A leftover automation tag must
+  // not turn a mail awaiting human review into a running or blocked build.
+  if (task.workflow === "newsletter" && [
+    "qa", "designrevisionintern", "approvalintern", "approvalextern",
+    "designrevisionextern", "klaviyoupload", "golive",
+  ].includes(normalize(task.sourceStatus))) {
+    return { ...task, status: "completed", phase: "Pre-Gen abgeschlossen · " + task.sourceStatus,
+      workerId: null, progress: 100, blockedReason: undefined, errorUrl: undefined };
+  }
+  const prefix = { newsletter: "pregen", upload: "klaviyoupload" }[task.workflow];
+  const paused = /^Pausiert(?:\s*[·:]|$)/i.test(task.phase || "")
+    || (prefix && (task.tags || []).some(tag => normalize(tag) === prefix + "pausiert"));
+  return paused && ["queued", "running"].includes(task.status)
+    ? { ...task, status: "paused", phase: task.phase || "Pausiert · automatische Fortsetzung" } : task;
+}
+
+function technicalBlocker(task) {
+  const reason = task.blockedReason || "";
+  return /Fehlklassifikation|falsch.{0,40}(?:klassifi|eingestuft)|Verneinung|keine Black[- ]Week[- ]Gestaltung|HTTP\s*[45]\d{2}|ECONN|ETIMEDOUT|SyntaxError|TypeError|technische[rn]? (?:Fehler|Blockade)|Worker meldet sich nicht mehr/i.test(reason);
+}
+
+// Human decisions remain open work, but do not count as technical failures.
+// Apply operator decisions to exactly the reviewed source state and diagnosis.
+function withClarification(task, decisions = []) {
+  if (!["blocked", "failed"].includes(task.status)
+    || technicalBlocker(task)) return task;
+  const decision = decisions.find(entry => entry.taskId === task.id && entry.taskVersion === task.taskVersion
+    && entry.sourceUpdatedAt === (task.updatedAt || null)
+    && (!task.blockedReason || entry.diagnosticVersion === taskVersion(task)));
+  const reason = task.blockedReason || "";
+  const human = task.phase === "PM-Rückfrage offen"
+    || /(?:Gestaltung|Design|Black[- ]Week).{0,70}(?:nicht freigegeben|Freigabe fehlt|Entscheidung.{0,30}fehlt)/i.test(reason)
+    || /Entscheidung.{0,70}(?:Gestaltung|Design).{0,20}fehlt/i.test(reason)
+    || /(?:PM|Valentin).{0,50}als Editor einlad/i.test(reason);
+  return decision || human ? { ...task, status: "clarification", phase: "Klärung nötig",
+    blockedReason: decision?.reason || task.blockedReason || "PM-Rückfrage offen" } : task;
+}
+
+function errorTaskId(error, tasks) {
+  const job = String(error.attemptId || "").replace(/^\d{8}T\d{6}Z-/, "");
+  if (error.workflow === "correction") {
+    const id = "correction:" + job;
+    if (tasks.has(id)) return id;
+    // Independent per-mail corrections share a ClickUp link; never collapse
+    // their identities based on that link when the attempt is ambiguous.
+  }
+  let taskId;
+  try {
+    const url = new URL(error.url);
+    if (url.hostname === "app.clickup.com") taskId = /^\/t\/([A-Za-z0-9_-]+)$/.exec(url.pathname)?.[1];
+  } catch { /* A worker diagnostic may have no task link. */ }
+  if (taskId && ["newsletter", "upload"].includes(error.workflow)) return "clickup:" + error.workflow + ":" + taskId;
+  if (taskId && error.workflow === "translation") {
+    const language = /-uebersetzung-(en|it|fr|se|sp)$/.exec(job)?.[1];
+    if (language) return "clickup:translation-" + language + ":" + taskId;
+  }
+  const matches = [...tasks.values()].filter(task => task.workflow === error.workflow && task.url && task.url === error.url);
+  return matches.length === 1 ? matches[0].id : null;
+}
+
+function currentQueue(state, liveReports) {
+  const tasks = new Map(state.queue.tasks.map(task => [task.id, currentTask(publicTask(task, state.queue.completions))]));
+  const activeOwners = new Map();
+  for (const report of liveReports) {
+    const sampled = Date.parse(report.sampledAt);
+    const active = new Set(report.activity.runs.map(run => run.id));
+    for (const [id, task] of tasks) {
+      if (task.workerId === report.workerId && ["running", "queued"].includes(task.status) && !active.has(id)
+        && (!task.updatedAt || sampled >= Date.parse(task.updatedAt))) {
+        tasks.set(id, { ...task, status: "queued", workerId: null, phase: "Worker-Abgleich ausstehend" });
+      }
+    }
+    for (const run of report.activity.runs) {
+      const previous = tasks.get(run.id);
+      if (["paused", "blocked", "failed", "completed"].includes(previous?.status)
+        && Date.parse(previous.updatedAt) > sampled) continue;
+      const conflict = activeOwners.has(run.id) && activeOwners.get(run.id) !== report.workerId;
+      activeOwners.set(run.id, report.workerId);
+      const paused = /^Pausiert(?:\s*[·:]|$)/i.test(run.step || "");
+      tasks.set(run.id, { ...previous, ...run, blockedReason: undefined, errorUrl: undefined,
+        completion: undefined, completedAt: undefined, workerId: conflict ? null : report.workerId,
+        status: paused ? "paused" : run.status,
+        phase: conflict ? "Mehrere Worker melden denselben Auftrag" : paused ? "Pausiert · automatische Fortsetzung"
+          : run.status === "queued" ? "Reserviert" : "In Bearbeitung",
+        updatedAt: report.sampledAt,
+        progress: run.progress ?? (["running", "queued", "paused"].includes(previous?.status) ? previous.progress : undefined) });
+    }
+  }
+  // Slack is diagnostic history, not an additional task inventory. Enrich only
+  // the current blocking state with the latest error belonging to that attempt.
+  const errors = [...(state.queue.blockedErrors || [])].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  const diagnosed = new Set();
+  for (const error of errors) {
+    const id = errorTaskId(error, tasks);
+    const task = tasks.get(id);
+    if (!task || diagnosed.has(id) || !["blocked", "failed", "clarification"].includes(task.status)) continue;
+    const attempt = task.runId || task.attemptId;
+    if (attempt && error.attemptId && attempt !== error.attemptId) continue;
+    if (task.status === "clarification" && Date.parse(error.updatedAt) < Date.parse(task.updatedAt)) continue;
+    if (!attempt && task.updatedAt && Date.parse(error.updatedAt) < Date.parse(task.updatedAt)) continue;
+    tasks.set(id, { ...task, status: "blocked", blockedReason: error.blockedReason || task.blockedReason, errorUrl: error.errorUrl });
+    diagnosed.add(id);
+  }
+  return [...tasks.values()].map(task => withClarification(task, state.queue.clarifications));
 }
 
 function createFleetStore(dataDir, now = Date.now) {
@@ -643,6 +756,11 @@ function createFleetStore(dataDir, now = Date.now) {
       state.queue = {
         tasks: incoming.tasks,
         ...(incoming.blockedErrors === undefined ? {} : { blockedErrors: incoming.blockedErrors }),
+        clarifications: (state.queue.clarifications || []).filter(entry => {
+          const task = incoming.tasks.find(task => task.id === entry.taskId);
+          return task && ["blocked", "failed"].includes(task.status)
+            && entry.taskVersion === taskVersion(task) && entry.sourceUpdatedAt === (task.updatedAt || null);
+        }),
         completions: (state.queue.completions || []).filter((entry) => {
           const task = incoming.tasks.find((task) => task.id === entry.taskId);
           return task && entry.taskVersion === taskVersion(task);
@@ -663,6 +781,33 @@ function createFleetStore(dataDir, now = Date.now) {
     write(teamId, state);
     if (!incoming.source.error) prunePreviews(teamId, state);
     return { taskCount: state.queue.tasks.length, source: state.queue.source };
+  }
+
+  function clarifyTask(teamId, who, raw) {
+    object(raw, "clarification");
+    const taskId = string(raw.taskId, "taskId", 160);
+    const version = string(raw.taskVersion, "taskVersion", 64);
+    const reason = diagnostic(raw.reason, "reason");
+    if (!reason) throw new FleetError(400, "Der offene Klärungsbedarf fehlt.");
+    const state = read(teamId);
+    const source = state.queue.tasks.find(task => task.id === taskId);
+    if (!source) throw new FleetError(404, "Die Aufgabe ist nicht mehr in der Queue.");
+    if (version !== taskVersion(source)) throw new FleetError(409, "Die Aufgabe hat sich geändert. Aktualisiere die Ansicht.");
+    const task = currentQueue(state, []).find(task => task.id === taskId);
+    if (!["blocked", "failed", "clarification"].includes(task.status))
+      throw new FleetError(409, "Nur offene Blockaden können zugeordnet werden.");
+    if (technicalBlocker(task)) throw new FleetError(409, "Ein technischer Fehler bleibt blockiert.");
+    // Use the unclassified, enriched diagnosis for expiry; classification is a view.
+    const unclassified = currentQueue({ ...state, queue: { ...state.queue, clarifications: [] } }, [])
+      .find(task => task.id === taskId);
+    const original = { ...unclassified, status: source.status, phase: currentTask(publicTask(source, state.queue.completions)).phase };
+    const entry = { taskId, taskVersion: version, diagnosticVersion: taskVersion(original),
+      sourceUpdatedAt: source.updatedAt || null, reason, clarifiedAt: new Date(now()).toISOString(),
+      clarifiedBy: who.member?.id || "__team_owner__" };
+    state.queue.clarifications = [...(state.queue.clarifications || []).filter(item => item.taskId !== taskId), entry];
+    event(state, "task_clarification", taskId, task.title, reason, now(), { ...task, status: "clarification" });
+    write(teamId, state);
+    return currentQueue(state, []).find(task => task.id === taskId);
   }
 
   function completeTask(teamId, who, raw) {
@@ -714,13 +859,14 @@ function createFleetStore(dataDir, now = Date.now) {
         workerHeartbeatAgeSeconds: machineLiveness(worker, null, time).heartbeatAgeSeconds,
         workerVersion: worker.workerVersion,
         workerRevision: worker.workerRevision,
+        ...(worker.workerVersion ? { workerVersionReportedAt: worker.lastSeenAt, workerVersionSource: 'hub' } : {}),
         pendingClickup: worker.pendingClickup,
         acceptingTasks: worker.acceptingTasks,
       } : {}) };
     });
     for (const worker of workers.values()) {
       const { derivedStatus, ...visible } = worker;
-      machines.push({ ...visible, name: worker.workerId, deviceId: `hub:${worker.workerId}`, telemetrySource: "worker", memberId: null, limits: [], status: machineStatus(worker, time), heartbeatAgeSeconds: Math.max(0, Math.floor((time - Date.parse(worker.lastSeenAt)) / 1000)), usageStale: true, usageStatus: "unavailable" });
+      machines.push({ ...visible, ...(worker.workerVersion ? { workerVersionReportedAt: worker.lastSeenAt, workerVersionSource: 'hub' } : {}), name: worker.workerId, deviceId: `hub:${worker.workerId}`, telemetrySource: "worker", memberId: null, limits: [], status: machineStatus(worker, time), heartbeatAgeSeconds: Math.max(0, Math.floor((time - Date.parse(worker.lastSeenAt)) / 1000)), usageStale: true, usageStatus: "unavailable" });
     }
     for (const issue of state.workerIssues || []) {
       let machine = machines.find(machine => machine.workerId === issue.workerId);
@@ -732,7 +878,15 @@ function createFleetStore(dataDir, now = Date.now) {
     }
     for (const machine of machines) {
       const report = (state.workerReports || []).find(report => report.workerId === machine.workerId);
-      Object.assign(machine, publicReport(report, time));
+      const observation = publicReport(report, time);
+      // A late or stale observer must not replace a newer Hub version report.
+      if (Date.parse(observation.workerVersionReportedAt) < Date.parse(machine.workerVersionReportedAt)) {
+        delete observation.workerVersion;
+        delete observation.workerRevision;
+        delete observation.workerVersionReportedAt;
+        delete observation.workerVersionSource;
+      }
+      Object.assign(machine, observation);
       if (machine.activity?.fresh) {
         machine.lastSeenAt = report.receivedAt;
         machine.heartbeatAgeSeconds = Math.max(0, (time - Date.parse(report.receivedAt)) / 1000);
@@ -743,32 +897,7 @@ function createFleetStore(dataDir, now = Date.now) {
       }
     }
     const liveReports = (state.workerReports || []).filter(report => publicReport(report, time).activity?.fresh);
-    const slackInventory = Array.isArray(state.queue.blockedErrors);
-    const queueTasks = new Map(state.queue.tasks.filter(task => task.workflow === 'sales' || !slackInventory || !['blocked', 'failed'].includes(task.status))
-      .map(task => [task.id, publicTask(task, state.queue.completions)]));
-    const activeOwners = new Map();
-    for (const report of liveReports) {
-      const active = new Set(report.activity.runs.map(run => run.id));
-      for (const [id, task] of queueTasks) if (task.workerId === report.workerId && ['running', 'queued'].includes(task.status) && !active.has(id)) {
-        queueTasks.set(id, { ...task, workerId: null, phase: 'Worker-Abgleich ausstehend' });
-      }
-      for (const run of report.activity.runs) {
-        const previous = queueTasks.get(run.id);
-        const conflict = activeOwners.has(run.id) && activeOwners.get(run.id) !== report.workerId;
-        activeOwners.set(run.id, report.workerId);
-        if (['blocked', 'failed', 'completed'].includes(previous?.status) && Date.parse(previous.updatedAt) > Date.parse(report.sampledAt)) continue;
-        queueTasks.set(run.id, { ...previous, ...run, blockedReason: undefined, completion: undefined, completedAt: undefined, workerId: conflict ? null : report.workerId,
-          status: conflict && !slackInventory ? 'blocked' : run.status, phase: conflict ? 'Mehrere Worker melden denselben Auftrag' : run.status === 'queued' ? 'Reserviert' : 'In Bearbeitung',
-          updatedAt: report.sampledAt, progress: run.progress ?? (['running', 'queued'].includes(previous?.status) ? previous.progress : undefined) });
-      }
-    }
-    if (slackInventory) {
-      // Live telemetry may diagnose conflicts, but cannot manufacture extra
-      // pipeline blockers or erase Slack errors for an earlier attempt. Sales
-      // lifecycle states are owned by their job records, not this Slack channel.
-      for (const [id, task] of queueTasks) if (task.workflow !== 'sales' && ['blocked', 'failed'].includes(task.status)) queueTasks.delete(id);
-      for (const error of state.queue.blockedErrors) queueTasks.set(error.id, publicTask(error));
-    }
+    const queueTasks = currentQueue(state, liveReports);
     return {
       schema: 1,
       generatedAt: new Date(time).toISOString(),
@@ -777,7 +906,7 @@ function createFleetStore(dataDir, now = Date.now) {
         fresh: (state.workerReports || []).some(report => report.skillRelease?.revision === state.latestSkillRelease.revision
           && publicReport(report, time).skillRelease?.fresh === true) } } : {}),
       machines: machines.sort((a, b) => a.name.localeCompare(b.name)),
-      queue: { tasks: [...queueTasks.values()], source: { ...source, stale, status: source.error ? "error" : !source.lastSuccessAt ? "unavailable" : stale ? "stale" : "fresh" } },
+      queue: { tasks: queueTasks, errors: (state.queue.blockedErrors || []).map(error => publicTask(error)), source: { ...source, stale, status: source.error ? "error" : !source.lastSuccessAt ? "unavailable" : stale ? "stale" : "fresh" } },
       events: [...state.events].reverse().map((entry) => publicMachineEvent(entry, state.machines)),
     };
   }
@@ -790,6 +919,11 @@ function createFleetStore(dataDir, now = Date.now) {
     const previous = reports.find(item => item.workerId === report.workerId);
     // A delayed response from an earlier agent invocation cannot roll back state.
     if (previous && Date.parse(previous.sampledAt) > Date.parse(report.sampledAt)) return { accepted: false };
+    // The independent Figma observer runs less often than the activity observer.
+    // Keep its dated evidence without presenting later activity as a new check.
+    if (previous?.figmaAccount && previous.deviceId === report.deviceId
+      && (!report.figmaAccount || Date.parse(previous.figmaAccount.observedAt) > Date.parse(report.figmaAccount.observedAt)))
+      report.figmaAccount = previous.figmaAccount;
     state.workerReports = [...reports.filter(item => item.workerId !== report.workerId), report].slice(-MAX_MACHINES);
     state.latestSkillRelease = newerSkillRelease(state.latestSkillRelease, report.skillRelease);
     write(teamId, state);
@@ -859,7 +993,7 @@ function createFleetStore(dataDir, now = Date.now) {
     }
   }
 
-  return { heartbeat, updateQueue, workerReport, workerReportStatus, completeTask, snapshot, subscribe, removeMember, assertEnrollmentAllowed, linkWorker, notify, savePreview, previewFile };
+  return { heartbeat, updateQueue, workerReport, workerReportStatus, completeTask, clarifyTask, snapshot, subscribe, removeMember, assertEnrollmentAllowed, linkWorker, notify, savePreview, previewFile };
 }
 
 module.exports = { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, MAX_PREVIEW_BYTES, validateHeartbeat, validateQueue };

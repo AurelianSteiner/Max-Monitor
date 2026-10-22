@@ -6,7 +6,7 @@ final class FleetHeartbeatTests: XCTestCase {
         let usageAt = Date(timeIntervalSince1970: 1_700_000_000)
         let now = usageAt.addingTimeInterval(1800)
         let account = FleetUsageAccount(accountId: "account", name: "Worker account", provider: "claude",
-                                       usageUpdatedAt: usageAt, usageError: "Sign in again")
+                                       usageUpdatedAt: usageAt, usageError: "Sign in again", email: "worker@example.com")
         let limit = try XCTUnwrap(FleetUsageLimit(accountId: "account", accountName: account.name,
             label: "5h", kind: "session", percent: 72.5, resetsAt: nil,
             usageUpdatedAt: usageAt, usageError: account.usageError))
@@ -18,6 +18,7 @@ final class FleetHeartbeatTests: XCTestCase {
         let accounts = try XCTUnwrap(json["accounts"] as? [[String: Any]])
         XCTAssertNotEqual(json["reportedAt"] as? String, accounts[0]["usageUpdatedAt"] as? String)
         XCTAssertEqual(accounts[0]["usageError"] as? String, "Sign in again")
+        XCTAssertEqual(accounts[0]["email"] as? String, "worker@example.com")
         XCTAssertNil(json["token"])
         XCTAssertNil(json["batteryPercent"])
         XCTAssertTrue(account.isStale(now: now))

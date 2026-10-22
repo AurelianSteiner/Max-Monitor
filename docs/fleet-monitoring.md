@@ -9,7 +9,14 @@ enthält die lokalen Konten und ihre Limits im selben Fenster. Konten werden dor
 **Queue & Macs → Monitoring-Account** verbindet genau einen Claude-Account für den
 lokalen Mac. Dieser Login und seine gespeicherten Zugangsdaten sind unabhängig von
 **Account Limits**. Konten in Account Limits werden niemals automatisch als
-Monitoring-Account übernommen. Jede Mac-Karte nennt den verbundenen Account;
+Monitoring-Account übernommen. In der Übersicht steht direkt unter jedem Mac-Namen
+**Claude · E-Mail-Adresse**. Macs-Ansicht und Details zeigen dieselbe Login-Adresse,
+auch wenn der Account eine andere Bezeichnung hat. Ältere Apps können die Adresse
+weiterhin übermitteln, wenn sie als Account-Name gespeichert ist; andernfalls steht
+**E-Mail nicht gemeldet** bis zur nächsten Meldung einer aktualisierten App.
+Die Anzeige identifiziert den verbundenen Monitoring-Account; die separate
+Claude-Anmeldung des Newsletter-Workers wird dadurch nicht geändert oder geprüft.
+Jede Mac-Karte nennt den verbundenen Account;
 ohne Verbindung bleiben die Limits unbekannt, während der Gerätebericht weiterläuft.
 Die Werte **5h** und **Woche** stammen jeweils aus dem Fünf-Stunden-Limit und dem
 gesamten Wochenlimit dieses Accounts. Einzelne Modelllimits stehen in den Details.
@@ -38,13 +45,28 @@ ClickUp + Slack-Reservierungen + Hub-Worker-Dateien ── Newsletter-Bridge
 ```
 
 Die **Übersicht** zeigt alles auf einer Seite: oben pro Workflow ein Balkendiagramm
-der Stufen **Markiert · Wartet · Läuft · Blockiert · Fertig** (bei Bedarf **Fehler**),
+der Stufen **Markiert · Wartet · Pausiert · Läuft · Klärung nötig · Blockiert · Fertig**
+(bei Bedarf **Fehler**),
 daneben die dringendsten Einträge aus **Braucht Aufmerksamkeit** und darunter alle Macs
 mit Status, aktueller Aufgabe, Akku, 5h-/Wochenlimit und letzter Meldung. „Markiert“
 heißt: nur das Start-Tag (z. B. `pre gen.`) ist gesetzt; ein Status-Tag wie
 `pre gen · wartet` oder eine Worker-Reservierung zählt als „Wartet“. Ein Klick auf einen
 Balken öffnet die Queue mit genau diesem Status- und Workflow-Filter. Das Dashboard ist
 bewusst immer hell, auch im macOS-Dunkelmodus.
+
+**Klärung nötig** trennt bei Pre-Gen und Korrekturen fehlende Informationen,
+Freigaben, Produktlinks, Zugänge und offene PM-Rückfragen von technischen Fehlern.
+**Blockiert** bleibt für technische Fehler, einschließlich falscher
+Black-Week-Klassifikation trotz verneintem Briefing. **Wartet** ist weiterhin
+die ausführbare Queue. Die Zuordnung bleibt bei Quellenabgleich und Relay-Neustart
+erhalten und verfällt, sobald sich der Versuch oder dessen Diagnose ändert.
+Eine Zuordnung erledigt keine Aufgabe und startet keinen Worker.
+
+Der zentrale Abgleich bereinigt `#ai-fehler` automatisch nach jedem frischen
+Queue-Snapshot: Bot-Kopien zu `Klärung nötig`, laufenden, wartenden, pausierten
+und fertigen Aufträgen verschwinden. Aktuelle technische Blockaden und
+blockierte Klaviyo-Uploads bleiben stehen. Originale Auftrags- und PM-Threads
+werden dadurch nicht verändert.
 
 Im **Queue-Log → Braucht Aufmerksamkeit** stehen die aktuell betroffenen Macs und
 blockierten oder fehlgeschlagenen Aufgaben mit ihren Gründen und Details. „Im Log
@@ -259,7 +281,8 @@ Für den laufenden Abgleich sind vier Umgebungsvariablen erforderlich:
 
 Der Token wird ausschließlich über die Prozessumgebung übergeben, niemals als
 CLI-Argument. Ein eigener Admin für die Bridge erleichtert das spätere Widerrufen.
-Auf macOS kann ein lokales Startskript den Token aus dem Schlüsselbund beziehen:
+Auf macOS übernimmt der Installer den Token einmalig aus dem Schlüsselbund.
+Ein lokales Startskript liest danach die private Token-Datei:
 
 ```bash
 #!/bin/zsh
@@ -267,8 +290,9 @@ set -eu
 export NEWSLETTER_WORKER_ROOT="/Pfad/zu/AI Newsletter Creation"
 export MONITOR_RELAY_URL="https://monitor.example.com"
 export MONITOR_TEAM_ID="DEMO1234"
-export MONITOR_BRIDGE_TOKEN="$(security find-generic-password -w \
-  -s 'MaxMonitor Newsletter Bridge' -a "$MONITOR_TEAM_ID")"
+MONITOR_BRIDGE_TOKEN="$(/bin/cat "$HOME/Library/Application Support/Max Monitor/Newsletter Bridge/$MONITOR_TEAM_ID/bridge-token")"
+[ -n "$MONITOR_BRIDGE_TOKEN" ] || exit 1
+export MONITOR_BRIDGE_TOKEN
 exec /absoluter/pfad/zu/node "/Pfad/zu/Max-Monitor/scripts/newsletter-monitor-bridge.mjs"
 ```
 
@@ -282,7 +306,7 @@ einen Node-Pfad, der ohne Shell-Profil verfügbar ist. Der Installer benötigt
 keinen `MONITOR_BRIDGE_TOKEN` in seiner Umgebung.
 
 ```bash
-# Konfiguration und vorhandenen Schlüsselbund-Eintrag ohne Änderung prüfen:
+# Konfiguration und lokalen Token ohne Schlüsselbundzugriff prüfen:
 scripts/install-newsletter-monitor.sh --check
 
 # Dienstdateien ausschließlich in einem Testverzeichnis erzeugen, nicht laden:
@@ -291,7 +315,7 @@ scripts/install-newsletter-monitor.sh --generate-only --output-dir /tmp/max-moni
 # Installieren und starten (nur auf dem einen gewählten Bridge-Host):
 scripts/install-newsletter-monitor.sh
 
-# Dienst später stoppen und entfernen; Schlüsselbund und Queue behalten:
+# Dienst später stoppen und entfernen; gespeicherten Token und Queue behalten:
 scripts/install-newsletter-monitor.sh --uninstall
 ```
 
@@ -302,8 +326,12 @@ das Intervall. Launchd startet keine zweite Instanz derselben laufenden Aufgabe.
 Die Dateien liegen unter `~/Library/LaunchAgents/` und
 `~/Library/Application Support/Max Monitor/Newsletter Bridge/<TEAM-ID>/`.
 Die generierte plist enthält keinen Token; das Startskript liest ihn bei jeder
-Ausführung aus dem Schlüsselbund. Absolute Pfade und Dateirechte `0600`/`0700`
-schützen die Konfiguration. Der Installer führt keine Newsletter-Jobs aus.
+Ausführung aus der lokalen Datei `bridge-token` mit Modus `0600` im Verzeichnis
+mit Modus `0700`. Nach einmaliger Übernahme benötigen auch Dienstneustarts und
+erneute Installationen keinen Schlüsselbundzugriff. Bereits installierte Dienste
+benötigen einmal den aktualisierten Installer, um ihre `run.sh` zu ersetzen.
+Der Installer führt keine Newsletter-Jobs aus. Die Schutzgrenze des lokalen
+Tokens ist das macOS-Benutzerkonto; siehe [Zugangsdatenablage](credential-persistence.md).
 
 ```bash
 # Einmalige Übernahme, wenn die Umgebung eingerichtet ist:
@@ -356,7 +384,15 @@ keine Uploads oder Übersetzungen aus.
 Sales-Jobs werden im zentralen Hub-Modus aus `sales-newsletter/<Slack-ts>/job.json`
 gelesen, einschließlich HTTP-Shopadressen. `reserved` erscheint als Wartet,
 `running` und `delivery` als Läuft, `blocked` als Blockiert,
-`done` als Fertig mit 100 %. Abgebrochene Versuche (`aborted`) werden nicht
+`done` als Fertig mit 100 %. Jede Sales-Aufgabe zeigt einen Prozentwert und
+den aktuellen Arbeitsschritt: Reservierungen beginnen bei 0 %, laufende Aufgaben
+bei 5 %. Abgeschlossene Schritte aus `monitor.events` erhöhen den Fortschritt
+mit derselben Gewichtung wie im Sales-Worker; die getrennten Schritte Ideen,
+Aufmacher und Newsletter-Gestaltung ersetzen dabei den älteren `build`-Schritt.
+PDF-Auslieferung und Slack-Prüfung zeigen 95–98 %, erst `done` bestätigt 100 %.
+Blockierte Aufgaben behalten ihren erreichten Fortschritt und den Blockiergrund.
+Eine verspätete Worker-Meldung bleibt auch neben dem Fortschritt sichtbar.
+Abgebrochene Versuche (`aborted`) werden nicht
 angezeigt und zählen zu keiner Statusgruppe. Blockiergründe und
 der aktuelle Versuch bleiben zugeordnet. Eine verspätete Worker-Meldung entfernt
 keinen Auftrag; nach 30 Minuten erscheint „Worker-Meldung ausstehend“, bis der
