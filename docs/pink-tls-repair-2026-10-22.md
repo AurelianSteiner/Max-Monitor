@@ -83,10 +83,14 @@ Hub-Abnahme und tatsächliche Pink-Detailansicht in Max Monitor bestätigen dies
 Werte und „Freies Kontingent“ um 18:15 Uhr. Der native Wartungsabgleich von
 18:15 Uhr hat den Reparaturbuild erhalten.
 
+Auch der nächste reguläre Provider-Abruf um **18:19:22** ist erfolgreich:
+erneut 25 % / 40 %, `fresh`, kein Fehler und weiterhin `2.16.3+pink-tls1`.
+Das bestätigt die automatische Aktualisierung nach dem ersten App-Start.
+
 Newsletter-Dienst PID **75414**, Worker-Beobachter **69112**, unabhängiger
 Wachschutz **2305** und dienstgebundener Wachschutz **75415** blieben beim
 App-Austausch identisch. Ein erfolgreicher neuer Worker-Poll ist bestätigt;
-die Aufgabenannahme ist aktiv. Beim Austausch war kein Produktionslauf als
+der Readback um 18:15 Uhr meldete aktive Aufgabenannahme. Beim Austausch war kein Produktionslauf als
 laufend oder wartend registriert. Der zuvor beobachtete Sales-Lauf war bereits
 vorher beendet. Es wurden keine Job-Prozesse signalisiert oder neu gestartet.
 
