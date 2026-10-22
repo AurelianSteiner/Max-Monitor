@@ -1109,7 +1109,9 @@
     const selected = machine.claudeAccounts?.selectedAccountId === account.id;
     const heading = node("div", "worker-account-heading");
     const identity = claudeAccountIdentity(account);
-    const name = node("strong", "", identity.name); name.title = identity.email || identity.name;
+    const name = node("strong", "claude-account-name", identity.name);
+    const item = fleetAccountLines(machine).find(line => line.id === account.id);
+    markAccountAvailability(name, item);
     heading.append(name);
     if (selected && account.status==='ready' && !stale) heading.append(node("span", "worker-account-selected", "Nächster Start"));
     column.append(heading);
@@ -1327,10 +1329,30 @@
   }
   // One line per Claude account. The account, 5 h and week columns stack the
   // same accounts in the same order, so every line reads straight across.
+  function accountAvailability(session, weekly, stale, status, blockedUntil) {
+    if (stale || [session, weekly].some(limit => limitStale(limit)))
+      return { available: false, availability: "Kontingent nicht bestätigt · Messung veraltet" };
+    if (status === "error") return { available: false, availability: "Kontingent nicht bestätigt · Account prüfen" };
+    if (status === "limited" || timestamp(blockedUntil) > Date.now()
+      || [session, weekly].some(limit => limit?.percent >= 100))
+      return { available: false, availability: "Kein freies Kontingent · Limit erreicht" };
+    if (status === "unknown" || [session, weekly].some(limit =>
+      !Number.isFinite(limit?.percent) || limit.percent < 0 || limit.percent > 100
+      || (timestamp(limit.resetsAt) !== null && timestamp(limit.resetsAt) <= Date.now())))
+      return { available: false, availability: "Kontingent noch nicht bestätigt" };
+    return { available: true, availability: "Freies Kontingent" };
+  }
+  function markAccountAvailability(element, item) {
+    if (!item) return;
+    element.dataset.available = String(item.available);
+    element.title = item.title;
+    element.setAttribute("aria-label", `${item.name} · ${item.availability}${item.next ? " · nächster Start" : ""}`);
+  }
   function fleetAccountLines(machine) {
     const pool = machine.claudeAccounts?.accounts;
     if (pool?.length === 2) return pool.map((account) => {
-      const stale = account.stale || !snapshot || Date.now() - Date.parse(account.updatedAt) > 10 * 60000;
+      const stale = account.stale || !snapshot || !timestamp(account.updatedAt)
+        || Date.now() - timestamp(account.updatedAt) > 10 * 60000;
       const identity = claudeAccountIdentity(account);
       const next = machine.claudeAccounts.selectedAccountId === account.id && account.status === "ready" && !stale;
       const note = stale ? "Messung veraltet" : account.status === "limited" ? "Limit erreicht"
@@ -1341,19 +1363,24 @@
         const window = account.windows.find(w => w.kind === kind);
         return window ? { percent: window.percent, resetsAt: window.reset, usageUpdatedAt: account.updatedAt } : null;
       };
-      return { name: identity.name, next, stale, note: note || blocked,
+      const session = limit("session"), weekly = limit("weekly");
+      const availability = accountAvailability(session, weekly, stale, account.status, account.blockedUntil);
+      return { id: account.id, name: identity.name, next, stale, note: note || blocked, ...availability,
         tone: account.status === "error" && !stale ? "bad" : blocked ? "warn" : "unknown",
-        title: [identity.email || identity.name, next ? "Nächster Start" : "", note, blocked].filter(Boolean).join("\n"),
-        session: limit("session"), weekly: limit("weekly") };
+        title: [identity.email || identity.name, availability.availability, next ? "Nächster Start" : "", note, blocked].filter(Boolean).join("\n"),
+        session, weekly };
     });
     const account = machineAccount(machine);
     if (!account) return [];
     const identity = claudeAccountIdentity(account);
     const stale = usageStale(machine) || Boolean(machine.usageError);
-    return [{ name: identity.name, next: false, stale, note: "",
+    const session = machineLimit(machine, account, "session"), weekly = machineLimit(machine, account, "weekly");
+    const availability = accountAvailability(session, weekly, stale);
+    return [{ name: identity.name, next: false, stale, note: "", ...availability,
       title: [`Claude-Monitoring-Account: ${identity.email || "E-Mail nicht gemeldet"}`,
+        availability.availability, machine.usageError || "",
         stale ? `Letzte Messung ${relative(machine.usageUpdatedAt)}` : ""].filter(Boolean).join("\n"),
-      session: machineLimit(machine, account, "session"), weekly: machineLimit(machine, account, "weekly") }];
+      session, weekly }];
   }
   function renderFleet(devices) {
     const online = devices.filter((machine) => machine.status === "online").length;
@@ -1446,9 +1473,8 @@
       if (lines.length) {
         for (const item of lines) {
           const accountName = node("span", `fleet-account-name${item.next ? " next" : ""}`, item.name);
-          accountName.title = item.title;
+          markAccountAvailability(accountName, item);
           if (item.note) accountName.dataset.tone = item.tone;
-          if (item.next) accountName.setAttribute("aria-label", `${item.name} · nächster Start`);
           accountCell.append(accountName);
           sessionCell.append(meter(item.session, item.stale));
           weeklyCell.append(meter(item.weekly, item.stale));
@@ -1540,6 +1566,10 @@
       const accountIdentity = machineAccountIdentity(machine);
       const accountLabel = node("p", account ? "machine-account" : "machine-account unbound", accountIdentity.text);
       accountLabel.title = accountIdentity.title;
+      if (account && machine.claudeAccounts?.accounts?.length !== 2) {
+        accountLabel.classList.add("claude-account-name");
+        markAccountAvailability(accountLabel, fleetAccountLines(machine)[0]);
+      }
       card.append(accountLabel);
       card.append(accountActions(machine));
       const figmaIdentity = machineFigmaIdentity(machine);
@@ -2113,6 +2143,13 @@
   function machineDetails(machine) {
     const account = machineAccount(machine);
     const accountIdentity = machineAccountIdentity(machine);
+    const accountField = detailField(machine.claudeAccounts ? "Claude-Accounts" : "Claude-Monitoring-Account", machine.claudeAccounts ? accountIdentity.text : account ? accountIdentity.text
+      : "Auf diesem Worker-Mac unter Queue & Macs → Monitoring-Account verbinden", true);
+    if (account && machine.claudeAccounts?.accounts?.length !== 2) {
+      const name = accountField.querySelector("strong");
+      name.classList.add("claude-account-name");
+      markAccountAvailability(name, fleetAccountLines(machine)[0]);
+    }
     const grid = node("div", "detail-grid");
     const [battery, source] = batteryText(machine);
     const batteryField = detailField("Akku", `${battery}${source ? ` · ${source}` : ""}`);
@@ -2145,8 +2182,7 @@
         "Version",
         machine.appVersion || machine.workerVersion || "Unbekannt",
       ),
-      detailField(machine.claudeAccounts ? "Claude-Accounts" : "Claude-Monitoring-Account", machine.claudeAccounts ? accountIdentity.text : account ? accountIdentity.text
-        : "Auf diesem Worker-Mac unter Queue & Macs → Monitoring-Account verbinden", true),
+      accountField,
       detailField("Figma-Account", machineFigmaIdentity(machine).text, true),
       ...(machine.figmaAccount ? [detailField(machine.figmaAccount.source === "mcp-whoami" ? "Figma-Account geprüft" : "Figma zuletzt verwendet", exact(machine.figmaAccount.observedAt))] : []),
       ...(accountIdentity.email ? [detailField("Claude-E-Mail", accountIdentity.email, true)] : []),
