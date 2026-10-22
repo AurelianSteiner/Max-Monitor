@@ -617,7 +617,9 @@ class ClaudeAPIService {
         request.setValue(ClaudeOAuthConfig.betaHeader, forHTTPHeaderField: "anthropic-beta")
         request.cachePolicy = .reloadIgnoringLocalCacheData
 
-        session.dataTask(with: request) { [weak self] data, response, error in
+        OAuthUsageTransport.data(for: request, using: session, onRetry: { error in
+            Logger.api.notice("Claude OAuth usage: transport error \(error.code, privacy: .public); retrying once on a new connection")
+        }) { [weak self] data, response, error in
             if let error = error {
                 Logger.api.error("Claude OAuth usage 网络错误: \(error.localizedDescription)")
                 complete(.failure(UsageError.networkError))
@@ -700,7 +702,7 @@ class ClaudeAPIService {
                 Logger.api.error("Claude OAuth usage 解析失败: \(error.localizedDescription)")
                 complete(.failure(UsageError.decodingError))
             }
-        }.resume()
+        }
     }
 
     /// 取消所有正在进行的网络请求
