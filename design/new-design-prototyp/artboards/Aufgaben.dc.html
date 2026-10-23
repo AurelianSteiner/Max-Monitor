@@ -135,10 +135,10 @@ class Component extends DCLogic {
         { title: 'Blockiert', count: '3', color: '#DC2626', hasMore: false, cards: [
           card('Upload', 'Outdoor-Shop Willkommensflow', 'macbook-von-till-main-2', '1 h', { hasReason: true, reason: 'Klaviyo-Liste nicht gefunden', action: 'Liste zuordnen' }),
           card('Newsletter', 'Weinhaus Abverkauf – Mail 02', 'macbook-1', '42 min', { hasReason: true, reason: 'Briefing unvollständig', action: 'Briefing öffnen' }),
-          card('QA', 'QA Gartenmarkt Frühbucher', 'macbook-2', '25 min', { hasReason: true, reason: '2 Prüfpunkte offen', action: 'Prüfbericht' })
+          card('QA', 'QA Gartenmarkt Frühbucher', 'macbook-2', '25 min', { hasReason: true, reason: '2 Prüfpunkte offen', action: 'Prüfbericht öffnen' })
         ] },
         { title: 'Fertig heute', count: '10', color: '#16A34A', hasMore: true, more: '6 weitere anzeigen', cards: [
-          card('Newsletter', 'TISSO Herbst-Newsletter – Mail 00', 'macbook-1 · 31 min', '12:48'),
+          card('Newsletter', 'TISSO Herbst-Newsletter – Mail 00', 'macbook-1 · 28 min', '12:34'),
           card('Upload', 'Bergfreunde Teaser', 'macbook-von-till-main-2 · 9 min', '11:20'),
           card('QA', 'QA Weinhaus Herbst', 'macbook-2 · 8 min', '10:55'),
           card('Übersetzung', 'Übersetzung Sale FR', 'macbook-2 · 18 min', '10:12')
@@ -151,13 +151,15 @@ class Component extends DCLogic {
         { label: 'Freigabe-Check', time: '', ring: '#D4D4D8', fill: '#FFFFFF', weight: '500', text: '#52525B' },
         { label: 'Nach Klaviyo hochladen', time: '', ring: '#D4D4D8', fill: '#FFFFFF', weight: '500', text: '#52525B' }
       ],
+      // Beispiel-"jetzt": 12:48 Uhr. Nur wichtige Ereignisse (Start, fertig, blockiert, Mac-Probleme),
+      // neueste zuerst, passend zu den Dauern auf den Karten und der Übersicht.
       feed: [
-        { time: '19:29', who: 'macworker-5-schwarz', what: 'letzte Meldung – seitdem still' },
-        { time: '12:48', who: 'TISSO – Mail 00', what: 'fertig nach 31 min' },
-        { time: '12:43', who: 'TISSO – Mail 01', what: 'rendert Entwürfe' },
-        { time: '12:39', who: 'newsletter-mac-141b2976', what: 'Claude-Anmeldung abgelaufen' },
-        { time: '12:35', who: 'Outdoor-Shop Willkommensflow', what: 'blockiert: Klaviyo-Liste nicht gefunden' },
-        { time: '12:31', who: 'QA Weinhaus Advent', what: 'für macbook-2 reserviert' }
+        { time: '12:46', who: 'Upload Bergfreunde Wintersale', what: 'gestartet auf macbook-von-till-main-2' },
+        { time: '12:34', who: 'TISSO – Mail 00', what: 'fertig nach 28 min' },
+        { time: '12:30', who: 'macworker-5-schwarz', what: 'letzte Meldung – seitdem still' },
+        { time: '12:23', who: 'QA Gartenmarkt Frühbucher', what: 'blockiert: 2 Prüfpunkte offen' },
+        { time: '12:18', who: 'newsletter-mac-141b2976', what: 'Claude-Anmeldung abgelaufen' },
+        { time: '12:06', who: 'Weinhaus Abverkauf – Mail 02', what: 'blockiert: Briefing unvollständig' }
       ]
     };
   }

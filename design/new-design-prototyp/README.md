@@ -9,7 +9,9 @@ unverändert.
   https://claude.ai/artifact/Tdphp8qbGUyNDdPX7aLnyK (privat – im Artifact über
   „Teilen“ freigeben, wenn andere es öffnen sollen)
 - Entstanden: 21.10.2026 auf Basis des Dashboards im Testdaten-Modus
-  (`dev-workshop.html?fixtures=1`). Alle Zahlen sind **Beispieldaten**.
+  (`dev-workshop.html?fixtures=1`). Alle Zahlen sind **Beispieldaten**; sie
+  sind seitenübergreifend stimmig und beziehen sich auf „jetzt“ = Mittwoch,
+  12:48 Uhr.
 
 ## Dateien
 
@@ -44,7 +46,8 @@ nicht direkt im Browser. Das Werkstatt-Bild ist dort als Asset
 1. **Ein Satz statt Zahlensalat** oben („2 Aufgaben laufen, 3 brauchen dich“)
    plus fünf große Kacheln: Läuft · Wartet · Blockiert · Heute fertig · Macs bereit.
 2. **„Braucht dich“**: eine Liste für Mac- und Aufgabenprobleme, Grund in
-   Klartext, je ein Knopf zum Beheben („Neu anmelden“, „Liste zuordnen“ …).
+   Klartext, je ein Knopf zum Beheben („Claude neu anmelden“, „Liste
+   zuordnen“ …) – mit denselben Beschriftungen wie auf Aufgaben und Macs.
 3. **Fluss je Aufgabenart** statt Balkendiagrammen: ein gestapelter Balken
    (wartet/läuft/blockiert/fertig) + typische Dauer pro Art.
 4. **Art-Farben = Brief-Farben der Werkstatt**: Newsletter blau, Upload orange,

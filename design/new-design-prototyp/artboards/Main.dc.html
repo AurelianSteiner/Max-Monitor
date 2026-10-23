@@ -43,7 +43,7 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
   <main style="max-width: 1360px; margin: 0 auto; padding: 28px 32px 48px; display: flex; flex-direction: column; gap: 24px">
     <div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px">
       <div>
-        <h1 style="margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.02em">2 Aufgaben laufen, 3 brauchen dich</h1>
+        <h1 style="margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.02em">{{headline}}</h1>
         <p style="margin: 6px 0 0; color: #52525B; font-size: 15px">10 heute fertig · 3 von 6 Macs sind bereit · nächstes Kontingent-Reset in 2 h 14 min</p>
       </div>
       <span style="font-size: 12px; font-weight: 600; color: #92400E; background: #FEF3C7; border-radius: 999px; padding: 4px 10px">Beispieldaten</span>
@@ -80,7 +80,7 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
 
       <section aria-labelledby="att-h" style="flex: 1 1 360px; min-width: 0; background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; display: flex; flex-direction: column">
         <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 18px 8px">
-          <h2 id="att-h" style="margin: 0; font-size: 16px; font-weight: 600">Braucht dich <span style="color: #B91C1C; font-weight: 700">· 6</span></h2>
+          <h2 id="att-h" style="margin: 0; font-size: 16px; font-weight: 600">Braucht dich <span style="color: #B91C1C; font-weight: 700">· {{attentionCount}}</span></h2>
           <a href="Aufgaben.dc.html" style="font-size: 13px; text-decoration: none; font-weight: 500">Alle ansehen</a>
         </div>
         <ul style="list-style: none; margin: 0; padding: 4px 10px 12px; display: flex; flex-direction: column; gap: 4px">
@@ -93,9 +93,11 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
                   <span style="font-size: 11.5px; font-weight: 600; color: #3F3F46; background: #F4F4F5; border-radius: 6px; padding: 2px 6px">{{a.kind}}</span>
                 </div>
                 <div style="color: #3F3F46; font-size: 13px; margin-top: 2px">{{a.reason}}</div>
-                <div style="color: #6B6B76; font-size: 12px; margin-top: 2px">{{a.since}}</div>
+                <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 10px; margin-top: 4px">
+                  <span style="color: #6B6B76; font-size: 12px">{{a.since}}</span>
+                  <button type="button" style="border: 1px solid #D4D4D8; background: #FFFFFF; font: inherit; font-size: 12.5px; font-weight: 600; border-radius: 8px; padding: 4px 10px; min-height: 28px">{{a.action}}</button>
+                </div>
               </div>
-              <button type="button" style="flex: 0 0 auto; border: 1px solid #D4D4D8; background: #FFFFFF; font: inherit; font-size: 12.5px; font-weight: 600; border-radius: 8px; padding: 6px 10px; min-height: 32px">{{a.action}}</button>
             </li>
           </sc-for>
         </ul>
@@ -156,17 +158,31 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
 <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1240}}'>
 class Component extends DCLogic {
   renderVals() {
-    const C = { wait: '#C4C4CC', run: '#2563EB', block: '#DC2626', done: '#16A34A' };
+    const C = { wait: '#D97706', run: '#2563EB', block: '#DC2626', done: '#16A34A' };
     const wf = [
       { name: 'Newsletter', color: '#2F6FEB', w: 1, r: 1, b: 1, d: 5, avg: '31 min' },
       { name: 'Upload', color: '#EA7A16', w: 1, r: 1, b: 1, d: 2, avg: '12 min' },
       { name: 'Übersetzung', color: '#0D9488', w: 1, r: 0, b: 0, d: 1, avg: '18 min' },
       { name: 'QA', color: '#7C3AED', w: 1, r: 0, b: 1, d: 2, avg: '9 min' }
     ];
+    // Beispiel-"jetzt": 12:48 Uhr – alle Zeitangaben auf allen vier Seiten beziehen sich darauf.
+    const attention = [
+      { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'Mac', title: 'newsletter-mac-141b2976', reason: 'Claude-Anmeldung abgelaufen – nimmt keine Aufgaben an', since: 'seit 30 min', action: 'Claude neu anmelden' },
+      { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'Upload', title: 'Outdoor-Shop Willkommensflow', reason: 'Blockiert: Klaviyo-Liste nicht gefunden', since: 'seit 1 h · macbook-von-till-main-2', action: 'Liste zuordnen' },
+      { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'Newsletter', title: 'Weinhaus Abverkauf – Mail 02', reason: 'Blockiert: Briefing unvollständig', since: 'seit 42 min · macbook-1', action: 'Briefing öffnen' },
+      { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'QA', title: 'QA Gartenmarkt Frühbucher', reason: 'Blockiert: 2 Prüfpunkte offen', since: 'seit 25 min · macbook-2', action: 'Prüfbericht öffnen' },
+      { icon: '?', bg: '#FEF3C7', fg: '#92400E', kind: 'Mac', title: 'macworker-5-schwarz', reason: 'Meldet sich seit 18 min nicht', since: 'letzte Meldung 12:30', action: 'Worker prüfen' },
+      { icon: '–', bg: '#F4F4F5', fg: '#3F3F46', kind: 'Mac', title: 'macbook-till-main', reason: 'Offline seit 2 h', since: 'zuletzt gesehen 10:48', action: 'Details' }
+    ];
+    const running = wf.reduce((n, w) => n + w.r, 0);
+    const macIssues = attention.filter((a) => a.kind === 'Mac').length;
+    const taskIssues = attention.length - macIssues;
     return {
+      headline: `${running} Aufgaben laufen – ${taskIssues} Aufgaben und ${macIssues} Macs brauchen dich`,
+      attentionCount: attention.length,
       kpis: [
-        { label: 'Läuft jetzt', value: '2', sub: 'TISSO Herbst-Newsletter · Upload Bergfreunde', color: C.run },
-        { label: 'Wartet', value: '4', sub: 'Älteste wartet seit 18 min', color: '#D97706' },
+        { label: 'Läuft jetzt', value: String(running), sub: 'TISSO Herbst-Newsletter · Upload Bergfreunde', color: C.run },
+        { label: 'Wartet', value: '4', sub: 'Älteste wartet seit 18 min', color: C.wait },
         { label: 'Blockiert', value: '3', sub: 'Braucht eine Entscheidung', color: C.block },
         { label: 'Heute fertig', value: '10', sub: 'Ø Durchlauf 22 min', color: C.done },
         { label: 'Macs bereit', value: '3 / 6', sub: '2 arbeiten · 3 mit Problem', color: '#71717A' }
@@ -182,14 +198,7 @@ class Component extends DCLogic {
         summary: `${w.w + w.r + w.b} offen · ${w.d} fertig`,
         aria: `${w.name}: ${w.w} wartet, ${w.r} läuft, ${w.b} blockiert, ${w.d} fertig`
       })),
-      attention: [
-        { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'Mac', title: 'newsletter-mac-141b2976', reason: 'Claude-Anmeldung abgelaufen – nimmt keine Aufgaben an', since: 'seit 30 min', action: 'Neu anmelden' },
-        { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'Upload', title: 'Outdoor-Shop Willkommensflow', reason: 'Blockiert: Klaviyo-Liste nicht gefunden', since: 'seit 1 h · macbook-von-till-main-2', action: 'Öffnen' },
-        { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'Newsletter', title: 'Weinhaus Abverkauf – Mail 02', reason: 'Blockiert: Briefing unvollständig', since: 'seit 42 min · macbook-1', action: 'Öffnen' },
-        { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'QA', title: 'QA Gartenmarkt Frühbucher', reason: 'Blockiert: 2 Prüfpunkte offen', since: 'seit 25 min', action: 'Öffnen' },
-        { icon: '?', bg: '#FEF3C7', fg: '#92400E', kind: 'Mac', title: 'macworker-5-schwarz', reason: 'Meldet sich seit 18 min nicht', since: 'letzte Meldung 19:29', action: 'Prüfen' },
-        { icon: '–', bg: '#F4F4F5', fg: '#3F3F46', kind: 'Mac', title: 'macbook-till-main', reason: 'Offline seit 2 h', since: 'zuletzt gesehen 17:45', action: 'Details' }
-      ],
+      attention,
       macs: [
         { name: 'macbook-1', state: 'Arbeitet', stateColor: '#1D4ED8', dot: '#2563EB', task: 'TISSO Herbst-Newsletter – Mail 01', quota: '64%', quotaColor: '#D97706', quotaLabel: '64 % · 5 h' },
         { name: 'macbook-von-till-main-2', state: 'Arbeitet', stateColor: '#1D4ED8', dot: '#2563EB', task: 'Upload Bergfreunde Wintersale · 6 %', quota: '27%', quotaColor: '#2563EB', quotaLabel: '27 % · 5 h' },
