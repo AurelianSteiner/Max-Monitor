@@ -1574,7 +1574,7 @@ export async function readStoredCheckpoints(localHub) {
     const columns = db.prepare('PRAGMA table_info(checkpoints)').all().map(c => c.name);
     if (columns.includes('packed') && columns.includes('digest')) {
       const payload = db.prepare('SELECT digest,packed FROM checkpoints WHERE run_id=? AND task_id=? AND owner IS NULL');
-      for (const row of rows) if (row.ready_at === 8640000000000000) {
+      for (const row of rows) {
         const packed = payload.get(row.run_id,row.task_id);
         if (packed) row.blocker = checkpointBlocker({ ...row, ...packed });
       }
@@ -1585,6 +1585,11 @@ export async function readStoredCheckpoints(localHub) {
 }
 
 export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.filter(row => row.run).map(row => [row.id, row.run]))) {
+  // A retry time schedules work; it never resolves the saved failure. Only a
+  // newer active attempt, successful result or bound PM answer can replace it.
+  const failed = entry => entry.ready_at === 8640000000000000
+    || ['blockiert', 'technisch_blockiert', 'zeitlimit', 'unklar'].includes(entry.blocker?.blockerState)
+    || entry.blocker?.reasonCode === 'blocker_context_unreadable';
   for (const row of rows) {
     if (row.status === 'completed') continue;
     const run = bindings.get(row.id);
@@ -1592,20 +1597,22 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
     const entry = entries.find(entry => !entry.owner
       && (entry.task_id === (run.jobId || run.taskId) || (row.workflow === 'correction' && row.id === `correction:${entry.task_id}`))
       && (entry.run_id === run.id || (['blocked','failed','queued'].includes(row.status)
-        && entry.ready_at === 8640000000000000 && /^\d{8}T\d{6}Z-/.test(entry.run_id) && /^\d{8}T\d{6}Z-/.test(run.id)
+        && failed(entry) && /^\d{8}T\d{6}Z-/.test(entry.run_id) && /^\d{8}T\d{6}Z-/.test(run.id)
         && entry.run_id.slice(0,16) > run.id.slice(0,16))));
     if (!entry) continue;
     row.workerId = undefined;
     // The claim's typed owner describes its own run only.
     if (entry.run_id !== run.id) delete row.blockerOwner;
     row.attemptId = entry.run_id;
-    if (entry.ready_at === 8640000000000000) {
+    if (failed(entry) || (['blocked', 'failed'].includes(row.status) && !entry.blocker?.blockerState)) {
       // Fehleraudit 19.10.2026 (Smileypack d857): a stored run without text never
       // replaces a readable reason of the same commission.
       const readable = displayText(row.blockedReason || row.blockerReason, 500);
       if (entry.blocker && !(entry.blocker.reasonCode === 'blocker_context_missing' && readable)) Object.assign(row, entry.blocker);
-      if (!/PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')) row.status = 'blocked';
-      if (!/PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')) row.phase = 'Blockiert · Fortschritt im RS Hub gesichert';
+      const question = /PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')
+        && entry.blocker?.blockerState !== 'technisch_blockiert' && entry.blocker?.blockerKind !== 'technical_failure';
+      if (!question) row.status = 'blocked';
+      if (!question) row.phase = 'Blockiert · Fortschritt im RS Hub gesichert';
     } else {
       row.status = 'queued';
       row.phase = 'Wartet · Fortsetzung im RS Hub gesichert';

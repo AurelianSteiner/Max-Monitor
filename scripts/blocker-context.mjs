@@ -177,6 +177,7 @@ export function checkpointBlocker(entry) {
     const run = value.runs?.find(v => v.run?.run_id === entry.run_id)?.run;
     if (!run || run.task_id !== entry.task_id) throw Error('task');
     const result = { ...blockerContext(run.detail || run.pause_detail, { state: run.state }),
+      blockerState: run.state,
       blockerRecordedAt: run.finished_at || run.paused_since || run.queued_at,
       blockerSource: 'checkpoint', blockerSourceRunId: entry.run_id, blockerSourceHash: entry.digest };
     cache.set(cacheKey, result); if (cache.size > 128) cache.delete(cache.keys().next().value);

@@ -26,6 +26,9 @@ function reconcileTask(task) {
 function reportMayReplace(task, run, sampledAt) {
   if (!task) return true;
   if (task.phase === 'Wartet · PM-Rückfrage') return false;
+  // Reservation and automatic-pause telemetry do not resolve a known failure.
+  if (['blocked', 'failed'].includes(task.status)
+    && (run.status === 'queued' || /^Pausiert(?:\s*[·:]|$)/i.test(run.step || ''))) return false;
   if (task.attemptId && run.runId !== task.attemptId) {
     const source = /^(\d{8}T\d{6}Z)-/.exec(task.attemptId)?.[1];
     const observed = /^(\d{8}T\d{6}Z)-/.exec(run.runId || '')?.[1];
