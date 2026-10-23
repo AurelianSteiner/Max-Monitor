@@ -13,6 +13,7 @@
     "scripts/install-worker-observer.mjs",
     "scripts/member-remote.py",
     "scripts/monitor-bridge-credentials.mjs",
+    "scripts/native-vault-worker-catalog.mjs",
     "scripts/newsletter-monitor-bridge.mjs",
     "scripts/pm-owner.mjs",
     "scripts/pm-question-status.mjs",
