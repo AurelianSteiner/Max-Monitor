@@ -7,7 +7,7 @@ const KINDS = { newsletter: 'newsletter', correction: 'korrektur', translation: 
 const percent = value => Number.isFinite(value) && value >= 0 && value <= 100;
 // Display values of one account slot. Analysed slots carry the scorer's view
 // (a passed reset already counts as empty); others keep their raw, stale values.
-function windowsOf(entry, slot, quota) {
+function windowsOf(entry, slot, quota, nowMs) {
   return Object.fromEntries(['five_hour', 'seven_day'].map(name => {
     if (!slot) {
       const raw = quota?.windows?.[name];
@@ -16,9 +16,10 @@ function windowsOf(entry, slot, quota) {
     }
     const raw = slot[name], known = Boolean(entry?.known), weekly = name === 'seven_day';
     const used = known ? (weekly ? entry.uW : entry.u5) : raw?.used;
-    const reset = known ? (weekly ? entry.resetW : entry.r5 === null ? null : raw.reset) : raw?.reset;
+    const reset = known ? (weekly ? entry.resetW : entry.r5 === null ? null : nowMs + entry.r5 * 3600000) : raw?.reset;
+    const at = known && Number.isFinite(entry.gaugeAt) ? entry.gaugeAt : slot.at;
     return [name, { fresh: known, remaining: percent(used) ? 100 - used : null,
-      reset: Number.isFinite(reset) && reset > 0 ? reset / 1000 : null, at: Number.isFinite(slot.at) ? slot.at / 1000 : null,
+      reset: Number.isFinite(reset) && reset > 0 ? reset / 1000 : null, at: Number.isFinite(at) ? at / 1000 : null,
       // Weekly pace line: target = expected use by now, gap = use − target (pp).
       ...(known && weekly ? { target: entry.target, gap: entry.g } : {}) }];
   }));
@@ -64,7 +65,7 @@ function distribution(summary, machines, nowMs = Date.now()) {
         load: load ?? (machine.load?.fresh ? machine.load.occupied ?? null : null),
         cap: cap ?? (machine.load?.fresh ? machine.load.max ?? null : null),
         seen_at: m?.seen_at || null, reason, key: scored && !scored.refusal ? scored.key : null,
-        slot: shown?.slot ?? null, windows: windowsOf(shown, slot, snapshot?.workers?.[worker])};
+        slot: shown?.slot ?? null, windows: windowsOf(shown, slot, snapshot?.workers?.[worker], nowMs)};
     });
     const eligible = rows.filter(r => !r.reason);
     const best = Math.min(...eligible.map(r => r.key));

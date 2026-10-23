@@ -151,3 +151,12 @@ test('preview transports a fresh shared limit independently from an older gauge 
   fleet[0].quota_slots[0].blockedUntil=iso(S-1);
   assert.equal(row(view(f),'b').reason,null);
 });
+test('a shared fresh gauge displays its actual reset and observation time even on a stale local slot',()=>{
+  const f=sharedFixture(),fleet=f.summary.scheduling.routing.fleet;
+  for(const m of fleet)m.quota_slots[0].runs=[];
+  Object.assign(fleet[0].quota_slots[0],{at:iso(S-3600),five_hour:{used:50,reset:iso(S-1)}});
+  const a=row(view(f),'a');
+  assert.equal(a.windows.five_hour.fresh,true);assert.equal(a.windows.five_hour.remaining,40);
+  assert.equal(a.windows.five_hour.reset,S+5*3600);assert.equal(a.windows.five_hour.at,S);
+  assert.equal(a.windows.seven_day.at,S);
+});
