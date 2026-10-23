@@ -58,6 +58,45 @@ CASES = [
     ('non-ascii digits', variant(lambda v: v[0].update(at='\u0662026-10-21T10:00:00Z')), False),
 ]
 
+IDENTITY = {'schema': 1, 'provider': 'anthropic', 'account': 'a' * 64, 'organization': 'b' * 64,
+            'verifiedAt': '2026-10-21T10:00:00.000Z', 'source': 'oauth-profile'}
+TYPED_SLOTS = copy.deepcopy(SLOTS)
+TYPED_SLOTS[0].update(identity=IDENTITY, statusAt=SLOTS[0]['at'], blockedUntil=None)
+TYPED_SLOTS[0]['runs'] = [{'kind': 'newsletter', 'started': None, 'id': 'ordinary:actual-a', 'identity': IDENTITY}]
+TYPED_SLOTS[1].update(identity=None, statusAt=SLOTS[1]['at'])
+TYPED_SLOTS[1]['runs'] = [{'kind': 'sales', 'started': None, 'identity': None}]
+
+
+def typed_variant(change):
+    value = copy.deepcopy(TYPED_SLOTS)
+    change(value)
+    return value
+
+
+CASES += [
+    ('typed provider and null unknown run', TYPED_SLOTS, True),
+    ('typed explicit empty identity', typed_variant(lambda v: v[0].update(identity=None)), True),
+    ('typed historic provider identity', typed_variant(lambda v: v[0]['identity'].update(verifiedAt='2025-10-21T10:00:00Z')), True),
+    ('typed no account key', typed_variant(lambda v: v[0]['identity'].pop('account')), False),
+    ('typed identity extra email', typed_variant(lambda v: v[0]['identity'].update(email='not-allowed')), False),
+    ('typed identity array hash', typed_variant(lambda v: v[0]['identity'].update(account=['a' * 64])), False),
+    ('typed identity array organization', typed_variant(lambda v: v[0]['identity'].update(organization=['b' * 64])), False),
+    ('typed identity boolean schema', typed_variant(lambda v: v[0]['identity'].update(schema=True)), False),
+    ('typed identity wrong provider', typed_variant(lambda v: v[0]['identity'].update(provider='unknown')), False),
+    ('typed identity wrong source', typed_variant(lambda v: v[0]['identity'].update(source='manual-email')), False),
+    ('typed identity invalid timestamp', typed_variant(lambda v: v[0]['identity'].update(verifiedAt='unknown')), False),
+    ('typed identity short hash', typed_variant(lambda v: v[0]['identity'].update(account='a' * 16)), False),
+    ('typed identity uppercase hash', typed_variant(lambda v: v[0]['identity'].update(account='A' * 64)), False),
+    ('typed null status timestamp', typed_variant(lambda v: v[0].update(statusAt=None)), False),
+    ('typed array status timestamp', typed_variant(lambda v: v[0].update(statusAt=[SLOTS[0]['at']])), False),
+    ('typed boolean status timestamp', typed_variant(lambda v: v[0].update(statusAt=True)), False),
+    ('typed invalid reset bound', typed_variant(lambda v: v[0].update(blockedUntil='unknown')), False),
+    ('typed array run id', typed_variant(lambda v: v[0]['runs'][0].update(id=['ordinary:actual-a'])), False),
+    ('typed wrong run prefix', typed_variant(lambda v: v[0]['runs'][0].update(id='synthetic:actual-a')), False),
+    ('typed run id oversized', typed_variant(lambda v: v[0]['runs'][0].update(id='ordinary:' + 'a' * 300)), False),
+    ('typed legacy null start without explicit unknown identity', variant(lambda v: v[0]['runs'][0].update(started=None)), False),
+]
+
 
 class RoutingTest(unittest.TestCase):
     def test_exact_readonly_sources_omit_content_and_paused_or_finished_jobs(self):
@@ -120,3 +159,38 @@ class RoutingTest(unittest.TestCase):
     def test_missing_sources_are_unavailable_not_empty_capacity(self):
         with tempfile.TemporaryDirectory() as folder:
             self.assertFalse(routing_inputs(Path(folder))['available'])
+
+    @unittest.skipUnless(shutil.which('node') and PACING.is_file(), 'node or vendored quota-pacing.js missing')
+    def test_actual_python_routing_retains_provider_scope_for_real_distribution(self):
+        with tempfile.TemporaryDirectory() as folder:
+            hub = Path(folder)
+            fleet = hub / 'logs/ai-newsletter-fleet'
+            fleet.mkdir(parents=True)
+            for worker in ('a', 'b'):
+                slots = copy.deepcopy(TYPED_SLOTS[:1])
+                slots[0].update(status='ready', five_hour={'used': 60, 'reset': '2026-10-21T15:00:00Z'},
+                                seven_day={'used': 20, 'reset': '2026-10-24T08:00:00Z'})
+                slots[0]['runs'][0]['id'] = 'ordinary:actual-' + worker
+                (fleet / (worker + '.json')).write_text(json.dumps({'worker_id': worker, 'seen_at': SLOTS[0]['at'],
+                    'annahme': True, 'max_tasks': 3, 'occupied_tasks': 1,
+                    'plaetze': {'newsletter': 3, 'klaviyo': 3, 'translation': 3, 'korrektur': 3}, 'quota_slots': slots}))
+            register = hub / 'state/worker-reservations'
+            register.mkdir(parents=True)
+            (register / 'enabled').touch()
+            db = sqlite3.connect(register / 'claims.sqlite')
+            db.execute('CREATE TABLE reservations(doc TEXT)')
+            db.commit()
+            db.close()
+            routing = routing_inputs(hub)
+            self.assertTrue(routing['available'])
+            self.assertEqual(len(routing['fleet']), 2)
+            self.assertTrue(all('quota_slots' in worker for worker in routing['fleet']))
+            script = ('const {distribution}=require(process.argv[1]);let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{'
+                      'const routing=JSON.parse(s),at="2026-10-21T10:00:00Z";'
+                      'const value=distribution({scheduling:{schema:1,generated_at:at,routing}},'
+                      'routing.fleet.map(w=>({workerId:w.worker_id})),Date.parse(at));'
+                      'process.stdout.write(JSON.stringify(value.by_kind.newsletter.rows));});')
+            rows = json.loads(subprocess.run(['node', '-e', script, str(PACING.parent / 'distribution.js')],
+                input=json.dumps(routing), capture_output=True, text=True, check=True, timeout=30).stdout)
+            self.assertEqual([row['reason'] for row in rows], ['guard_5h', 'guard_5h'])
+            self.assertEqual([row['windows']['five_hour']['remaining'] for row in rows], [40, 40])

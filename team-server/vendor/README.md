@@ -27,3 +27,7 @@ contribute their remaining costs once. Unknown bindings remain conservative loca
 hypotheses. Credential-specific errors do not disable healthy shared credentials.
 The existing telemetry snapshot remains subject to freshness and simultaneous-
 start uncertainty; this does not add an atomic quota reservation system.
+
+The passive preview collector also validates this wire format in
+`scripts/quota_routing.py`. Keep its typed optional identity/owner/status fields
+and the actual Python-routing-to-distribution regression aligned with this file.

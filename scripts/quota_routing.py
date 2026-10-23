@@ -35,13 +35,26 @@ def quota_window(value, reset_required=False):
             and (iso_time(value['reset']) or (value['reset'] is None and not reset_required)))
 
 
+def quota_identity(value):
+    """Provider proof pseudonyms only; parsing never creates an identity."""
+    return (isinstance(value, dict) and sorted(value) == ['account', 'organization', 'provider', 'schema', 'source', 'verifiedAt']
+            and type(value['schema']) is int and value['schema'] == 1 and value['provider'] == 'anthropic'
+            and all(isinstance(value[name], str) and re.fullmatch(r'[0-9a-f]{64}', value[name]) for name in ('account', 'organization'))
+            and value['source'] in ('oauth-profile', 'oauth-validate') and iso_time(value['verifiedAt']))
+
+
 def valid_quota_slots(value):
     """Python twin of validQuotaSlots: 1-2 account slots, <= 12 runs each."""
     if not isinstance(value, list) or not 1 <= len(value) <= 2:
         return False
     names = set()
     for slot in value:
-        if not isinstance(slot, dict) or sorted(slot) != ['at', 'five_hour', 'runs', 'seven_day', 'slot', 'status']:
+        required = {'at', 'five_hour', 'runs', 'seven_day', 'slot', 'status'}
+        if not isinstance(slot, dict) or not required.issubset(slot) or set(slot) - required - {'identity', 'blockedUntil', 'statusAt'}:
+            return False
+        if ('identity' in slot and slot['identity'] is not None and not quota_identity(slot['identity'])
+                or 'blockedUntil' in slot and slot['blockedUntil'] is not None and not iso_time(slot['blockedUntil'])
+                or 'statusAt' in slot and not iso_time(slot['statusAt'])):
             return False
         if slot['slot'] not in SLOT_NAMES or slot['slot'] in names or slot['status'] not in SLOT_STATES:
             return False
@@ -50,9 +63,14 @@ def valid_quota_slots(value):
         if (not iso_time(slot['at']) or not quota_window(slot['five_hour']) or not quota_window(slot['seven_day'], True)
                 or not isinstance(runs, list) or len(runs) > 12):
             return False
-        if not all(isinstance(run, dict) and sorted(run) == ['kind', 'started'] and run['kind'] in RUN_KINDS
-                   and iso_time(run['started']) for run in runs):
-            return False
+        for run in runs:
+            if (not isinstance(run, dict) or not {'kind', 'started'}.issubset(run) or set(run) - {'kind', 'started', 'id', 'identity'}
+                    or run['kind'] not in RUN_KINDS
+                    or 'id' in run and not (isinstance(run['id'], str) and len(run['id']) <= 300
+                                           and re.fullmatch(r'(ordinary|sales|knowledge):[A-Za-z0-9][A-Za-z0-9._@:-]*', run['id']))
+                    or 'identity' in run and run['identity'] is not None and not quota_identity(run['identity'])
+                    or not (iso_time(run['started']) or run['started'] is None and ('id' in run or 'identity' in run))):
+                return False
     return True
 
 
