@@ -23,7 +23,7 @@ const workerSource=[process.env.AI_NEWSLETTER_CREATION_DIR,path.join(os.homedir(
   .filter(Boolean).map(dir=>path.join(dir,'src/quota-pacing.js')).find(file=>fs.existsSync(file));
 
 test('preview runs the immutable vendored Worker pacing module',()=>{
-  assert.equal(crypto.createHash('sha256').update(fs.readFileSync(require.resolve('../quota-pacing'))).digest('hex'),'83d11de658e3b1b1a6b97b5ea0e3119e4760be510bdcbf5452e1a4245d4ac8e6');
+  assert.equal(crypto.createHash('sha256').update(fs.readFileSync(require.resolve('../quota-pacing'))).digest('hex'),'8cb1690025081db0fb06650e1ec3c1187948cd3f1f76570077161c1fcbb1c5b6');
 });
 test('vendored pacing module is byte-identical to the Worker source',{skip:workerSource?false:'no ai-newsletter-creation checkout with src/quota-pacing.js'},()=>{
   assert.ok(fs.readFileSync(workerSource).equals(fs.readFileSync(require.resolve('../quota-pacing'))),workerSource);
@@ -115,4 +115,38 @@ test('fresh independent load remains visible for a paused worker without renewin
   f.machines[0].load={fresh:true,occupied:2,max:6};
   const r=row(view(f),'a');
   assert.equal(r.load,2);assert.equal(r.cap,6);assert.equal(r.preferred,false);assert.equal(r.reason,'stale_worker');
+});
+
+const providerIdentity=(account='a',organization='b')=>({schema:1,provider:'anthropic',account:account.repeat(64),organization:organization.repeat(64),verifiedAt:at,source:'oauth-profile'});
+function sharedFixture(){
+  const f=fixture([20,20]),fleet=f.summary.scheduling.routing.fleet;
+  for(const [i,m]of fleet.entries())m.quota_slots=[{slot:i?'account-2':'primary',status:'ready',at,identity:providerIdentity(),
+    five_hour:{used:60,reset:iso(S+5*3600)},seven_day:{used:20,reset:iso(RESET)},
+    runs:[{id:'ordinary:actual-'+i,identity:providerIdentity(),kind:'newsletter',started:null}]}];
+  return f;
+}
+test('preview uses one shared provider gauge and the remaining costs of both physical owners',()=>{
+  const f=sharedFixture(),v=view(f);
+  for(const r of v.rows){assert.equal(r.reason,'guard_5h');assert.equal(r.windows.five_hour.remaining,40);assert.equal(r.windows.seven_day.remaining,80);}
+  const fleet=f.summary.scheduling.routing.fleet;
+  const a=pacing.analyseFleet(pacing.fleetMacs(fleet),NOW).get('a')[0];
+  assert.equal(a.runs,2);assert.equal(a.u5,60);
+  fleet[1].quota_slots[0].runs[0].id=fleet[0].quota_slots[0].runs[0].id;
+  assert.equal(pacing.analyseFleet(pacing.fleetMacs(fleet),NOW).get('a')[0].runs,1,'one proven duplicate owner is charged once');
+});
+test('preview keeps same-organization different accounts separate and local access errors local',()=>{
+  const f=sharedFixture(),fleet=f.summary.scheduling.routing.fleet;
+  fleet[1].quota_slots[0].identity=providerIdentity('c');fleet[1].quota_slots[0].runs=[];
+  assert.equal(row(view(f),'b').reason,null);
+  fleet[1].quota_slots[0].identity=providerIdentity();fleet[0].quota_slots[0].status='error';fleet[1].quota_slots[0].at=new Date(NOW-1000).toISOString();
+  fleet[0].quota_slots[0].runs=[];
+  const v=view(f);assert.equal(row(v,'a').reason,'limited');assert.equal(row(v,'b').reason,null);
+});
+test('preview transports a fresh shared limit independently from an older gauge and honors its reset',()=>{
+  const f=sharedFixture(),fleet=f.summary.scheduling.routing.fleet;
+  fleet[0].quota_slots[0]={...fleet[0].quota_slots[0],status:'limited',at:iso(S-3600),statusAt:at,blockedUntil:iso(S+3600),runs:[]};
+  fleet[1].quota_slots[0].runs=[];
+  assert.equal(row(view(f),'b').reason,'limited');
+  fleet[0].quota_slots[0].blockedUntil=iso(S-1);
+  assert.equal(row(view(f),'b').reason,null);
 });

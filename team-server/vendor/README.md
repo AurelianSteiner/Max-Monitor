@@ -1,6 +1,6 @@
 `../quota-pacing.js` is an unchanged source snapshot from
-`ai-newsletter-creation`, commit `2c389a333b2bb2bb0f62aecfa9c72b49b452b264`, file `src/quota-pacing.js`. SHA-256:
-`83d11de658e3b1b1a6b97b5ea0e3119e4760be510bdcbf5452e1a4245d4ac8e6`.
+`ai-newsletter-creation`, commit `8e69d84a6789716cc3fe5e99a4147bfc604ea104`, file `src/quota-pacing.js`. SHA-256:
+`8cb1690025081db0fb06650e1ec3c1187948cd3f1f76570077161c1fcbb1c5b6`.
 
 The dashboard runs this exact module (`fleetMacs`, `analyseFleet`, `macKey`,
 `slotRefusal`), the same one each worker uses to order Macs and gate its own
@@ -20,3 +20,10 @@ reservation register as worker intake, but does not simulate access for a
 particular task, the worker's preference wait or how long a task has been
 waiting (`waitedMs` is 0). A highlighted preference is not an assignment or a
 promise of capacity.
+
+Verified Anthropic account plus organization pseudonyms join shared quota scopes
+across Macs. Gauges are selected once, never summed; identified physical owners
+contribute their remaining costs once. Unknown bindings remain conservative local
+hypotheses. Credential-specific errors do not disable healthy shared credentials.
+The existing telemetry snapshot remains subject to freshness and simultaneous-
+start uncertainty; this does not add an atomic quota reservation system.

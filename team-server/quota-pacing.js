@@ -181,46 +181,108 @@ function windowsOf(slot, nowMs) {
 //          runs: [{ slot, kind, started }] }]  (Zeiten in ms; runs ohne slot zählen auf keinen Platz)
 // → Map worker → [Analyse je Platz]
 function analyseFleet(macs, nowMs) {
-  const prices = fleetPrices(macs.flatMap(mac => (mac.slots || []).map(slot => slot.costs).filter(Boolean)));
-  const result = new Map();
-  const known = [];
+  const records = [], groups = new Map(), result = new Map();
   for (const mac of macs) {
     const entries = [];
     for (const slot of mac.slots || []) {
-      const windows = windowsOf(slot, nowMs);
-      // limited/error: der Anbieter hat abgelehnt oder die Anmeldung fehlt. Ein
-      // unbekannter Stand ist keine Sperre, nur keine Meinung (Lastregel).
-      const entry = { slot: slot.slot, worker: mac.worker, cap: Number.isInteger(mac.maxTasks) ? mac.maxTasks : 6, costs: slot.costs || null, prices,
-        known: Boolean(windows), blocked: slot.status === 'limited' || slot.status === 'error', runs: 0 };
-      entries.push(entry);
-      if (!windows) continue;
-      Object.assign(entry, windows);
-      let pend5 = 0, var5 = 0, pendW = 0, varW = 0;
-      for (const run of mac.runs || []) {
-        if (run.slot !== slot.slot) continue;
-        entry.runs += 1;
-        const kind = costKind(run.kind);
-        const elapsed = Number.isFinite(run.started) ? (nowMs - run.started) / MINUTE : 0;
-        const rest = remainingShare(kind, elapsed);
-        const hoursLeft = Math.max(5, rest * meanMinutes(kind)) / 60;
-        const f = entry.r5 === null ? 1 : Math.min(1, entry.r5 / hoursLeft);
-        const p5 = priceOf(entry.costs, prices, kind, 'five_hour_pp'), pW = priceOf(entry.costs, prices, kind, 'weekly_pp');
-        pend5 += p5.mean * rest * f; var5 += (spread(p5, kind, f) * p5.mean * rest * f) ** 2;
-        pendW += pW.mean * rest; varW += (pW.sd * rest) ** 2;
-      }
-      const target = 100 * paceShare(nowMs, entry.resetW);
-      Object.assign(entry, { pend5, var5, pendW, varW, target,
-        targetAhead: 100 * paceShare(nowMs + PACING.tierLA * HOUR, entry.resetW),
-        g: clampGap(entry.uW - target), gFull: clampGap(entry.uW + pendW - target),
-        near: entry.r5 === null ? 1 : Math.min(1, entry.r5 / PACING.tau5H) });
-      known.push(entry);
+      const identity = quotaIdentityKey(slot.identity, nowMs);
+      const key = identity || Symbol('unverified-local-slot');
+      const entry = { slot: slot.slot, worker: mac.worker, cap: Number.isInteger(mac.maxTasks) ? mac.maxTasks : 6,
+        costs: slot.costs || null, known: false, blocked: slot.status === 'limited' || slot.status === 'error', runs: 0 };
+      if (identity) Object.assign(entry, { identity, identityKnown: true });
+      const record = { mac, slot, entry, key, identity };
+      records.push(record); entries.push(entry);
+      if (!groups.has(key)) groups.set(key, { records: [], runs: [], identity });
+      groups.get(key).records.push(record);
     }
     result.set(mac.worker, entries);
   }
-  // Weiche Obergrenze für Accounts, die dem eigenen Takt UND dem Flottenmittel
-  // voraus sind; ab 30 Punkten vor dem eigenen Takt auch ohne Flottenvergleich.
-  const mean = known.length ? known.reduce((sum, entry) => sum + entry.gFull, 0) / known.length : 0;
-  for (const entry of known) {
+  // A physical owner remains bound to the credential it actually started with.
+  // Unknown owners are hypotheses on this Mac's possible accounts, not a newly
+  // invented provider identity. Missing IDs are deliberately never deduplicated.
+  for (const mac of macs) for (const run of mac.runs || []) {
+    const pinned = validQuotaIdentity(run.identity) ? quotaIdentityKey(run.identity, Math.min(nowMs, Date.parse(run.identity.verifiedAt))) : null;
+    let targets;
+    if (pinned) targets = [...new Set([...(groups.has(pinned) ? [groups.get(pinned)] : []),
+      ...records.filter(record => record.mac === mac && !record.identity).map(record => groups.get(record.key))])];
+    else {
+      const local = records.filter(record => record.mac === mac);
+      const unknownBinding = Object.hasOwn(run, 'identity');
+      targets = [...new Set(local.filter(record => unknownBinding || run.slot === record.slot.slot)
+        .map(record => groups.get(record.key)))];
+    }
+    for (const group of targets) group.runs.push({ ...run, unknownBinding: Boolean(pinned) ? !group.identity : Boolean(group.identity) });
+  }
+  // A measured account's cost table must not gain artificial sample weight
+  // merely because the same account is installed on more than one Mac.
+  for (const group of groups.values()) {
+    const costs = group.records.map(record => record.slot.costs).filter(Boolean);
+    const count = table => Object.values(table).reduce((sum, row) => sum + METRICS.reduce((n, name) => n + (measured(row?.[name]) ? row[name].n : 0), 0), 0);
+    group.costs = costs.sort((a, b) => count(b) - count(a) || JSON.stringify(a).localeCompare(JSON.stringify(b)))[0] || null;
+  }
+  const prices = fleetPrices([...groups.values()].map(group => group.costs).filter(Boolean));
+  const knownGroups = [];
+  for (const group of groups.values()) {
+    const observations = group.records.map(record => ({ ...record, windows: windowsOf(record.slot, nowMs) }));
+    const usable = observations.filter(record => record.windows && (!group.identity || record.slot.status !== 'error')).sort((a, b) => b.slot.at - a.slot.at
+      || b.windows.u5 - a.windows.u5 || b.windows.uW - a.windows.uW || a.entry.worker.localeCompare(b.entry.worker));
+    const basis = usable[0];
+    let conflict = false, blocked = false;
+    if (group.identity) {
+      if (basis) for (const other of usable.slice(1)) {
+        for (const name of ['five_hour', 'seven_day']) {
+          const a = basis.slot[name]?.reset, b = other.slot[name]?.reset;
+          if (Number.isFinite(a) && Number.isFinite(b) && a > nowMs && b > nowMs && Math.abs(a - b) > 1000) conflict = true;
+        }
+      }
+      const fresh = observations.filter(record => {
+        const at = Object.hasOwn(record.slot, 'statusAt') ? record.slot.statusAt : record.slot.at;
+        return Number.isFinite(at) && nowMs - at >= -MINUTE && (nowMs - at <= PACING.freshMin * MINUTE
+          || Number.isFinite(record.slot.blockedUntil) && record.slot.blockedUntil > nowMs);
+      });
+      blocked = conflict || fresh.some(record => {
+        const slot = record.slot;
+        if (slot.status !== 'limited') return false;
+        if (Number.isFinite(slot.blockedUntil)) return slot.blockedUntil > nowMs;
+        const limiting = ['five_hour', 'seven_day'].map(name => slot[name]).filter(window => window?.used >= 100);
+        return !limiting.length || limiting.some(window => !Number.isFinite(window.reset) || window.reset > nowMs);
+      });
+    } else blocked = group.records[0].entry.blocked;
+    const windows = !conflict && basis?.windows;
+    const totals = { pend5: 0, var5: 0, pendW: 0, varW: 0 }, identified = new Map(), anonymous = [];
+    if (windows) for (const run of group.runs) {
+      const kind = costKind(run.kind), elapsed = Number.isFinite(run.started) ? (nowMs - run.started) / MINUTE : 0;
+      const rest = remainingShare(kind, elapsed), hoursLeft = Math.max(5, rest * meanMinutes(kind)) / 60;
+      const f = windows.r5 === null ? 1 : Math.min(1, windows.r5 / hoursLeft);
+      const p5 = priceOf(group.costs, prices, kind, 'five_hour_pp'), pW = priceOf(group.costs, prices, kind, 'weekly_pp');
+      const cost = { pend5: p5.mean * rest * f, var5: (spread(p5, kind, f) * p5.mean * rest * f) ** 2,
+        pendW: pW.mean * rest, varW: (pW.sd * rest) ** 2, unknown: run.unknownBinding };
+      if (typeof run.id === 'string' && /^(?:ordinary|sales|knowledge):[A-Za-z0-9][A-Za-z0-9._@:-]{0,289}$/.test(run.id)) {
+        const previous = identified.get(run.id);
+        identified.set(run.id, previous ? { ...Object.fromEntries(Object.keys(totals).map(key => [key, Math.max(previous[key], cost[key])])),
+          unknown: previous.unknown || cost.unknown } : cost);
+      } else anonymous.push(cost);
+    }
+    const costs = [...identified.values(), ...anonymous];
+    for (const cost of costs) for (const key of Object.keys(totals)) totals[key] += cost[key];
+    for (const record of group.records) {
+      const entry = record.entry;
+      Object.assign(entry, { prices, costs: group.costs, known: Boolean(windows),
+        blocked: blocked || group.identity && record.slot.status === 'error', runs: costs.length });
+      if (group.identity) Object.assign(entry, { sharedMembers: group.records.length, gaugeConflict: conflict,
+        pendingUnknown: costs.some(cost => cost.unknown), gaugeAt: basis?.slot.at ?? null });
+      if (!windows) continue;
+      Object.assign(entry, windows, totals);
+      const target = 100 * paceShare(nowMs, entry.resetW);
+      Object.assign(entry, { target, targetAhead: 100 * paceShare(nowMs + PACING.tierLA * HOUR, entry.resetW),
+        g: clampGap(entry.uW - target), gFull: clampGap(entry.uW + entry.pendW - target),
+        near: entry.r5 === null ? 1 : Math.min(1, entry.r5 / PACING.tau5H) });
+    }
+    if (windows) knownGroups.push(group);
+  }
+  const mean = knownGroups.length ? knownGroups.reduce((sum, group) => sum + group.records[0].entry.gFull, 0) / knownGroups.length : 0;
+  for (const group of knownGroups) for (const record of group.records) {
+    const entry = record.entry;
     entry.relLead = entry.gFull - mean;
     const lead = Math.max(Math.min(entry.gFull, entry.relLead), entry.gFull - PACING.absLead);
     entry.softTarget = lead > PACING.leadL1
@@ -229,10 +291,6 @@ function analyseFleet(macs, nowMs) {
   return result;
 }
 
-// Darf dieser Platz einen weiteren Lauf der Art kind starten? extra: in dieser
-// Runde schon zugedachte Arten. waitedMs: so lange steht der Auftrag schon frei.
-// accepting: Annahmebereitschaft (die Vorausstufe wartet nur auf Aufträge).
-// → null (zulässig) oder Grund: limited | soft_cap | guard_5h | guard_weekly | paced
 function slotRefusal(entry, kind, { extra = [], waitedMs = 0, accepting = false } = {}) {
   if (entry.blocked) return 'limited';
   if (!entry.known) return null;
@@ -267,11 +325,15 @@ function slotChoiceKey(entry, extra = []) {
   for (const next of extra.map(costKind)) pend5 += priceOf(entry.costs, entry.prices, next, 'five_hour_pp').mean;
   return entry.g + PACING.mu5 * (entry.u5 + pend5) * entry.near;
 }
+function plannedForSlot(entries, entry, extra) {
+  const slots = entry.identity ? entries.filter(other => other.identity === entry.identity).map(other => other.slot) : [entry.slot];
+  return [...new Set(slots)].flatMap(slot => extra.get(slot) || []);
+}
 
 function chooseSlot(entries, kind, { extra = new Map(), waitedMs = 0 } = {}) {
   let best = null;
   for (const entry of entries || []) {
-    const planned = extra.get(entry.slot) || [];
+    const planned = plannedForSlot(entries, entry, extra);
     if (slotRefusal(entry, kind, { extra: planned, waitedMs })) continue;
     // Bekannte Plätze vor unbekannten; unter bekannten der kleinste Schlüssel.
     const rank = entry.known ? 0 : 1, key = slotChoiceKey(entry, planned), reset = entry.r5 ?? Infinity;
@@ -288,7 +350,7 @@ function chooseSlot(entries, kind, { extra = new Map(), waitedMs = 0 } = {}) {
 function macKey(entries, load, kind, { extra = new Map(), waitedMs = 0 } = {}) {
   let best = null, open = false, refusal = null;
   for (const entry of entries || []) {
-    const why = slotRefusal(entry, kind, { extra: extra.get(entry.slot) || [], waitedMs });
+    const why = slotRefusal(entry, kind, { extra: plannedForSlot(entries, entry, extra), waitedMs });
     if (why) { refusal ??= why; continue; }
     if (!entry.known) { open = true; continue; }
     const preference = slotPreference(entry);
@@ -302,6 +364,21 @@ function macKey(entries, load, kind, { extra = new Map(), waitedMs = 0 } = {}) {
 
 // Prüft die Kontingentplätze eines Betriebsnachweises (quota_slots). Läuft auch
 // auf dem Hub (per toString() ins Skript kopiert): ohne Hilfsfunktionen außerhalb.
+function validQuotaIdentity(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).sort().join(',') === 'account,organization,provider,schema,source,verifiedAt'
+    && value.schema === 1 && value.provider === 'anthropic'
+    && typeof value.account === 'string' && /^[0-9a-f]{64}$/.test(value.account)
+    && typeof value.organization === 'string' && /^[0-9a-f]{64}$/.test(value.organization)
+    && ['oauth-profile', 'oauth-validate'].includes(value.source)
+    && typeof value.verifiedAt === 'string' && value.verifiedAt.length <= 40 && Number.isFinite(Date.parse(value.verifiedAt));
+}
+function quotaIdentityKey(value, nowMs) {
+  if (!validQuotaIdentity(value)) return null;
+  const age = nowMs - Date.parse(value.verifiedAt);
+  return age >= -30000 && age <= 24 * 60 * 60000 ? `anthropic:${value.account}:${value.organization}` : null;
+}
+
 function validQuotaSlots(value) {
   const time = t => typeof t === 'string' && t.length <= 40 && Number.isFinite(Date.parse(t));
   const windowOk = w => Boolean(w) && typeof w === 'object' && !Array.isArray(w) && Object.keys(w).sort().join(',') === 'reset,used'
@@ -309,12 +386,21 @@ function validQuotaSlots(value) {
   return Array.isArray(value) && value.length >= 1 && value.length <= 2
     && new Set(value.map(s => s?.slot)).size === value.length
     && value.every(s => Boolean(s) && typeof s === 'object' && !Array.isArray(s)
-      && Object.keys(s).sort().join(',') === 'at,five_hour,runs,seven_day,slot,status'
+      && Object.keys(s).every(key => ['at', 'five_hour', 'runs', 'seven_day', 'slot', 'status', 'identity', 'blockedUntil', 'statusAt'].includes(key))
+      && ['at', 'five_hour', 'runs', 'seven_day', 'slot', 'status'].every(key => Object.hasOwn(s, key))
+      && (!Object.hasOwn(s, 'identity') || s.identity === null || validQuotaIdentity(s.identity))
+      && (!Object.hasOwn(s, 'blockedUntil') || s.blockedUntil === null || time(s.blockedUntil))
+      && (!Object.hasOwn(s, 'statusAt') || time(s.statusAt))
       && ['single', 'primary', 'account-2'].includes(s.slot) && ['ready', 'limited', 'error', 'unknown'].includes(s.status)
       && time(s.at) && windowOk(s.five_hour) && windowOk(s.seven_day) && s.seven_day.reset !== null
       && Array.isArray(s.runs) && s.runs.length <= 12
-      && s.runs.every(r => Boolean(r) && typeof r === 'object' && Object.keys(r).sort().join(',') === 'kind,started'
-        && ['newsletter', 'correction', 'upload', 'translation', 'sales'].includes(r.kind) && time(r.started)));
+      && s.runs.every(r => Boolean(r) && typeof r === 'object' && !Array.isArray(r)
+        && Object.keys(r).every(key => ['kind', 'started', 'id', 'identity'].includes(key))
+        && Object.hasOwn(r, 'kind') && Object.hasOwn(r, 'started')
+        && (!Object.hasOwn(r, 'id') || typeof r.id === 'string' && r.id.length <= 300 && /^(?:ordinary|sales|knowledge):[A-Za-z0-9][A-Za-z0-9._@:-]*$/.test(r.id))
+        && (!Object.hasOwn(r, 'identity') || r.identity === null || validQuotaIdentity(r.identity))
+        && ['newsletter', 'correction', 'upload', 'translation', 'sales'].includes(r.kind)
+        && (time(r.started) || r.started === null && (Object.hasOwn(r, 'id') || Object.hasOwn(r, 'identity')))));
 }
 
 // Flottenstand → Eingabe von analyseFleet. fleet: Betriebsnachweise vom Hub
@@ -332,11 +418,15 @@ function fleetMacs(fleet, { jobs = [], own = null } = {}) {
     const quota = mac.quota?.schema === 1 ? mac.quota : null;
     if (validQuotaSlots(mac.quota_slots)) {
       macs.push({ worker, maxTasks, slots: mac.quota_slots.map(s => ({ slot: s.slot, status: s.status, at: ms(s.at),
+        ...(Object.hasOwn(s, 'identity') ? { identity: s.identity } : {}),
+        ...(Object.hasOwn(s, 'blockedUntil') ? { blockedUntil: ms(s.blockedUntil) } : {}),
+        ...(Object.hasOwn(s, 'statusAt') ? { statusAt: ms(s.statusAt) } : {}),
         five_hour: { used: s.five_hour.used, reset: ms(s.five_hour.reset) },
         seven_day: { used: s.seven_day.used, reset: ms(s.seven_day.reset) },
         // Gemessene Preise gibt es nur für den an Max Monitor gebundenen Account.
         costs: s.slot === 'single' ? quota?.costs || null : null })),
-      runs: mac.quota_slots.flatMap(s => s.runs.map(r => ({ slot: s.slot, kind: r.kind, started: ms(r.started) }))) });
+      runs: mac.quota_slots.flatMap(s => s.runs.map(r => ({ slot: s.slot, kind: r.kind, started: ms(r.started),
+        ...(Object.hasOwn(r, 'id') ? { id: r.id } : {}), ...(Object.hasOwn(r, 'identity') ? { identity: r.identity } : {}) }))) });
       continue;
     }
     const five = quota?.windows?.five_hour, week = quota?.windows?.seven_day;
@@ -353,4 +443,5 @@ function fleetMacs(fleet, { jobs = [], own = null } = {}) {
   return macs;
 }
 
-module.exports = { PACING, FALLBACK, analyseFleet, slotRefusal, chooseSlot, macKey, paceShare, remainingShare, costKind, fleetPrices, validQuotaSlots, fleetMacs };
+module.exports = { PACING, FALLBACK, analyseFleet, slotRefusal, chooseSlot, macKey, paceShare, remainingShare, costKind, fleetPrices,
+  validQuotaIdentity, quotaIdentityKey, validQuotaSlots, fleetMacs };
