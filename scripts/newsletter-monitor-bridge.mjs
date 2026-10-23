@@ -340,6 +340,12 @@ function claimOutcome(kind, state, paused, doneLabel, reactions) {
   };
 }
 
+// Typed terminal owners are reported only for failed worker outcomes, never
+// for a live connection pause. Keep that failure visible while its checkpoint
+// is still being transferred to the Hub.
+const technicalRetry = claim => claim?.state === 'final' && claim.paused
+  && ['technik', 'automatisch'].includes(claim.owner) && claim.outcome !== 'completed';
+
 export function parseClaim(message) {
   const kind = CLAIM_EVENTS[message?.metadata?.event_type];
   if (!kind) return null;
@@ -926,6 +932,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       if (pausedTag && fresh) phase = 'Pausiert · automatische Fortsetzung';
       if (!['completed', 'blocked', 'failed'].includes(status) && claim?.outcome !== 'completed' && claim?.paused === true && ['claiming', 'running'].includes(claim.state)) { status = 'queued'; phase = 'Pausiert · wartet außerhalb der Worker-Plätze'; }
       if (!['completed', 'blocked', 'failed'].includes(status) && claim?.outcome !== 'completed' && claim?.paused && claim.portable) { status='queued'; phase='Wartet · Fortsetzung in der zentralen Queue'; }
+      if (status !== 'completed' && technicalRetry(claim)) { status='blocked'; phase='Blockiert · automatische Fortsetzung vorgemerkt'; }
       if (status === 'blocked' && !phase) phase = 'Blockiert';
       // Waiting or running without a reservation is an order only in the start
       // status, and never for an order the worker's admit() parks (manual, pop-up,
@@ -1007,8 +1014,9 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
     const fresh = now - claim.heartbeat * 1000 <= staleMinutes * 60000;
     const lagging = active && !fresh && reservationLags(claim, seenAt, now);
     const paused = claim.paused && claim.outcome !== 'completed';
-    const status = paused ? 'queued' : active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : lagging ? 'queued' : 'blocked' : claim.outcome || 'blocked';
-    const phase = paused && claim.portable ? 'Wartet · Fortsetzung in der zentralen Queue' : paused ? active ? 'Pausiert · wartet außerhalb der Worker-Plätze' : 'Wartet · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : lagging ? RESERVATION_LAG_PHASE : 'Worker meldet sich nicht mehr'
+    const technical = technicalRetry(claim);
+    const status = technical ? 'blocked' : paused ? 'queued' : active ? fresh ? claim.state === 'running' ? 'running' : 'queued' : lagging ? 'queued' : 'blocked' : claim.outcome || 'blocked';
+    const phase = technical ? 'Blockiert · automatische Fortsetzung vorgemerkt' : paused && claim.portable ? 'Wartet · Fortsetzung in der zentralen Queue' : paused ? active ? 'Pausiert · wartet außerhalb der Worker-Plätze' : 'Wartet · automatische Fortsetzung' : active ? fresh ? claim.state === 'running' ? 'Korrektur in Bearbeitung' : 'Korrektur reserviert' : lagging ? RESERVATION_LAG_PHASE : 'Worker meldet sich nicht mehr'
       : status === 'completed' ? 'Korrektur abgeschlossen' : claim.awaitingPm ? 'PM-Rückfrage offen'
         : claim.outcome === 'blocked' ? 'Korrektur blockiert' : 'Korrekturabschluss noch nicht bestätigt';
     // Apply this after selecting the current attempt so an unavailable source

@@ -323,6 +323,27 @@ test('a new status epoch with the old blocked tag and no reservation of its own 
   assert.deepEqual(buildQueue([order(['pre gen · blockiert', 'manuell'])], [final(E1)], DEFAULT_WORKFLOWS, { now }).map(row => row.status), ['blocked']);
 });
 
+test('typed technical retry failures stay blocked before checkpoint publication for every workflow', () => {
+  const cases=[
+    ['T@'+since,'pre-gen',['pre gen · pausiert'],'newsletter'],
+    ['T@'+since+'-klaviyo','klaviyo upload',['klaviyo upload · pausiert'],'upload'],
+    ['T@'+since+'-uebersetzung-en','pre-gen',['en translation','en translation · pausiert'],'translation'],
+    ['korrektur-cu-T@'+since+'-extern','revision extern',[],'correction'],
+  ];
+  for(const [taskId,status,tags,workflow] of cases){
+    for(const owner of ['automatisch','technik']){
+      const claim=parseRegisterClaim(registerDoc({taskId,state:'final',paused:true,portable:false,owner}));
+      const rows=buildQueue([task('T',status,tags,{statusSince:since})],[claim],DEFAULT_WORKFLOWS,{now});
+      const current=rows.find(r=>r.workflow===workflow);assert.ok(current,workflow);
+      assert.equal(current.status,'blocked',workflow);assert.match(current.phase,/^Blockiert/);
+      const next=buildQueue([task('T',status,tags,{statusSince:since})],[{...claim,state:'running',paused:false,runId:'20261016T090000Z-retry',heartbeat:now/1000}],DEFAULT_WORKFLOWS,{now}).find(r=>r.workflow===workflow);
+      assert.equal(next.status,'running');
+    }
+  }
+  const pause=parseRegisterClaim(registerDoc({taskId:'T@'+since,state:'final',paused:true}));
+  assert.equal(buildQueue([task('T','pre-gen',['pre gen · pausiert'],{statusSince:since})],[pause],DEFAULT_WORKFLOWS,{now})[0].status,'queued');
+});
+
 test('a just finished attempt without any result waits five minutes before it is a technical reporting gap', () => {
   const order = task('T', 'revision extern', [], { statusSince: since });
   const finished = parseRegisterClaim(registerDoc({ runId: '20261016T085000Z-k', taskId: `korrektur-cu-T@${since}-extern`, state: 'final',
