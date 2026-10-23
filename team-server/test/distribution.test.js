@@ -120,6 +120,7 @@ test('fresh independent load remains visible for a paused worker without renewin
 const providerIdentity=(account='a',organization='b')=>({schema:1,provider:'anthropic',account:account.repeat(64),organization:organization.repeat(64),verifiedAt:at,source:'oauth-profile'});
 function sharedFixture(){
   const f=fixture([20,20]),fleet=f.summary.scheduling.routing.fleet;
+  fleet.splice(2);f.machines=f.machines.slice(0,2);
   for(const [i,m]of fleet.entries())m.quota_slots=[{slot:i?'account-2':'primary',status:'ready',at,identity:providerIdentity(),
     five_hour:{used:60,reset:iso(S+5*3600)},seven_day:{used:20,reset:iso(RESET)},
     runs:[{id:'ordinary:actual-'+i,identity:providerIdentity(),kind:'newsletter',started:null}]}];
