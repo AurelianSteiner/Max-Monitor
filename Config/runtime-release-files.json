@@ -32,6 +32,7 @@
     "scripts/worker-wallpaper.mjs",
     "team-server/account-provisioning.js",
     "team-server/claude-accounts.js",
+    "team-server/codex-account.js",
     "team-server/distribution.js",
     "team-server/effort-config.js",
     "team-server/enrollment.js",
@@ -52,6 +53,7 @@
     "team-server/skill-versions.js",
     "team-server/worker-control.js",
     "team-server/worker-identities.json",
+    "team-server/worker-kinds.js",
     "team-server/worker-reports.js"
   ]
 }

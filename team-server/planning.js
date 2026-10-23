@@ -1,6 +1,8 @@
 'use strict';
+const { workerProfile } = require('./worker-kinds');
 function planningEvidence(summary, fleet) {
-  const visible = new Set((fleet?.machines || []).map(machine => machine.workerId).filter(Boolean));
+  const visible = new Set((fleet?.machines || []).filter(machine => workerProfile(machine.workerId).provider === 'claude')
+    .map(machine => machine.workerId).filter(Boolean));
   const accounts = new Map();
   for (const [worker, quota] of Object.entries(summary?.scheduling?.workers || {})) {
     if (!visible.has(worker) || !quota.account) continue;

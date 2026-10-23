@@ -44,6 +44,12 @@ test('checks and dry runs never install the observer or read worker credentials'
   }
   assert.equal(f.calls.length, 0);
 });
+test('Codex repair workers never acquire the newsletter observer', async t => {
+  const f = await fixture(t);
+  f.dependencies.loadConfig = () => ({ worker_id:'hausdraches-macbook-air-f1e2b4ad', clickup:{transport:'rs_hub'} });
+  assert.deepEqual(await ensureWorkerObserver({workerRoot:f.workerRoot},f.dependencies),{installed:false});
+  assert.equal(f.calls.length,0);
+});
 test('an older observer does not prevent the compatible bootstrap from being fetched', async t => {
   const f = await fixture(t); const entry = path.join(f.workerRoot, 'src/monitor-agent.js');
   await fs.mkdir(path.dirname(entry), { recursive: true }); await fs.writeFile(entry, 'old observer');

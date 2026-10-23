@@ -29,34 +29,6 @@ import Foundation
 import Combine
 import OSLog
 
-// MARK: - Rolle
-
-/// Was ein Token auf dem Team-Server darf.
-enum TeamServerRole: String, Codable, Equatable, CaseIterable {
-    /// Team owner: manages identities and invitation tokens.
-    case superAdmin = "super"
-    /// Reads the team, synchronizes the queue and permanently deletes member Macs.
-    case admin
-    /// Participates with a reporting Mac.
-    case member
-    /// Reads all team data and resolves tasks. MacWorker is independent.
-    case guest
-
-    init(lenient raw: String?) {
-        switch raw?.lowercased() {
-        case "super": self = .superAdmin
-        case "admin": self = .admin
-        case "guest": self = .guest
-        default: self = .member
-        }
-    }
-
-    var seesAllReports: Bool { true }
-    var canManageMembers: Bool { self == .superAdmin }
-    var canViewMembers: Bool { self != .member }
-    var canDeleteMacs: Bool { self == .superAdmin || self == .admin }
-}
-
 // MARK: - Persistenz-Schlüssel
 
 /// UserDefaults-Schlüssel der Server-Verbindung — DEBUG-Präfix wie überall
@@ -74,6 +46,7 @@ enum TeamServerDefaultsKeys {
     static let memberName = prefix + "teamServerMemberName"
     static let memberId   = prefix + "teamServerMemberId"
     static let macWorker  = prefix + "teamServerMacWorker"
+    static let workerKind = prefix + "teamServerWorkerKind"
 }
 
 // MARK: - Verbindung
@@ -102,6 +75,8 @@ final class TeamServerConnection: ObservableObject {
     /// Server-interne Mitglieds-ID (nur Mitglieder)
     @Published private(set) var memberId: String?
     @Published private(set) var macWorker = false
+    @Published private(set) var workerKind = "newsletter"
+    var usesClaudeMonitoring: Bool { FleetWorkerKind.usesClaudeMonitoring(workerKind) }
     var reportsDevice: Bool { role != nil && macWorker }
     /// Läuft gerade ein Verbindungsversuch?
     @Published private(set) var isConnecting = false
@@ -163,6 +138,7 @@ final class TeamServerConnection: ObservableObject {
         memberName = defaults.string(forKey: TeamServerDefaultsKeys.memberName)
         memberId = defaults.string(forKey: TeamServerDefaultsKeys.memberId)
         macWorker = defaults.object(forKey: TeamServerDefaultsKeys.macWorker) as? Bool ?? (role == .member)
+        workerKind = defaults.string(forKey: TeamServerDefaultsKeys.workerKind) ?? "newsletter"
         let identityTimer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
             guard let self, self.isConnected else { return }
             self.verifyIdentity()
@@ -306,6 +282,7 @@ final class TeamServerConnection: ObservableObject {
                 case .success(let identity):
                     let changed = identity.role != self.role || identity.name != self.memberName
                         || identity.memberId != self.memberId || identity.macWorker != self.macWorker
+                        || identity.workerKind != self.workerKind
                     self.apply(identity: identity)
                     self.lastError = nil
                     if changed { NotificationCenter.default.post(name: .teamServerChanged, object: nil) }
@@ -335,6 +312,7 @@ final class TeamServerConnection: ObservableObject {
         memberName = nil
         memberId = nil
         macWorker = false
+        workerKind = "newsletter"
         lastError = nil
         serverURL = Self.defaultServerURL
 
@@ -343,7 +321,8 @@ final class TeamServerConnection: ObservableObject {
                     TeamServerDefaultsKeys.role,
                     TeamServerDefaultsKeys.memberName,
                     TeamServerDefaultsKeys.memberId,
-                    TeamServerDefaultsKeys.macWorker] {
+                    TeamServerDefaultsKeys.macWorker,
+                    TeamServerDefaultsKeys.workerKind] {
             defaults.removeObject(forKey: key)
         }
         KeychainManager.shared.deleteTeamServerToken()
@@ -452,6 +431,8 @@ final class TeamServerConnection: ObservableObject {
         memberName = identity.name
         memberId = identity.memberId
         macWorker = identity.macWorker
+        workerKind = identity.workerKind
+        defaults.set(identity.workerKind, forKey: TeamServerDefaultsKeys.workerKind)
         defaults.set(identity.macWorker, forKey: TeamServerDefaultsKeys.macWorker)
 
         defaults.set(identity.role.rawValue, forKey: TeamServerDefaultsKeys.role)

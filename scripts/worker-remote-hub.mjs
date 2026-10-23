@@ -114,8 +114,8 @@ export async function handle(body, { settings = loadConfiguration(), file = '/et
   // Legacy apps are bound by their existing UUID; display names never grant access.
   const deviceId = saved?.deviceId || body.deviceId || null;
   const allowed = await permission(settings, body.workerId, { deviceId });
-  // A deliberately disabled worker still needs maintenance access.
-  if (!['enabled', 'disabled'].includes(allowed.reason)) throw new Error('Worker ist nicht eindeutig im Max Monitor registriert.');
+  // Job purpose and admission do not revoke maintenance for an exact identity.
+  if (!['enabled', 'disabled', 'wrong_worker_kind'].includes(allowed.reason)) throw new Error('Worker ist nicht eindeutig im Max Monitor registriert.');
   if (body.operation === 'lookup') {
     if (!saved) throw new Error('Fernzugriff auf diesem Mac noch nicht eingerichtet.');
     return { schema: 1, ...saved };

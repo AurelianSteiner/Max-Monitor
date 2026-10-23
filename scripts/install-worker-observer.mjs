@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
+const { workerProfile } = require('../team-server/worker-kinds.js');
 export const OBSERVER_SOURCE = Object.freeze({
   revision: '5c7cc3f611d35a5cf18398af67e414bc035f9ba3',
   sha256: 'e779ed1a2a1862f51b83ff7decfcce35675780f9637494b825ef0fb4fc550576',
@@ -22,6 +23,7 @@ export async function ensureWorkerObserver(options, {
   const configured = options.workerConfig || process.env.MAX_MONITOR_WORKER_CONFIG || 'config/worker.local.json';
   const configFile = path.resolve(root, configured.startsWith('~/') ? path.join(home, configured.slice(2)) : configured);
   const config = (loadConfig || require(path.join(root, 'src/config.js')).loadConfig)(configFile, { root });
+  if (config.worker_kind === 'codex-repair' || workerProfile(config.worker_id).provider !== 'claude') return { installed: false };
   if (config.clickup?.transport !== 'rs_hub' || config.testbetrieb?.nur_aufgaben?.length) return { installed: false };
   let entry = path.join(root, 'src/monitor-agent.js');
   process.env.MAC_MONITOR_WORKER_ROOT = root;

@@ -69,26 +69,6 @@ extension TeamServerError: LocalizedError {
 
 // MARK: - Antwort-Typen
 
-/// Antwort von GET /me: Wer ist dieses Token?
-struct TeamServerIdentity: Equatable {
-    let role: TeamServerRole
-    let name: String?
-    let memberId: String?
-    let macWorker: Bool
-}
-
-extension TeamServerIdentity: Decodable {
-    private enum CodingKeys: String, CodingKey { case role, name, memberId, macWorker }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        role = TeamServerRole(lenient: try? container.decodeIfPresent(String.self, forKey: .role))
-        macWorker = try container.decodeIfPresent(Bool.self, forKey: .macWorker) ?? (role == .member)
-        name = (try? container.decodeIfPresent(String.self, forKey: .name)) ?? nil
-        memberId = (try? container.decodeIfPresent(String.self, forKey: .memberId)) ?? nil
-    }
-}
-
 /// Ein Eintrag aus GET /members.
 struct TeamServerMember: Identifiable, Equatable {
     let id: String

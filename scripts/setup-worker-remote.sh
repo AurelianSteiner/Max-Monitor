@@ -62,7 +62,7 @@ stage="$(mktemp -d "$tool_parent/tool.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 /usr/bin/ssh -i "$identity" -o BatchMode=yes -o IdentitiesOnly=yes \
   -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=\"$known_hosts\"" -o ConnectTimeout=10 \
-  "$hub_host" 'tar -C /opt/max-monitor -cf - scripts/worker-remote.mjs scripts/worker-remote-hub.mjs scripts/setup-mac-monitor.mjs scripts/check-worker-control.mjs scripts/enroll-monitor-worker.mjs team-server/enrollment.js team-server/worker-control.js' \
+  "$hub_host" 'tar -C /opt/max-monitor -cf - scripts/worker-remote.mjs scripts/worker-remote-hub.mjs scripts/setup-mac-monitor.mjs scripts/worker-wallpaper.mjs scripts/check-worker-control.mjs scripts/enroll-monitor-worker.mjs team-server/enrollment.js team-server/worker-control.js team-server/worker-kinds.js team-server/worker-identities.json' \
   | /usr/bin/tar -xf - -C "$stage"
 "$node_bin" "$stage/scripts/worker-remote.mjs" install --worker-root "$worker_root"
 if [ -e "$tool_parent/tool.previous" ]; then rm -rf "$tool_parent/tool.previous"; fi

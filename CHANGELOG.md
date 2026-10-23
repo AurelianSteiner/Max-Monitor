@@ -1,5 +1,11 @@
 # Änderungen
 
+## 2.17.0
+
+- **Eigene Codex Repair Worker.** Technische Reparaturen und Kunden-Onboarding haben eine eigene Worker-Art. Koralle verwendet Codex und nimmt keine Newsletter-Produktion an; bestehende MacWorker bleiben bei Claude.
+- **Codex-Kontingente eindeutig anzeigen.** Wochenverbrauch und Reset stammen direkt aus dem Reparaturdienst. Ohne Anmeldung oder aktuelle Messung bleiben Werte unbekannt. Alte Claude-Meldungen können die Codex-Anzeige nicht überschreiben.
+- **Einrichtung und Wartung getrennt.** Codex Worker erhalten keine Claude-Observer oder Claude-Account-Aktionen. Der Wartungszugriff bleibt unabhängig von der Aufgabenart erhalten; neue Macs laden sämtliche benötigten Einrichtungsdateien.
+
 ## 2.16.5
 
 - **Dark Mode für die gesamte Übersicht.** Queue, Macs, Log, Verbrauch und Dialoge folgen der gewählten Darstellung System, Hell oder Dunkel. Fenster und eingebettete Oberfläche wechseln gemeinsam; Statusfarben und Workflow-Markierungen bleiben gut lesbar.

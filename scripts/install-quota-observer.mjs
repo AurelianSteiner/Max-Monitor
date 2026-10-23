@@ -3,9 +3,11 @@
 import fs from 'node:fs/promises';import os from 'node:os';import path from 'node:path';import{createHash}from'node:crypto';
 import{fileURLToPath}from'node:url';import{createRequire}from'node:module';
 const require=createRequire(import.meta.url),source=path.dirname(fileURLToPath(import.meta.url));
+const {workerProfile}=require('../team-server/worker-kinds.js');
 export async function ensureQuotaObserver(options,{runner,home=os.homedir(),platform=process.platform,loadConfig,uid=process.getuid?.()}={}){
  if(options.check||options.dryRun||options.codeOnly||platform!=='darwin')return{installed:false};
  const root=options.workerRoot,config=(loadConfig||require(path.join(root,'src/config.js')).loadConfig)(path.resolve(root,options.workerConfig||'config/worker.local.json'),{root});
+ if(config.worker_kind==='codex-repair'||workerProfile(config.worker_id).provider!=='claude')return{installed:false};
  if(config.clickup?.transport!=='rs_hub'||config.testbetrieb?.nur_aufgaben?.length)return{installed:false};
  const directory=path.join(home,'.local/share/max-monitor-quota'),names=['quota_worker.py','quota_usage.py'];
  const inputs=await Promise.all(names.map(name=>fs.readFile(path.join(source,name))));

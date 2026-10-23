@@ -63,6 +63,23 @@ test('unknown and ambiguous workers cannot enroll; disabled workers remain repai
   for (const reason of ['ambiguous', 'unregistered']) await assert.rejects(handle(body, { ...f, permission: async () => ({ reason }) }));
   await assert.rejects(fs.access(f.file));
   assert.equal((await handle(body, { ...f, permission: async () => ({ reason: 'disabled' }) })).workerId, entry.workerId);
+  assert.equal((await handle(body, { ...f, permission: async () => ({ reason: 'wrong_worker_kind' }) })).workerId, entry.workerId,
+    'Codex job admission does not revoke an already bound maintenance identity');
+});
+
+test('the remote bootstrap stages every static dependency and imports without a full checkout', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'remote-bootstrap-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const source = await fs.readFile(new URL('./setup-worker-remote.sh', import.meta.url), 'utf8');
+  const files = /tar -C \/opt\/max-monitor -cf - ([^']+)'/.exec(source)?.[1].trim().split(/\s+/);
+  assert.ok(files?.length);
+  for (const file of files) {
+    const destination = path.join(directory, file);
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.copyFile(new URL('../' + file, import.meta.url), destination);
+  }
+  execFileSync(process.execPath, ['--input-type=module', '-e', "await import('./scripts/worker-remote.mjs')"],
+    { cwd: directory, encoding: 'utf8' });
 });
 
 test('changed host key/user fails closed without modifying registry', async t => {

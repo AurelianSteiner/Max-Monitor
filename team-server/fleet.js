@@ -7,6 +7,8 @@ const crypto = require("node:crypto");
 const { validateReport, publicReport } = require("./worker-reports");
 const { newerCapabilities } = require("./integration-contract");
 const { newerSkillRelease } = require("./skill-versions");
+const { workerProfile } = require('./worker-kinds');
+const { codexTelemetry } = require('./codex-account');
 
 const CLEARED_BLOCKER_CONTEXT = Object.fromEntries(['blockerReason','reasonCode','responsibleRole','nextStep',
   'pmOwner','pmOwnerId','pmCheckedAt','blockerSource','blockerSourceRunId','blockerSourceHash','blockerRecordedAt'].map(key => [key, undefined]));
@@ -992,6 +994,12 @@ function createFleetStore(dataDir, now = Date.now) {
         delete observation.workerVersionObservedAt; delete observation.workerVersionSource;
       }
       Object.assign(machine, observation);
+      const profile = workerProfile(machine.workerId);
+      Object.assign(machine, profile);
+      if (profile.provider === 'codex') {
+        Object.assign(machine, codexTelemetry(report?.codexAccount, time));
+        machine.workerIssues = (machine.workerIssues || []).filter(issue => issue.stage !== 'claude');
+      }
       if (machine.activity?.fresh) {
         machine.lastSeenAt = report.receivedAt;
         machine.heartbeatAgeSeconds = Math.max(0, (time - Date.parse(report.receivedAt)) / 1000);

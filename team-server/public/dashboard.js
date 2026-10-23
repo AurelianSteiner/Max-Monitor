@@ -88,6 +88,8 @@
     newsletter: "Pre-Gen",
     upload: "Klaviyo-Upload",
     translation: "Übersetzung",
+    "technical-repair": "Technische Reparatur",
+    "customer-onboarding": "Kunden-Onboarding",
     "worker-errors": "Worker-Fehler",
     "task-errors": "Lauf-Fehler",
     "system-notices": "Betriebshinweis",
@@ -315,6 +317,7 @@
   function machineAttentionReasons(machine) {
     const reasons = workerIssues(machine).map(workerIssueReason);
     const limits = machine.limits || [];
+    const provider = machineProviderLabel(machine);
     if (machine.status !== "online") {
       const source = machine.telemetrySource === "worker" ? "Worker" : "Mac";
       reasons.push(
@@ -329,8 +332,8 @@
     }
     if (machine.workerStatus && machine.workerStatus !== "online" && machine.telemetrySource !== "worker")
       reasons.push(machine.workerStatus === "offline"
-        ? `Newsletter-Worker meldet sich seit über 30 Minuten nicht${machine.status === "online" ? " – Mac-App ist separat erreichbar" : ""}`
-        : `Newsletter-Worker meldet sich seit über 15 Minuten nicht${machine.status === "online" ? " – Mac-App ist separat erreichbar" : ""}`);
+        ? `${machineWorkerLabel(machine)} meldet sich seit über 30 Minuten nicht${machine.status === "online" ? " – Mac-App ist separat erreichbar" : ""}`
+        : `${machineWorkerLabel(machine)} meldet sich seit über 15 Minuten nicht${machine.status === "online" ? " – Mac-App ist separat erreichbar" : ""}`);
     if (machine.workerId && !machine.workerStatus && machine.telemetrySource !== "worker")
       reasons.push("Worker-Betriebsstatus noch nicht gemeldet");
     const pool = machine.claudeAccounts?.accounts;
@@ -339,15 +342,15 @@
       if(!ready.length) reasons.push(pool.every(a=>a.status==='limited') ? "Claude-Limit erreicht: beide Accounts" : "Claude-Accounts werden geprüft");
     } else {
     if (machine.usageError || machine.usageStatus === "error")
-      reasons.push(`Claude-Kontingente konnten nicht geprüft werden${machine.usageError ? `: ${machine.usageError}` : ""}`);
+      reasons.push(`${provider}-Kontingente konnten nicht geprüft werden${machine.usageError ? `: ${machine.usageError}` : ""}`);
     if (!limits.length) reasons.push(machine.monitoringAccountId
-      ? "Claude-Kontingente noch nicht gemeldet" : "Monitoring-Account auf diesem Worker-Mac verbinden");
+      ? `${provider}-Kontingente noch nicht gemeldet` : isCodexRepair(machine) ? "Codex auf diesem Worker-Mac anmelden" : "Monitoring-Account auf diesem Worker-Mac verbinden");
     else if (
       machine.usageStale ||
       !timestamp(machine.usageUpdatedAt) ||
       Date.now() - timestamp(machine.usageUpdatedAt) > 15 * 60000
     )
-      reasons.push("Claude-Kontingente veraltet");
+      reasons.push(`${provider}-Kontingente veraltet`);
     for (const limit of limits.filter((item) => item.percent >= 100)) {
       const label = [
         claudeAccountIdentity((machine.accounts || []).find(a => a.accountId === limit.accountId) || {name:limit.accountName}).name,
@@ -365,8 +368,8 @@
         Date.now() - updatedAt > 15 * 60000;
       reasons.push(
         old
-          ? `Letzter gemeldeter Claude-Wert: 100 %${label ? ` · ${label}` : ""}`
-          : `Claude-Limit erreicht${label ? `: ${label}` : ""}`,
+          ? `Letzter gemeldeter ${provider}-Wert: 100 %${label ? ` · ${label}` : ""}`
+          : `${provider}-Limit erreicht${label ? `: ${label}` : ""}`,
       );
     }
     }
@@ -991,6 +994,9 @@
   function machineAccount(machine) {
     return (machine.accounts || []).find((item) => item.accountId === machine.monitoringAccountId);
   }
+  function isCodexRepair(machine) { return machine.workerKind === "codex-repair"; }
+  function machineProviderLabel(machine) { return isCodexRepair(machine) ? "Codex" : "Claude"; }
+  function machineWorkerLabel(machine) { return isCodexRepair(machine) ? "Codex Repair Worker" : "Newsletter-Worker"; }
   function claudeAccountCount(devices) {
     return devices.reduce((total, machine) => {
       // Worker slots are local to each Mac. Their IDs and display names are not
@@ -1003,6 +1009,10 @@
   // Compact (overview rows): only states that need action; setup stays in the details.
   function accountActions(machine,{compact=false}={}) {
     const actions=node('div','account-actions');
+    if(isCodexRepair(machine)) {
+      if(!compact && !machine.monitoringAccountId) actions.append(node('small','form-hint','Codex auf diesem Mac anmelden. Wochenverbrauch und Reset werden danach automatisch gemeldet.'));
+      return actions;
+    }
     if(!compact && machine.claudeAccounts?.selectionReason)actions.append(node('small','form-hint',machine.claudeAccounts.selectionReason));
     const phase={installing:'Claude-Account wird eingerichtet…',figma_check:'Figma wird geprüft…',figma_login_required:'Figma-Anmeldung noch bestätigen'}[machine.accountProvisioning?.result?.status];
     if(phase)actions.append(node('small','form-hint',phase));
@@ -1155,9 +1165,11 @@
     if(machine.claudeAccounts?.accounts?.length===2) return {text:"2 Claude-Accounts · automatische Auswahl",title:"Accountnamen aus den E-Mail-Adressen; Kontingente direkt aus Claude Code",email:null};
     const account = machineAccount(machine);
     const { email, name } = claudeAccountIdentity(account);
-    const text = !account ? "Claude · kein Account verbunden" : `Claude · ${name}`;
-    const title = !account ? "Monitoring-Account auf diesem Worker-Mac verbinden"
-      : `Claude-Monitoring-Account: ${email || "E-Mail nicht gemeldet"}`;
+    const provider = machineProviderLabel(machine);
+    const displayName = isCodexRepair(machine) ? email ? name : account?.name || "Codex" : name;
+    const text = !account ? `${provider} · kein Account verbunden` : `${provider} · ${displayName}`;
+    const title = !account ? isCodexRepair(machine) ? "Codex auf diesem Worker-Mac anmelden" : "Monitoring-Account auf diesem Worker-Mac verbinden"
+      : `${provider}-Account: ${email || account?.name || "E-Mail nicht gemeldet"}`;
     return { text, title, email };
   }
   function machineFigmaIdentity(machine) {
@@ -1330,14 +1342,15 @@
   }
   // One line per Claude account. The account, 5 h and week columns stack the
   // same accounts in the same order, so every line reads straight across.
-  function accountAvailability(session, weekly, stale, status, blockedUntil) {
-    if (stale || [session, weekly].some(limit => limitStale(limit)))
+  function accountAvailability(session, weekly, stale, status, blockedUntil, optionalWindows = false) {
+    const required = optionalWindows ? [session, weekly].filter(Boolean) : [session, weekly];
+    if (stale || required.some(limit => limitStale(limit)))
       return { available: false, availability: "Kontingent nicht bestätigt · Messung veraltet" };
     if (status === "error") return { available: false, availability: "Kontingent nicht bestätigt · Account prüfen" };
     if (status === "limited" || timestamp(blockedUntil) > Date.now()
-      || [session, weekly].some(limit => limit?.percent >= 100))
+      || required.some(limit => limit?.percent >= 100))
       return { available: false, availability: "Kein freies Kontingent · Limit erreicht" };
-    if (status === "unknown" || [session, weekly].some(limit =>
+    if (!required.length || status === "unknown" || required.some(limit =>
       !Number.isFinite(limit?.percent) || limit.percent < 0 || limit.percent > 100
       || (timestamp(limit.resetsAt) !== null && timestamp(limit.resetsAt) <= Date.now())))
       return { available: false, availability: "Kontingent noch nicht bestätigt" };
@@ -1376,9 +1389,9 @@
     const identity = claudeAccountIdentity(account);
     const stale = usageStale(machine) || Boolean(machine.usageError);
     const session = machineLimit(machine, account, "session"), weekly = machineLimit(machine, account, "weekly");
-    const availability = accountAvailability(session, weekly, stale);
-    return [{ name: identity.name, next: false, stale, note: "", ...availability,
-      title: [`Claude-Monitoring-Account: ${identity.email || "E-Mail nicht gemeldet"}`,
+    const availability = accountAvailability(session, weekly, stale, machine.codexAccount?.status, undefined, isCodexRepair(machine));
+    return [{ name: isCodexRepair(machine) ? `Codex · ${identity.email ? identity.name : account.name || "Account"}` : identity.name, next: false, stale, note: "", ...availability,
+      title: [`${machineProviderLabel(machine)}-Account: ${identity.email || account.name || "E-Mail nicht gemeldet"}`,
         availability.availability, machine.usageError || "",
         stale ? `Letzte Messung ${relative(machine.usageUpdatedAt)}` : ""].filter(Boolean).join("\n"),
       session, weekly }];
@@ -1427,6 +1440,7 @@
       open.title = [label, deviceName && deviceName !== label ? `macOS: ${deviceName}` : "",
         accountIdentity.text, machine.claudeAccounts?.selectionReason || "", figmaIdentity.text].filter(Boolean).join("\n");
       identity.append(open);
+      if (isCodexRepair(machine)) identity.append(node("small", "", "Codex Repair"));
       if (!machine.workerId) identity.append(node("small", "", "ohne Worker-ID"));
       const actions = accountActions(machine, { compact: true });
       if (actions.childElementCount) identity.append(actions);
@@ -1481,8 +1495,8 @@
           weeklyCell.append(meter(item.weekly, item.stale));
         }
       } else {
-        const unbound = node("span", "fleet-unbound", "kein Account");
-        unbound.title = "Monitoring-Account auf diesem Worker-Mac verbinden";
+        const unbound = node("span", "fleet-unbound", isCodexRepair(machine) ? "Codex anmelden" : "kein Account");
+        unbound.title = machineAccountIdentity(machine).title;
         accountCell.append(unbound);
         sessionCell.append(node("span", "fleet-unbound", "—"));
         weeklyCell.append(node("span", "fleet-unbound", "—"));
@@ -1522,7 +1536,7 @@
       if (swatch) machineName.prepend(swatch);
       machineName.title = label;
       const deviceName = machine.deviceName || (machine.name !== machine.workerId ? machine.name : null);
-      const subtitle = node("small", "", !machine.workerId ? "Worker-ID nicht zugeordnet"
+      const subtitle = node("small", "", isCodexRepair(machine) ? "Codex Repair Worker" : !machine.workerId ? "Worker-ID nicht zugeordnet"
         : deviceName ? `macOS: ${deviceName}` : "Wie in Slack");
       subtitle.title = subtitle.textContent;
       identity.append(machineName, subtitle);
@@ -1588,7 +1602,7 @@
         const limitGroup = node("div", "machine-limits");
         const stale = usageStale(machine) || Boolean(machine.usageError);
         const outdatedLabels = [];
-        for (const [name, kind] of [["5 h", "session"], ["Woche", "weekly"]]) {
+        for (const [name, kind] of [[isCodexRepair(machine) ? "Sitzung" : "5 h", "session"], ["Woche", "weekly"]]) {
           const measurement = machineLimit(machine, account, kind);
           const value = measurement?.percent ?? null;
           const outdated = limitStale(measurement, stale);
@@ -1608,13 +1622,13 @@
         const limits = machine.limits || [];
         if (!limits.length || outdatedLabels.length || machine.usageError)
           card.append(node("p", "usage-note", machine.usageError ||
-            (!limits.length ? "Claude-Kontingente noch nicht gemeldet."
+            (!limits.length ? `${machineProviderLabel(machine)}-Kontingente noch nicht gemeldet.`
               : stale ? `Kontingente veraltet · ${relative(machine.usageUpdatedAt)}`
                 : `Messung veraltet: ${outdatedLabels.join(", ")}`)));
       }
       if (machine.workerStatus && machine.workerStatus !== "online")
         card.append(node("p", "usage-note",
-          `Newsletter-Worker: ${statusNames[machine.workerStatus] || machine.workerStatus} · ${relative(machine.workerLastSeenAt)}`));
+          `${machineWorkerLabel(machine)}: ${statusNames[machine.workerStatus] || machine.workerStatus} · ${relative(machine.workerLastSeenAt)}`));
       const bottom = node("div", "machine-bottom");
       const current = node("span", "machine-current", active.length
         ? `${active[0].status === "queued" ? "Reserviert: " : ""}${active[0].title || active[0].id}` : idleLabel(machine));
@@ -2148,8 +2162,8 @@
   function machineDetails(machine) {
     const account = machineAccount(machine);
     const accountIdentity = machineAccountIdentity(machine);
-    const accountField = detailField(machine.claudeAccounts ? "Claude-Accounts" : "Claude-Monitoring-Account", machine.claudeAccounts ? accountIdentity.text : account ? accountIdentity.text
-      : "Auf diesem Worker-Mac unter Queue & Macs → Monitoring-Account verbinden", true);
+    const accountField = detailField(isCodexRepair(machine) ? "Codex-Account" : machine.claudeAccounts ? "Claude-Accounts" : "Claude-Monitoring-Account", machine.claudeAccounts ? accountIdentity.text : account ? accountIdentity.text
+      : isCodexRepair(machine) ? "Codex auf diesem Worker-Mac anmelden" : "Auf diesem Worker-Mac unter Queue & Macs → Monitoring-Account verbinden", true);
     if (account && machine.claudeAccounts?.accounts?.length !== 2) {
       const name = accountField.querySelector("strong");
       name.classList.add("claude-account-name");
@@ -2188,9 +2202,11 @@
         machine.appVersion || machine.workerVersion || "Unbekannt",
       ),
       accountField,
+      ...(isCodexRepair(machine) ? [detailField("Worker-Art", "Codex Repair Worker"),
+        detailField("Aufgaben", "Technische Reparaturen · Kunden-Onboarding")] : []),
       detailField("Figma-Account", machineFigmaIdentity(machine).text, true),
       ...(machine.figmaAccount ? [detailField(machine.figmaAccount.source === "mcp-whoami" ? "Figma-Account geprüft" : "Figma zuletzt verwendet", exact(machine.figmaAccount.observedAt))] : []),
-      ...(accountIdentity.email ? [detailField("Claude-E-Mail", accountIdentity.email, true)] : []),
+      ...(accountIdentity.email ? [detailField(`${machineProviderLabel(machine)}-E-Mail`, accountIdentity.email, true)] : []),
       detailField("Kontingente geprüft", exact(machine.usageUpdatedAt)),
       detailField(
         "Always On",
@@ -2229,13 +2245,13 @@
       grid.append(
         detailField("Worker-Erreichbarkeit", statusNames[machine.workerStatus] || "Unbekannt"),
         detailField(
-          "Newsletter-Worker gemeldet",
+          `${machineWorkerLabel(machine)} gemeldet`,
           exact(machine.workerLastSeenAt),
         ),
       );
     const list = node("div");
     if (machine.nativeStatus && machine.nativeStatus !== "online" && machine.status === "online")
-      list.append(node("p", "form-hint", "Der Newsletter-Worker bestätigt, dass dieser Mac erreichbar ist. Die Mac-App meldet sich separat; ihre Akku- und Kontingentdaten werden dadurch nicht aktualisiert. Inhaber-, Admin- und Gastzugänge senden keine App-Meldungen."));
+      list.append(node("p", "form-hint", `${machineWorkerLabel(machine)} bestätigt, dass dieser Mac erreichbar ist. Akku-Messungen stammen separat aus der Mac-App.`));
     for (const issue of machine.workerIssues || []) {
       list.append(node("p", "usage-note fleet-issue", `${issue.stage}: ${issue.message}`));
       list.append(node("p", "form-hint", `Fehler gemeldet: ${exact(issue.reportedAt)}`));

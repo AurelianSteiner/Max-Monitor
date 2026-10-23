@@ -65,7 +65,7 @@ final class FleetReporter {
         if !force, let lastAttemptAt, now.timeIntervalSince(lastAttemptAt) < 60 { return }
         lastAttemptAt = now
         isPosting = true
-        FleetMonitoringManager.shared.refresh()
+        if connection.usesClaudeMonitoring { FleetMonitoringManager.shared.refresh() }
 
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -79,7 +79,8 @@ final class FleetReporter {
             // Give the separate monitoring request time to finish. Device liveness
             // still gets sent if Claude is unavailable; never refresh its data stamp.
             for _ in 0..<20 {
-                guard FleetMonitoringManager.shared.isRefreshing else { break }
+                guard TeamServerConnection.shared.usesClaudeMonitoring,
+                      FleetMonitoringManager.shared.isRefreshing else { break }
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
             let battery = await Task.detached(priority: .utility) { Self.readBattery() }.value
@@ -103,7 +104,8 @@ final class FleetReporter {
 
     static func buildHeartbeat(teamId: String, monitoring: FleetMonitoringManager,
                                battery: BatteryTelemetry, now: Date) -> FleetHeartbeat {
-        let account = monitoring.account
+        let usesClaude = TeamServerConnection.shared.usesClaudeMonitoring
+        let account = usesClaude ? monitoring.account : nil
         let accountId = account?.id.uuidString.lowercased()
         let accounts = account.map {
             [FleetUsageAccount(accountId: $0.id.uuidString.lowercased(), name: String($0.name.prefix(120)),
@@ -131,8 +133,8 @@ final class FleetReporter {
             batteryPercent: FleetHeartbeat.normalizedBatteryPercent(battery.percent), powerSource: battery.powerSource,
             isCharging: battery.isCharging, isAwake: true, stayAwakeEnabled: SleepGuard.shared.isAwake,
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
-            limits: Array(limits.prefix(50)), accounts: accounts, usageUpdatedAt: monitoring.updatedAt,
-            usageError: monitoring.errorMessage.map { String($0.prefix(500)) })
+            limits: Array(limits.prefix(50)), accounts: accounts, usageUpdatedAt: usesClaude ? monitoring.updatedAt : nil,
+            usageError: usesClaude ? monitoring.errorMessage.map { String($0.prefix(500)) } : nil)
         heartbeat.monitoringAccountId = accountId
         return heartbeat
     }

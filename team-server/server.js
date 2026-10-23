@@ -42,6 +42,7 @@ const { gunzipSync } = require("node:zlib");
 const { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, MAX_PREVIEW_BYTES } = require("./fleet");
 const { EnrollmentError, enrollWorkerMember, validateEnrollment } = require("./enrollment");
 const { controlForWorker, registeredDeviceId, WORKER_ID, DEVICE_ID } = require("./worker-control");
+const { workerProfile } = require('./worker-kinds');
 const remoteAccess = require("./remote-access");
 const effortConfig = require('./effort-config');
 const planning = require('./planning');
@@ -560,6 +561,7 @@ const server = http.createServer((req, res) => {
   if(accountMatch && ['GET','POST'].includes(req.method)) {
     const workerId=accountMatch[1];
     if(!WORKER_ID.test(workerId))return send(res,400,{error:'Ungültiger Mac'});
+    if(workerProfile(workerId).provider!=='claude')return send(res,409,{error:'Dieser Worker verwendet Codex. Claude-Accounts sind hier nicht vorgesehen.'});
     if(req.method==='GET')return fleetResult(res,()=>({order:accountProvisioning.status(teamDir(teamId),workerId)}));
     if(!['admin','super'].includes(who.role))return send(res,403,{error:'Nur Admins dürfen Claude-Accounts hinzufügen.'});
     return readBody(req,(error,raw)=>{
@@ -588,7 +590,8 @@ const server = http.createServer((req, res) => {
       if (body?.workerId !== reportMatch[1]) return send(res, 400, { error: 'Worker-ID widerspricht dem Bericht' });
       if (body.deviceId != null && (typeof body.deviceId !== 'string' || !DEVICE_ID.test(body.deviceId))) return send(res, 400, { error: 'Ungültige Geräte-ID' });
       const identities = [ownerIdentity(teamId, true), ...readMembers(teamId, true)], machines = fleet.snapshot(teamId).machines;
-      const permission = controlForWorker(body.workerId, identities, machines, body.deviceId || null);
+      const permission = controlForWorker(body.workerId, identities, machines, body.deviceId || null,
+        workerProfile(body.workerId).allowedWorkflows[0]);
       if (!['enabled', 'disabled'].includes(permission.reason)) return send(res, 409, { error: 'Worker ist nicht eindeutig registriert' });
       return fleetResult(res, () => {
         const result = fleet.workerReport(teamId, body);
@@ -607,7 +610,8 @@ const server = http.createServer((req, res) => {
     try {
       const members = [ownerIdentity(teamId, true), ...readMembers(teamId, true)];
       res.setHeader("Cache-Control", "no-store");
-      const result = controlForWorker(controlMatch[1], members, fleet.snapshot(teamId).machines, deviceId);
+      const workflow = url.searchParams.get('workflow');
+      const result = controlForWorker(controlMatch[1], members, fleet.snapshot(teamId).machines, deviceId, workflow);
       // The worker read this app UUID on its own Mac: name an app without Worker ID
       // after it, so its accepted tasks show on the right Mac. Never fails admission.
       if (deviceId) try { fleet.linkWorker(teamId, controlMatch[1], deviceId); } catch { /* display only */ }
@@ -737,6 +741,8 @@ const server = http.createServer((req, res) => {
       name: who.member ? who.member.name : null,
       memberId: who.member ? who.member.id : null,
       macWorker: isMacWorker(who.member),
+      ...(workerProfile(who.member?.enrollment?.workerId).workerKind === 'newsletter' ? {}
+        : workerProfile(who.member?.enrollment?.workerId)),
     });
   }
 

@@ -2,8 +2,9 @@
 // Display names and queue-source observations are never identity bindings.
 const WORKER_ID = /^[a-z0-9][a-z0-9-]{1,40}$/;
 const DEVICE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const { workerProfile, allowsWorkflow } = require('./worker-kinds');
 
-function controlForWorker(workerId, members, machines, deviceId = null) {
+function controlForWorker(workerId, members, machines, deviceId = null, workflow = null) {
   if (!WORKER_ID.test(workerId)) throw new Error("Ungültige Worker-ID");
   if (deviceId !== null && !DEVICE_ID.test(deviceId)) throw new Error("Ungültige Geräte-ID");
   // A worker-reported link only names a Mac in the dashboard (fleet.js linkWorker);
@@ -29,8 +30,11 @@ function controlForWorker(workerId, members, machines, deviceId = null) {
   // off the Mac's own row in Members stops new work at once, even while its app
   // reports as another identity such as the team owner (user decision 09.10.2026).
   const enabled = Boolean(identity && allows(identity) && enrolled.every(allows));
-  return { schema: 1, workerId, enabled,
-    reason: ids.size > 1 ? "ambiguous" : !identity ? "unregistered" : enabled ? "enabled" : "disabled" };
+  const profile = workerProfile(workerId);
+  const allowed = allowsWorkflow(workerId, workflow);
+  return { schema: 1, workerId, enabled: enabled && allowed,
+    reason: ids.size > 1 ? "ambiguous" : !identity ? "unregistered" : !enabled ? "disabled" : !allowed ? "wrong_worker_kind" : "enabled",
+    ...(profile.workerKind === 'newsletter' ? {} : profile) };
 }
 
 // Return only an identity registered by enrollment or the native app. Observer

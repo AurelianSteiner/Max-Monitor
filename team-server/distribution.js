@@ -2,6 +2,7 @@
 // the unchanged Worker module (quota-pacing.js, see vendor/README.md);
 // task-specific access, reservations and the bounded preference wait still apply.
 const { analyseFleet, macKey, slotRefusal, fleetMacs, PACING } = require('./quota-pacing');
+const { workerProfile } = require('./worker-kinds');
 const KINDS = { newsletter: 'newsletter', correction: 'korrektur', translation: 'translation', upload: 'klaviyo' };
 const percent = value => Number.isFinite(value) && value >= 0 && value <= 100;
 // Display values of one account slot. Analysed slots carry the scorer's view
@@ -26,9 +27,10 @@ function distribution(summary, machines, nowMs = Date.now()) {
   const snapshot = summary?.scheduling;
   const fresh = at => Number.isFinite(Date.parse(at)) && nowMs - Date.parse(at) >= -60000 && nowMs - Date.parse(at) <= 180000;
   const available = snapshot?.schema === 1 && fresh(snapshot.generated_at) && snapshot.routing?.available === true;
-  const fleet = (Array.isArray(snapshot?.routing?.fleet) ? snapshot.routing.fleet : []).filter(m => m && typeof m === 'object');
+  const fleet = (Array.isArray(snapshot?.routing?.fleet) ? snapshot.routing.fleet : [])
+    .filter(m => m && typeof m === 'object' && workerProfile(m.worker_id).provider === 'claude');
   const jobs = (Array.isArray(snapshot?.routing?.jobs) ? snapshot.routing.jobs : []).filter(j => j && typeof j === 'object');
-  const visible = new Map(machines.filter(m => m.workerId).map(m => [m.workerId, m]));
+  const visible = new Map(machines.filter(m => m.workerId && workerProfile(m.workerId).provider === 'claude').map(m => [m.workerId, m]));
   const loads = new Map(fleet.filter(m => Number.isFinite(Date.parse(m.seen_at)) && Math.max(0, nowMs - Date.parse(m.seen_at)) <= 3600000)
     .map(m => [m.worker_id, Math.max(Number.isInteger(m.occupied_tasks) ? m.occupied_tasks : 0, jobs.filter(j => j.worker === m.worker_id).length)]));
   // The same fleet view as a worker: Hub heartbeats (own quota_slots first,

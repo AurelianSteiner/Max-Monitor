@@ -86,8 +86,10 @@ export function workerDisplayIdentity(identities, workerId) {
       (identity.personal !== true && (!/^#[0-9a-f]{6}$/i.test(identity.color || '') || !/^#[0-9a-f]{6}$/i.test(identity.textColor || '')))) {
     throw new Error(`Name und Farbe für ${workerId} fehlen in der zentralen Max-Monitor-Zuordnung (team-server/worker-identities.json). Vor dem Onboarding festlegen und auf dem Hub bereitstellen.`);
   }
-  return identity.personal === true ? {name:identity.name,personal:true}
-    : {name:identity.name,color:identity.color,textColor:identity.textColor};
+  if (identity.workerKind != null && !['newsletter','codex-repair'].includes(identity.workerKind)) throw new Error('Ungültige Worker-Art in zentraler Zuordnung.');
+  const profile = identity.workerKind ? {workerKind:identity.workerKind} : {};
+  return identity.personal === true ? {name:identity.name,personal:true,...profile}
+    : {name:identity.name,color:identity.color,textColor:identity.textColor,...profile};
 }
 
 export async function enrollMonitorWorker(settings, body, { fetchImpl = fetch } = {}) {

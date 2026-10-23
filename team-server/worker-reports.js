@@ -5,10 +5,15 @@ const { validateSkillRelease, skillReleaseFresh } = require('./skill-versions');
 const { validateCapabilities, publicCapabilities, validateIntegrationContract } = require('./integration-contract');
 const { validateClaudeAccounts, publicClaudeAccounts } = require('./claude-accounts');
 const { validateEndpoint } = require('./account-provisioning');
+const { workerProfile } = require('./worker-kinds');
+const { validateCodexAccount, publicCodexAccount } = require('./codex-account');
 const FRESH_MS = 45000;
 function validateReport(raw, now = Date.now()) {
   const fail = () => { throw new Error('Ungültiger Worker-Bericht'); };
   if (!raw || raw.schema !== 1 || !ID.test(raw.workerId) || !raw.service || !raw.activity) fail();
+  const profile = workerProfile(raw.workerId);
+  if (raw.workerKind != null && raw.workerKind !== profile.workerKind) fail();
+  if (raw.codexAccount != null && profile.provider !== 'codex') fail();
   if (raw.deviceId != null && (typeof raw.deviceId !== 'string' || !DEVICE_ID.test(raw.deviceId))) fail();
   const at = Date.parse(raw.sampledAt);
   if (!Number.isFinite(at) || now - at > 90000 || at > now + 30000) fail();
@@ -23,7 +28,7 @@ function validateReport(raw, now = Date.now()) {
   const ids = new Set();
   const runs = raw.activity.runs.map(run => {
     const id = text(run.id, 240, true);
-    if (ids.has(id) || !['newsletter', 'upload', 'translation', 'correction', 'sales'].includes(run.workflow)
+    if (ids.has(id) || !profile.allowedWorkflows.includes(run.workflow)
       || !['running', 'queued'].includes(run.status)) fail();
     ids.add(id);
     if (run.progress != null && (!Number.isInteger(run.progress) || run.progress < 0 || run.progress > 100)) fail();
@@ -53,6 +58,8 @@ function validateReport(raw, now = Date.now()) {
     figmaAccount = { email, observedAt, source: raw.figmaAccount.source };
   }
   return { schema: 1, workerId: raw.workerId, deviceId: raw.deviceId, sampledAt: new Date(at).toISOString(), receivedAt: new Date(now).toISOString(),
+    workerKind: profile.workerKind,
+    codexAccount: validateCodexAccount(raw.codexAccount, now),
     claudeAccounts: validateClaudeAccounts(raw.claudeAccounts),
     accountProvisioning: validateEndpoint(raw.accountProvisioning),
     workerVersion: text(raw.workerVersion, 80), workerRevision: text(raw.workerRevision, 80),
@@ -71,6 +78,8 @@ function publicReport(report, now = Date.now()) {
   if (!report) return {};
   const fresh = now - Date.parse(report.sampledAt) <= FRESH_MS && now - Date.parse(report.receivedAt) <= FRESH_MS;
   return { agentLastSeenAt: report.receivedAt, agentStatus: fresh ? 'online' : 'silent',
+    workerKind: workerProfile(report.workerId).workerKind,
+    ...(report.codexAccount ? {codexAccount:publicCodexAccount(report.codexAccount,now)} : {}),
     ...(report.claudeAccounts ? {claudeAccounts:publicClaudeAccounts(report.claudeAccounts,now)} : {}),
     ...(report.accountProvisioning ? {accountProvisioning:report.accountProvisioning} : {}),
     ...(report.figmaAccount ? { figmaAccount: report.figmaAccount } : {}),

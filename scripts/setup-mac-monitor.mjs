@@ -915,7 +915,9 @@ async function setupSteps(options, { runner = run, workerReader = readWorker,
     await install.finish().catch(()=>{});
     log('Max Monitor ist verbunden; Geräteberichte laufen jede Minute.');
     const startup = startupSummary(verified, options.launchAtLogin, log);
-    log('Das eigene Claude-Konto einmal in Max Monitor anmelden, damit dessen Kontingente erscheinen.');
+    log(workerIdentity?.workerKind === 'codex-repair'
+      ? 'Codex auf diesem Mac anmelden; der Reparaturdienst meldet Wochenverbrauch und Reset an Max Monitor.'
+      : 'Das eigene Claude-Konto einmal in Max Monitor anmelden, damit dessen Kontingente erscheinen.');
     return {schema:1,mode:'installed',workerIdentity,...startup};
   } catch (error) {
     if (install) {
