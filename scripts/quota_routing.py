@@ -31,7 +31,7 @@ def iso_time(value):
 def quota_window(value, reset_required=False):
     return (isinstance(value, dict) and sorted(value) == ['reset', 'used']
             and isinstance(value['used'], (int, float)) and not isinstance(value['used'], bool)
-            and math.isfinite(value['used']) and 0 <= value['used'] <= 100
+            and 0 <= value['used'] <= 100 and math.isfinite(value['used'])
             and (iso_time(value['reset']) or (value['reset'] is None and not reset_required)))
 
 

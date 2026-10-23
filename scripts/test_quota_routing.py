@@ -37,6 +37,7 @@ CASES = [
     ('extra slot key', variant(lambda v: v[0].update(token='secret')), False),
     ('missing runs', variant(lambda v: v[0].pop('runs')), False),
     ('used above 100', variant(lambda v: v[0]['five_hour'].update(used=100.5)), False),
+    ('oversized integer used is refused without a collector exception', variant(lambda v: v[0]['five_hour'].update(used=10 ** 999)), False),
     ('negative used', variant(lambda v: v[0]['seven_day'].update(used=-1)), False),
     ('boolean used', variant(lambda v: v[0]['five_hour'].update(used=True)), False),
     ('string used', variant(lambda v: v[0]['five_hour'].update(used='12')), False),
