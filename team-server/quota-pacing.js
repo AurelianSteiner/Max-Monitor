@@ -182,17 +182,29 @@ function windowsOf(slot, nowMs) {
 // → Map worker → [Analyse je Platz]
 function analyseFleet(macs, nowMs) {
   const records = [], groups = new Map(), result = new Map();
+  const credentialKey = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value) ? 'credential:' + value : null;
+  const credentialProofs = new Map();
+  for (const mac of macs) for (const slot of mac.slots || []) {
+    const credential = credentialKey(slot.credentialGroup), identity = quotaIdentityKey(slot.identity, nowMs);
+    if (!credential || !identity) continue;
+    if (!credentialProofs.has(credential)) credentialProofs.set(credential, new Set());
+    credentialProofs.get(credential).add(identity);
+  }
+  const providerAlias = credential => credentialProofs.get(credential)?.size === 1 ? [...credentialProofs.get(credential)][0] : null;
   for (const mac of macs) {
     const entries = [];
     for (const slot of mac.slots || []) {
-      const identity = quotaIdentityKey(slot.identity, nowMs);
-      const key = identity || Symbol('unverified-local-slot');
+      const credential = credentialKey(slot.credentialGroup), credentialConflict = credentialProofs.get(credential)?.size > 1;
+      const identity = quotaIdentityKey(slot.identity, nowMs) || providerAlias(credential);
+      const key = identity || credential || Symbol('unverified-local-slot');
       const entry = { slot: slot.slot, worker: mac.worker, cap: Number.isInteger(mac.maxTasks) ? mac.maxTasks : 6,
         costs: slot.costs || null, known: false, blocked: slot.status === 'limited' || slot.status === 'error', runs: 0 };
       if (identity) Object.assign(entry, { identity, identityKnown: true });
-      const record = { mac, slot, entry, key, identity };
+      if (credential) Object.assign(entry, { groupKey: key, groupSource: identity ? 'provider' : 'credential',
+        identityKnown: Boolean(identity), credentialConflict: Boolean(credentialConflict) });
+      const record = { mac, slot, entry, key, identity, credentialConflict };
       records.push(record); entries.push(entry);
-      if (!groups.has(key)) groups.set(key, { records: [], runs: [], identity });
+      if (!groups.has(key)) groups.set(key, { records: [], runs: [], identity, shared: Boolean(identity || credential) });
       groups.get(key).records.push(record);
     }
     result.set(mac.worker, entries);
@@ -201,17 +213,23 @@ function analyseFleet(macs, nowMs) {
   // Unknown owners are hypotheses on this Mac's possible accounts, not a newly
   // invented provider identity. Missing IDs are deliberately never deduplicated.
   for (const mac of macs) for (const run of mac.runs || []) {
-    const pinned = validQuotaIdentity(run.identity) ? quotaIdentityKey(run.identity, Math.min(nowMs, Date.parse(run.identity.verifiedAt))) : null;
+    const credential = credentialKey(run.credentialGroup);
+    const runProvider = (validQuotaIdentity(run.identity) ? quotaIdentityKey(run.identity, Math.min(nowMs, Date.parse(run.identity.verifiedAt))) : null)
+      || providerAlias(credential);
+    const pinned = runProvider || credential;
     let targets;
+    // Contradictory access proofs cannot identify an owner, but each named
+    // provider remains a concrete possible cost scope; never merge its gauges.
     if (pinned) targets = [...new Set([...(groups.has(pinned) ? [groups.get(pinned)] : []),
-      ...records.filter(record => record.mac === mac && !record.identity).map(record => groups.get(record.key))])];
+      ...(!runProvider ? [...(credentialProofs.get(credential) || [])].filter(key => groups.has(key)).map(key => groups.get(key)) : []),
+      ...records.filter(record => record.mac === mac && (!runProvider || !record.identity)).map(record => groups.get(record.key))])];
     else {
       const local = records.filter(record => record.mac === mac);
-      const unknownBinding = Object.hasOwn(run, 'identity');
+      const unknownBinding = Object.hasOwn(run, 'identity') || Object.hasOwn(run, 'credentialGroup');
       targets = [...new Set(local.filter(record => unknownBinding || run.slot === record.slot.slot)
         .map(record => groups.get(record.key)))];
     }
-    for (const group of targets) group.runs.push({ ...run, unknownBinding: Boolean(pinned) ? !group.identity : Boolean(group.identity) });
+    for (const group of targets) group.runs.push({ ...run, unknownBinding: Boolean(runProvider) ? !group.identity : Boolean(group.shared) });
   }
   // A measured account's cost table must not gain artificial sample weight
   // merely because the same account is installed on more than one Mac.
@@ -224,11 +242,11 @@ function analyseFleet(macs, nowMs) {
   const knownGroups = [];
   for (const group of groups.values()) {
     const observations = group.records.map(record => ({ ...record, windows: windowsOf(record.slot, nowMs) }));
-    const usable = observations.filter(record => record.windows && (!group.identity || record.slot.status !== 'error')).sort((a, b) => b.slot.at - a.slot.at
+    const usable = observations.filter(record => record.windows && !record.credentialConflict && (!group.shared || record.slot.status !== 'error')).sort((a, b) => b.slot.at - a.slot.at
       || b.windows.u5 - a.windows.u5 || b.windows.uW - a.windows.uW || a.entry.worker.localeCompare(b.entry.worker));
     const basis = usable[0];
     let conflict = false, blocked = false;
-    if (group.identity) {
+    if (group.shared) {
       if (basis) for (const other of usable.slice(1)) {
         for (const name of ['five_hour', 'seven_day']) {
           const a = basis.slot[name]?.reset, b = other.slot[name]?.reset;
@@ -236,6 +254,7 @@ function analyseFleet(macs, nowMs) {
         }
       }
       const fresh = observations.filter(record => {
+        if (record.credentialConflict) return false;
         const at = Object.hasOwn(record.slot, 'statusAt') ? record.slot.statusAt : record.slot.at;
         return Number.isFinite(at) && nowMs - at >= -MINUTE && (nowMs - at <= PACING.freshMin * MINUTE
           || Number.isFinite(record.slot.blockedUntil) && record.slot.blockedUntil > nowMs);
@@ -268,8 +287,8 @@ function analyseFleet(macs, nowMs) {
     for (const record of group.records) {
       const entry = record.entry;
       Object.assign(entry, { prices, costs: group.costs, known: Boolean(windows),
-        blocked: blocked || group.identity && record.slot.status === 'error', runs: costs.length });
-      if (group.identity) Object.assign(entry, { sharedMembers: group.records.length, gaugeConflict: conflict,
+        blocked: blocked || group.shared && record.slot.status === 'error' || Boolean(record.credentialConflict), runs: costs.length });
+      if (group.shared) Object.assign(entry, { sharedMembers: group.records.length, gaugeConflict: conflict,
         pendingUnknown: costs.some(cost => cost.unknown), gaugeAt: basis?.slot.at ?? null });
       if (!windows) continue;
       Object.assign(entry, windows, totals);
@@ -326,7 +345,8 @@ function slotChoiceKey(entry, extra = []) {
   return entry.g + PACING.mu5 * (entry.u5 + pend5) * entry.near;
 }
 function plannedForSlot(entries, entry, extra) {
-  const slots = entry.identity ? entries.filter(other => other.identity === entry.identity).map(other => other.slot) : [entry.slot];
+  const key = entry.groupKey || entry.identity;
+  const slots = key ? entries.filter(other => (other.groupKey || other.identity) === key).map(other => other.slot) : [entry.slot];
   return [...new Set(slots)].flatMap(slot => extra.get(slot) || []);
 }
 
@@ -386,21 +406,23 @@ function validQuotaSlots(value) {
   return Array.isArray(value) && value.length >= 1 && value.length <= 2
     && new Set(value.map(s => s?.slot)).size === value.length
     && value.every(s => Boolean(s) && typeof s === 'object' && !Array.isArray(s)
-      && Object.keys(s).every(key => ['at', 'five_hour', 'runs', 'seven_day', 'slot', 'status', 'identity', 'blockedUntil', 'statusAt'].includes(key))
+      && Object.keys(s).every(key => ['at', 'five_hour', 'runs', 'seven_day', 'slot', 'status', 'identity', 'credentialGroup', 'blockedUntil', 'statusAt'].includes(key))
       && ['at', 'five_hour', 'runs', 'seven_day', 'slot', 'status'].every(key => Object.hasOwn(s, key))
       && (!Object.hasOwn(s, 'identity') || s.identity === null || validQuotaIdentity(s.identity))
+      && (!Object.hasOwn(s, 'credentialGroup') || s.credentialGroup === null || typeof s.credentialGroup === 'string' && /^[0-9a-f]{64}$/.test(s.credentialGroup))
       && (!Object.hasOwn(s, 'blockedUntil') || s.blockedUntil === null || time(s.blockedUntil))
       && (!Object.hasOwn(s, 'statusAt') || time(s.statusAt))
       && ['single', 'primary', 'account-2'].includes(s.slot) && ['ready', 'limited', 'error', 'unknown'].includes(s.status)
       && time(s.at) && windowOk(s.five_hour) && windowOk(s.seven_day) && s.seven_day.reset !== null
       && Array.isArray(s.runs) && s.runs.length <= 12
       && s.runs.every(r => Boolean(r) && typeof r === 'object' && !Array.isArray(r)
-        && Object.keys(r).every(key => ['kind', 'started', 'id', 'identity'].includes(key))
+        && Object.keys(r).every(key => ['kind', 'started', 'id', 'identity', 'credentialGroup'].includes(key))
         && Object.hasOwn(r, 'kind') && Object.hasOwn(r, 'started')
         && (!Object.hasOwn(r, 'id') || typeof r.id === 'string' && r.id.length <= 300 && /^(?:ordinary|sales|knowledge):[A-Za-z0-9][A-Za-z0-9._@:-]*$/.test(r.id))
         && (!Object.hasOwn(r, 'identity') || r.identity === null || validQuotaIdentity(r.identity))
+        && (!Object.hasOwn(r, 'credentialGroup') || r.credentialGroup === null || typeof r.credentialGroup === 'string' && /^[0-9a-f]{64}$/.test(r.credentialGroup))
         && ['newsletter', 'correction', 'upload', 'translation', 'sales'].includes(r.kind)
-        && (time(r.started) || r.started === null && (Object.hasOwn(r, 'id') || Object.hasOwn(r, 'identity')))));
+        && (time(r.started) || r.started === null && (Object.hasOwn(r, 'id') || Object.hasOwn(r, 'identity') || Object.hasOwn(r, 'credentialGroup')))));
 }
 
 // Flottenstand → Eingabe von analyseFleet. fleet: Betriebsnachweise vom Hub
@@ -419,6 +441,7 @@ function fleetMacs(fleet, { jobs = [], own = null } = {}) {
     if (validQuotaSlots(mac.quota_slots)) {
       macs.push({ worker, maxTasks, slots: mac.quota_slots.map(s => ({ slot: s.slot, status: s.status, at: ms(s.at),
         ...(Object.hasOwn(s, 'identity') ? { identity: s.identity } : {}),
+        ...(Object.hasOwn(s, 'credentialGroup') ? { credentialGroup: s.credentialGroup } : {}),
         ...(Object.hasOwn(s, 'blockedUntil') ? { blockedUntil: ms(s.blockedUntil) } : {}),
         ...(Object.hasOwn(s, 'statusAt') ? { statusAt: ms(s.statusAt) } : {}),
         five_hour: { used: s.five_hour.used, reset: ms(s.five_hour.reset) },
@@ -426,7 +449,8 @@ function fleetMacs(fleet, { jobs = [], own = null } = {}) {
         // Gemessene Preise gibt es nur für den an Max Monitor gebundenen Account.
         costs: s.slot === 'single' ? quota?.costs || null : null })),
       runs: mac.quota_slots.flatMap(s => s.runs.map(r => ({ slot: s.slot, kind: r.kind, started: ms(r.started),
-        ...(Object.hasOwn(r, 'id') ? { id: r.id } : {}), ...(Object.hasOwn(r, 'identity') ? { identity: r.identity } : {}) }))) });
+        ...(Object.hasOwn(r, 'id') ? { id: r.id } : {}), ...(Object.hasOwn(r, 'identity') ? { identity: r.identity } : {}),
+        ...(Object.hasOwn(r, 'credentialGroup') ? { credentialGroup: r.credentialGroup } : {}) }))) });
       continue;
     }
     const five = quota?.windows?.five_hour, week = quota?.windows?.seven_day;

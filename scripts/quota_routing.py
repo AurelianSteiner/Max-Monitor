@@ -50,9 +50,10 @@ def valid_quota_slots(value):
     names = set()
     for slot in value:
         required = {'at', 'five_hour', 'runs', 'seven_day', 'slot', 'status'}
-        if not isinstance(slot, dict) or not required.issubset(slot) or set(slot) - required - {'identity', 'blockedUntil', 'statusAt'}:
+        if not isinstance(slot, dict) or not required.issubset(slot) or set(slot) - required - {'identity', 'credentialGroup', 'blockedUntil', 'statusAt'}:
             return False
         if ('identity' in slot and slot['identity'] is not None and not quota_identity(slot['identity'])
+                or 'credentialGroup' in slot and slot['credentialGroup'] is not None and not (isinstance(slot['credentialGroup'], str) and re.fullmatch(r'[0-9a-f]{64}', slot['credentialGroup']))
                 or 'blockedUntil' in slot and slot['blockedUntil'] is not None and not iso_time(slot['blockedUntil'])
                 or 'statusAt' in slot and not iso_time(slot['statusAt'])):
             return False
@@ -64,12 +65,13 @@ def valid_quota_slots(value):
                 or not isinstance(runs, list) or len(runs) > 12):
             return False
         for run in runs:
-            if (not isinstance(run, dict) or not {'kind', 'started'}.issubset(run) or set(run) - {'kind', 'started', 'id', 'identity'}
+            if (not isinstance(run, dict) or not {'kind', 'started'}.issubset(run) or set(run) - {'kind', 'started', 'id', 'identity', 'credentialGroup'}
                     or run['kind'] not in RUN_KINDS
                     or 'id' in run and not (isinstance(run['id'], str) and len(run['id']) <= 300
                                            and re.fullmatch(r'(ordinary|sales|knowledge):[A-Za-z0-9][A-Za-z0-9._@:-]*', run['id']))
                     or 'identity' in run and run['identity'] is not None and not quota_identity(run['identity'])
-                    or not (iso_time(run['started']) or run['started'] is None and ('id' in run or 'identity' in run))):
+                    or 'credentialGroup' in run and run['credentialGroup'] is not None and not (isinstance(run['credentialGroup'], str) and re.fullmatch(r'[0-9a-f]{64}', run['credentialGroup']))
+                    or not (iso_time(run['started']) or run['started'] is None and ('id' in run or 'identity' in run or 'credentialGroup' in run))):
                 return False
     return True
 

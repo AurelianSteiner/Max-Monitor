@@ -1,6 +1,6 @@
 `../quota-pacing.js` is an unchanged source snapshot from
-`ai-newsletter-creation`, commit `8e69d84a6789716cc3fe5e99a4147bfc604ea104`, file `src/quota-pacing.js`. SHA-256:
-`8cb1690025081db0fb06650e1ec3c1187948cd3f1f76570077161c1fcbb1c5b6`.
+`ai-newsletter-creation`, commit `e265784c0ad338683652bcb7540562d137a12898`, file `src/quota-pacing.js`. SHA-256:
+`a464e869d09f61ba3f6c359f61f2de3aecfa3121421ccd6f65d5b9af2c116e86`.
 
 The dashboard runs this exact module (`fleetMacs`, `analyseFleet`, `macKey`,
 `slotRefusal`), the same one each worker uses to order Macs and gate its own

@@ -99,6 +99,25 @@ CASES += [
 ]
 
 
+CREDENTIAL_SLOTS = copy.deepcopy(TYPED_SLOTS)
+for _slot in CREDENTIAL_SLOTS:
+    _slot['identity'] = None
+    _slot['credentialGroup'] = 'c' * 64
+    for _run in _slot['runs']:
+        _run['identity'] = None
+        _run['credentialGroup'] = 'c' * 64
+CASES.append(('full native credential-only scope', CREDENTIAL_SLOTS, True))
+for _bad in [['c' * 64], True, 1, {}, 'c' * 16, 'C' * 64, 'user@example.invalid']:
+    for _target in ('slot', 'run'):
+        _value = copy.deepcopy(CREDENTIAL_SLOTS)
+        (_value[0] if _target == 'slot' else _value[0]['runs'][0])['credentialGroup'] = _bad
+        CASES.append(('invalid credential group ' + _target + ' ' + repr(_bad), _value, False))
+_value = copy.deepcopy(CREDENTIAL_SLOTS)
+_value[0]['credentialGroup'] = None
+_value[0]['runs'][0]['credentialGroup'] = None
+CASES.append(('nullable credential is unknown', _value, True))
+
+
 class RoutingTest(unittest.TestCase):
     def test_exact_readonly_sources_omit_content_and_paused_or_finished_jobs(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -163,12 +182,16 @@ class RoutingTest(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('node') and PACING.is_file(), 'node or vendored quota-pacing.js missing')
     def test_actual_python_routing_retains_provider_scope_for_real_distribution(self):
+        self._actual_python_distribution(False)
+        self._actual_python_distribution(True)
+
+    def _actual_python_distribution(self, credential_only):
         with tempfile.TemporaryDirectory() as folder:
             hub = Path(folder)
             fleet = hub / 'logs/ai-newsletter-fleet'
             fleet.mkdir(parents=True)
             for worker in ('a', 'b'):
-                slots = copy.deepcopy(TYPED_SLOTS[:1])
+                slots = copy.deepcopy((CREDENTIAL_SLOTS if credential_only else TYPED_SLOTS)[:1])
                 slots[0].update(status='ready', five_hour={'used': 60, 'reset': '2026-10-21T15:00:00Z'},
                                 seven_day={'used': 20, 'reset': '2026-10-24T08:00:00Z'})
                 slots[0]['runs'][0]['id'] = 'ordinary:actual-' + worker

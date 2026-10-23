@@ -23,7 +23,7 @@ const workerSource=[process.env.AI_NEWSLETTER_CREATION_DIR,path.join(os.homedir(
   .filter(Boolean).map(dir=>path.join(dir,'src/quota-pacing.js')).find(file=>fs.existsSync(file));
 
 test('preview runs the immutable vendored Worker pacing module',()=>{
-  assert.equal(crypto.createHash('sha256').update(fs.readFileSync(require.resolve('../quota-pacing'))).digest('hex'),'8cb1690025081db0fb06650e1ec3c1187948cd3f1f76570077161c1fcbb1c5b6');
+  assert.equal(crypto.createHash('sha256').update(fs.readFileSync(require.resolve('../quota-pacing'))).digest('hex'),'a464e869d09f61ba3f6c359f61f2de3aecfa3121421ccd6f65d5b9af2c116e86');
 });
 test('vendored pacing module is byte-identical to the Worker source',{skip:workerSource?false:'no ai-newsletter-creation checkout with src/quota-pacing.js'},()=>{
   assert.ok(fs.readFileSync(workerSource).equals(fs.readFileSync(require.resolve('../quota-pacing'))),workerSource);
@@ -159,4 +159,12 @@ test('a shared fresh gauge displays its actual reset and observation time even o
   assert.equal(a.windows.five_hour.fresh,true);assert.equal(a.windows.five_hour.remaining,40);
   assert.equal(a.windows.five_hour.reset,S+5*3600);assert.equal(a.windows.five_hour.at,S);
   assert.equal(a.windows.seven_day.at,S);
+});
+test('exact credential-only scopes survive the central preview without invented provider identities',()=>{
+  const f=sharedFixture();
+  for(const m of f.summary.scheduling.routing.fleet){const s=m.quota_slots[0];s.identity=null;s.credentialGroup='c'.repeat(64);
+    for(const r of s.runs){r.identity=null;r.credentialGroup='c'.repeat(64);}}
+  for(const r of view(f).rows){assert.equal(r.reason,'guard_5h');assert.equal(r.windows.five_hour.remaining,40);}
+  const analysis=pacing.analyseFleet(pacing.fleetMacs(f.summary.scheduling.routing.fleet),NOW);
+  assert.equal(analysis.get('a')[0].identityKnown,false);assert.equal(analysis.get('a')[0].groupSource,'credential');
 });
