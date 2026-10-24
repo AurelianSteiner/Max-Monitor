@@ -14,6 +14,33 @@ export const OBSERVER_SOURCE = Object.freeze({
 });
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
+export async function maintenanceObserver(home) {
+  const base = path.join(home, '.local/share/ai-newsletter-maintenance');
+  const manifestFile = path.join(base, 'watchdog-current.json');
+  let stat;
+  try { stat = await fs.lstat(manifestFile); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  const privateFile = info => info.isFile() && info.uid === process.getuid() && info.nlink === 1
+    && [0o600, 0o700].includes(info.mode & 0o777) && info.size <= 1024 * 1024;
+  const directory = async file => {
+    const info = await fs.lstat(file);
+    if (!info.isDirectory() || info.uid !== process.getuid() || (info.mode & 0o777) !== 0o700) throw Error('Worker-Wartungspaket: Verzeichnis ist nicht privat.');
+  };
+  if (!privateFile(stat)) throw Error('Worker-Wartungspaket: Releasebeleg ist nicht privat.');
+  const manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
+  const names = ['watchdog.cjs', 'waechter.js', 'service-runtime-state.js', 'local-process-lock.js', 'local-process-guard.py', 'monitor-agent.js'];
+  if (manifest.schema !== 1 || manifest.kind !== 'worker-service-watchdog'
+    || !/^watchdog-releases\/[a-f0-9]{64}$/.test(manifest.directory || '')
+    || JSON.stringify(Object.keys(manifest.files || {}).sort()) !== JSON.stringify(names.sort())) throw Error('Worker-Wartungspaket: Releasebeleg ist ungültig.');
+  await directory(base);
+  const release = path.join(base, manifest.directory);
+  await directory(path.dirname(release)); await directory(release);
+  for (const name of names) {
+    const file = path.join(release, name);
+    if (!privateFile(await fs.lstat(file)) || digest(await fs.readFile(file)) !== manifest.files[name]) throw Error('Worker-Wartungspaket: Prüfsumme stimmt nicht.');
+  }
+  return path.join(release, 'monitor-agent.js');
+}
+
 export async function ensureWorkerObserver(options, {
   runner, home = os.homedir(), node = process.execPath, platform = process.platform,
   loadConfig, loadAgent = file => require(file),
@@ -25,14 +52,16 @@ export async function ensureWorkerObserver(options, {
   const config = (loadConfig || require(path.join(root, 'src/config.js')).loadConfig)(configFile, { root });
   if (config.worker_kind === 'codex-repair' || workerProfile(config.worker_id).provider !== 'claude') return { installed: false };
   if (config.clickup?.transport !== 'rs_hub' || config.testbetrieb?.nur_aufgaben?.length) return { installed: false };
-  let entry = path.join(root, 'src/monitor-agent.js');
+  const preferred = await maintenanceObserver(home);
+  let entry = preferred || path.join(root, 'src/monitor-agent.js');
   process.env.MAC_MONITOR_WORKER_ROOT = root;
   let agent;
   try {
     await fs.access(entry);
     const candidate = loadAgent(entry);
     if (typeof candidate.deviceIdOf === 'function' && typeof candidate.collectSkillRelease === 'function') agent = candidate;
-  } catch {}
+  } catch (error) { if (preferred) throw error; }
+  if (preferred && !agent) throw Error('Worker-Wartungspaket: Beobachter ist nicht kompatibel.');
   if (!agent) {
     const runtime = path.join(home, '.local/share/mac-monitor-agent');
     entry = path.join(runtime, 'agent.cjs');

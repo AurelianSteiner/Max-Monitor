@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { ensureWorkerObserver, OBSERVER_SOURCE } from './install-worker-observer.mjs';
 
 async function fixture(t) {
@@ -26,6 +27,23 @@ test('bootstrap preserves the exact worker profile and prefers its canonical obs
   assert.equal(f.calls[0].file, workerConfig); assert.equal(f.calls[1].entry, entry);
   assert.equal(f.calls[1].node, '/registered/node');
   assert.equal(process.env.MAC_MONITOR_WORKER_ROOT, f.workerRoot);
+});
+test('a verified maintenance observer stays preferred while its original production source is pinned', async t => {
+  const f = await fixture(t), base = path.join(f.home, '.local/share/ai-newsletter-maintenance');
+  const directory = 'watchdog-releases/' + 'a'.repeat(64), release = path.join(base, directory);
+  await fs.mkdir(release, { recursive: true, mode: 0o700 });
+  const files = {};
+  for (const name of ['watchdog.cjs','waechter.js','service-runtime-state.js','local-process-lock.js','local-process-guard.py','monitor-agent.js']) {
+    const bytes = Buffer.from('reviewed source: ' + name); files[name] = createHash('sha256').update(bytes).digest('hex');
+    await fs.writeFile(path.join(release, name), bytes, { mode: 0o600 });
+  }
+  await fs.writeFile(path.join(base, 'watchdog-current.json'), JSON.stringify({ schema: 1, kind: 'worker-service-watchdog', directory, files }), { mode: 0o600 });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await ensureWorkerObserver({ workerRoot: f.workerRoot }, f.dependencies);
+    assert.equal(f.calls.at(-1).entry, path.join(release, 'monitor-agent.js'), 'a recurring update must not replace the supervision-aware observer');
+  }
+  await fs.appendFile(path.join(release, 'monitor-agent.js'), ' changed');
+  await assert.rejects(ensureWorkerObserver({ workerRoot: f.workerRoot }, f.dependencies), /Prüfsumme/);
 });
 test('bootstrap rejects unverified downloads before saving or loading executable code', async t => {
   const f = await fixture(t);
