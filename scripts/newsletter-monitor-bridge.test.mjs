@@ -562,13 +562,13 @@ test('upload opens its current Figma source while the same task Pre-Gen keeps it
   assert.equal(rows.find(row => row.workflow === 'newsletter').figmaUrl, generated);
 });
 
-test('Figma fallback uses the configured creation board and optional bad links cannot break the queue', () => {
+test('a configured creation board is never a task source and optional bad links cannot break the queue', () => {
   const board = 'https://www.figma.com/design/creation';
   const raw = { ...taskIn('klaviyo upload', 'both', ['pre gen · fertig', 'klaviyo upload']), custom_fields: [
     { id: 'ef2ba681-7e9d-40a3-b79a-dda5cd402015', value: 'https://figma.com.evil.example/design/wrong' },
   ] };
   const rows = buildQueue([raw], [], DEFAULT_WORKFLOWS, { now, figmaBoardUrl: board });
-  assert.equal(rows.find(row => row.workflow === 'newsletter').figmaUrl, board);
+  assert.equal(rows.find(row => row.workflow === 'newsletter').figmaUrl, undefined);
   assert.equal(rows.find(row => row.workflow === 'upload').figmaUrl, undefined);
   const valid = 'https://figma.com/file/source/Board';
   raw.custom_fields.push({ name: 'Figma Board', type: 'url', value: valid });
@@ -577,6 +577,18 @@ test('Figma fallback uses the configured creation board and optional bad links c
     const row = buildQueue([{ ...taskIn('pre-gen', 'unsafe'), custom_fields: [{ name: 'Figma Link', type: 'url', value }] }], [], DEFAULT_WORKFLOWS, { now })[0];
     assert.equal(row.figmaUrl, undefined);
   }
+});
+
+test('new and running tasks without an explicit source never acquire the global board as their mail', () => {
+  const raw = taskIn('pre-gen', 'a');
+  const options = { now, figmaBoardUrl: 'https://www.figma.com/design/creation' };
+  const queued = buildQueue([raw], [], DEFAULT_WORKFLOWS, options)[0];
+  assert.equal(queued.status, 'queued'); assert.equal(queued.figmaUrl, undefined);
+  const current = parseClaim(claimMessage('running'));
+  const running = buildQueue([raw], [current], DEFAULT_WORKFLOWS, options)[0];
+  assert.equal(running.status, 'running'); assert.equal(running.attemptId, current.runId);
+  assert.equal(running.workerId, current.workerId); assert.equal(running.figmaUrl, undefined);
+  assert.equal(running.mailUrl, undefined, 'no replacement Mail Link is fabricated');
 });
 
 test('custom workflows require valid unique IDs and recognized statuses', () => {

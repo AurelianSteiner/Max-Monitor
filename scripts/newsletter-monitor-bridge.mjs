@@ -945,7 +945,7 @@ function fleetSeen(workers) {
 // tasks may carry statusSince (the worker's status epoch, readStatusEpochs).
 // admission: the worker's admission predicates (workerAdmission, loadWorkerAdmission).
 // workers: the Macs' heartbeats read from the RS Hub (parseObservedWorkers).
-export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, figmaBoardUrl, admission = workerAdmission(), workers, unavailableCorrectionSources = new Set() } = {}) {
+export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, admission = workerAdmission(), workers, unavailableCorrectionSources = new Set() } = {}) {
   const updatedAt = new Date(now).toISOString();
   const seenAt = fleetSeen(workers);
   const rows = [];
@@ -1035,8 +1035,10 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         sourceStatus: displayText(typeof task.status === 'string' ? task.status : task.status?.status, 120),
         company: task.folder?.hidden ? undefined : displayText(task.folder?.name, 200),
         mailUrl: mailSource.url,
+        // A general creation board is not this mail's source. Until a concrete
+        // task/result link exists, leave the optional source field absent.
         figmaUrl: mailSource.present ? taskFigmaLink(task, false, true)
-          : taskFigmaLink(task, (workflow.claimWorkflow ?? workflow.id) === 'newsletter') || ((workflow.claimWorkflow ?? workflow.id) === 'newsletter' ? figmaLink(figmaBoardUrl) : undefined),
+          : taskFigmaLink(task, (workflow.claimWorkflow ?? workflow.id) === 'newsletter'),
         workerId: claim?.paused && claim.portable ? undefined : claim?.workerId, attemptId: claim?.runId, blockerOwner: claim?.owner, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
         updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30),
         // Internal only: addRunDetails reads progress and renders of this attempt, then removes it.
@@ -1737,7 +1739,7 @@ export function applyBlockerGrace(rows, previousTasks = [], now = Date.now()) {
 // errorPayloads (optional Map): filled with ts -> metadata of every top-level copy
 // in #ai-fehler, only after a complete read of that channel; the error-copy
 // cleanup decides from it which copies stay before reading any thread.
-export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, pmRouting, checkpointReader, reservationReader, figmaImportReader, maxTasksOf, claimReader = listClaims, statusCache, epochRefusals = new Map(), warn = () => {}, admission = workerAdmission(), errorPayloads, now = Date.now() }) {
+export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, previews, previousTasks, salesReader, questionReader, pmRouting, checkpointReader, reservationReader, figmaImportReader, maxTasksOf, claimReader = listClaims, statusCache, epochRefusals = new Map(), warn = () => {}, admission = workerAdmission(), errorPayloads, now = Date.now() }) {
   validateWorkflows(workflows);
   const issues = new Map();
   const onMessage = message => {
@@ -1828,7 +1830,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const observedWorkers = workerResult.status === 'fulfilled' ? workerResult.value : undefined;
   const fleetDetail = workerResult.status === 'rejected'
     ? 'Hub-Worker-Dateien nicht verfügbar; Gerätewerte stammen weiter aus App-Berichten.' : undefined;
-  const queueOptions = { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, figmaBoardUrl, admission, workers: observedWorkers };
+  const queueOptions = { now, staleMinutes: Number(config.claims?.stale_minutes) || 30, admission, workers: observedWorkers };
   // Completed/manual source tasks disappear from the tag/start-status queries.
   // Read missing sources of visible unfinished corrections before deciding that
   // their old reservation still describes an order. A deleted source is no order;
@@ -1990,11 +1992,6 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const config = loadConfig(path.join(root, 'config', 'worker.local.json'), { root });
   try { config.monitor_channels = JSON.parse(await fs.readFile(path.join(root, 'config', 'monitor-channels.json'), 'utf8')); }
   catch { /* Standalone bridges on older worker installations use their configured channel. */ }
-  let figmaBoardUrl;
-  try {
-    const { PRE_GEN_FILE } = require(path.join(root, 'src', 'pre-gen.js'));
-    if (typeof PRE_GEN_FILE === 'string' && /^[A-Za-z0-9]+$/.test(PRE_GEN_FILE)) figmaBoardUrl = `https://www.figma.com/design/${PRE_GEN_FILE}`;
-  } catch { /* Older source installations still publish the task's own Figma link. */ }
   const workflows = validateWorkflows(options.workflowsFile ? JSON.parse(await fs.readFile(options.workflowsFile, 'utf8')) : DEFAULT_WORKFLOWS);
   // The queue shows only the orders the worker admits, by the worker's own rules.
   const { admission, missing: missingRules } = loadWorkerAdmission(root);
@@ -2048,7 +2045,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
           }); } catch { console.error(`${new Date().toISOString()} Status-Audit: Monitor nicht lesbar; regulärer Quellenabgleich läuft weiter.`); }
         }
         const readsBefore = { ...claimReader.stats };
-        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, pmRouting, statusCache, epochRefusals, admission, errorPayloads, fleetDirectory: options.fleetDirectory, figmaBoardUrl,
+        const result = await syncOnce({ collect: () => collectSnapshot({ config, hubFetch, workflows, claimReader, pmRouting, statusCache, epochRefusals, admission, errorPayloads, fleetDirectory: options.fleetDirectory,
           warn: message => console.error(`${new Date().toISOString()} ${displayText(message, 300)}`),
           previews, previousTasks: cached?.tasks, ...(typeof maxTasksPerMac === 'function' ? { maxTasksOf: maxTasksPerMac } : {}),
           ...(options.localHub ? { fleetReader: readLocalHubFleet,
