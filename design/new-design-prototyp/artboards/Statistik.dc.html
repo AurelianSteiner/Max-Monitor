@@ -77,19 +77,19 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
 
       <section aria-labelledby="lead-h" style="background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; padding: 16px 18px">
         <h2 id="lead-h" style="margin: 0; font-size: 16px; font-weight: 600">Wie lange dauert eine Aufgabe?</h2>
-        <p style="margin: 4px 0 16px; color: #52525B; font-size: 13px">Von „reserviert“ bis „fertig“. Balken = typisch (Median), heller Bereich = langsamste 10 %.</p>
+        <p style="margin: 4px 0 16px; color: #52525B; font-size: 13px">Von „reserviert“ bis „fertig“. Dunkler Balken = typische Dauer (Median), heller Balken = so lange dauert jede 10. Aufgabe oder länger.</p>
         <div style="display: flex; flex-direction: column; gap: 16px">
           <sc-for list="{{lead}}" as="l" hint-placeholder-count="4">
-            <div style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 110px; gap: 14px; align-items: center">
+            <div style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 150px; gap: 14px; align-items: center">
               <span style="display: flex; align-items: center; gap: 8px; font-weight: 600"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 3px; background: {{l.color}}"></span>{{l.name}}</span>
               <div style="position: relative; height: 14px; background: #F4F4F5; border-radius: 7px">
                 <div style="position: absolute; left: 0; top: 0; bottom: 0; width: {{l.p90w}}; background: {{l.light}}; border-radius: 7px"></div>
                 <div style="position: absolute; left: 0; top: 0; bottom: 0; width: {{l.medw}}; background: {{l.color}}; border-radius: 7px"></div>
               </div>
-              <span style="font-size: 12.5px; color: #3F3F46; text-align: right"><strong>{{l.med}}</strong> · max {{l.p90}}</span>
+              <span style="font-size: 12.5px; color: #3F3F46; text-align: right; line-height: 1.35"><strong>{{l.med}}</strong> typisch<span style="display: block; font-size: 12px; color: #52525B">jede 10. ab {{l.p90}}</span></span>
             </div>
           </sc-for>
-          <div style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 110px; gap: 14px; font-size: 11.5px; color: #52525B"><span></span><div style="display: flex; justify-content: space-between"><span>0</span><span>15</span><span>30</span><span>45</span><span>60 min</span></div><span></span></div>
+          <div style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 150px; gap: 14px; font-size: 11.5px; color: #52525B"><span></span><div style="display: flex; justify-content: space-between"><span>0</span><span>15</span><span>30</span><span>45</span><span>60 min</span></div><span></span></div>
         </div>
       </section>
 
@@ -114,7 +114,7 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
           <span></span>
           <sc-for list="{{dayLabels}}" as="dl" hint-placeholder-count="7"><span style="text-align: center; color: #52525B; font-weight: 500">{{dl}}</span></sc-for>
           <sc-for list="{{heat}}" as="row" hint-placeholder-count="6">
-            <span style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; align-self: center">{{row.name}}</span>
+            <span style="display: flex; align-items: center; gap: 8px; font-weight: 500; white-space: nowrap; min-width: 0; align-self: center"><span aria-hidden="true" style="flex: 0 0 auto; width: 10px; height: 10px; border-radius: 3px; background: {{row.swatchBg}}; box-shadow: inset 0 0 0 1.5px {{row.swatchRing}}"></span>{{row.name}}</span>
             <sc-for list="{{row.cells}}" as="c" hint-placeholder-count="7"><span style="height: 30px; border-radius: 6px; background: {{c.bg}}; color: {{c.fg}}; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 11.5px">{{c.v}}</span></sc-for>
           </sc-for>
         </div>
@@ -144,14 +144,17 @@ class Component extends DCLogic {
       if (v >= 60) return { v: v + '', bg: '#FCD9A8', fg: '#7C2D12' };
       return { v: v + '', bg: v < 25 ? '#EFF4FF' : '#DBEAFE', fg: '#1E3A8A' };
     };
+    // Anzeigenamen und Tuck-Farben wie in team-server/worker-identities.json; persönliche Macs ohne Farbe.
+    const W = { Rot: '#B52B36', Blau: '#2458A6', Gelb: '#E6BE35', Schwarz: '#17191D' };
+    const sw = (name) => (W[name] ? { swatchBg: W[name], swatchRing: 'rgba(0,0,0,0.18)' } : { swatchBg: 'transparent', swatchRing: '#A1A1AA' });
     const heatRaw = [
-      ['macbook-1', [72, 85, 10, 0, 91, 78, 64]],
-      ['macbook-von-till-main-2', [40, 55, 0, 0, 62, 48, 27]],
-      ['macbook-2', [30, 35, 5, 0, 44, 52, 8]],
-      ['newsletter-mac-141b2976', [66, 70, 20, 0, 95, 88, 12]],
-      ['macworker-5-schwarz', [50, 61, 0, 0, 73, 69, 44]],
+      ['Rot', [72, 85, 10, 0, 91, 78, 64]],
+      ['MacBook von Till', [40, 55, 0, 0, 62, 48, 27]],
+      ['Blau', [30, 35, 5, 0, 44, 52, 8]],
+      ['Gelb', [66, 70, 20, 0, 95, 88, 12]],
+      ['Schwarz', [50, 61, 0, 0, 73, 69, 44]],
       // Wochenende aus, heute bis 10:48 online ohne Last (passt zu "Offline seit 2 h" um 12:48).
-      ['macbook-till-main', [22, 18, null, null, 31, 26, 0]]
+      ['Till Main', [22, 18, null, null, 31, 26, 0]]
     ];
     const reasons = [
       ['Klaviyo-Liste nicht gefunden', 'Upload · Liste im Kunden-Account fehlt oder umbenannt', 4],
@@ -167,7 +170,7 @@ class Component extends DCLogic {
         { label: 'Erledigt', value: '55', trend: '+12 % gegenüber Vorwoche', trendColor: '#15803D' },
         { label: 'Typische Dauer', value: '21 min', trend: '−3 min gegenüber Vorwoche', trendColor: '#15803D' },
         { label: 'Blockiert', value: '18 %', trend: '+4 Punkte – meist Klaviyo-Liste', trendColor: '#B91C1C' },
-        { label: 'Macs verfügbar', value: '87 %', trend: 'macbook-till-main oft offline', trendColor: '#92400E' }
+        { label: 'Macs verfügbar', value: '87 %', trend: 'Till Main oft offline', trendColor: '#92400E' }
       ],
       days: raw.map(([label, n]) => ({
         label, total: n.reduce((a, b) => a + b, 0),
@@ -177,7 +180,7 @@ class Component extends DCLogic {
       lead: K.map((k, i) => ({ name: k.name, color: k.color, light: k.light, med: lead[i][0] + ' min', p90: lead[i][1] + ' min', medw: Math.round(lead[i][0] / 60 * 100) + '%', p90w: Math.round(lead[i][1] / 60 * 100) + '%' })),
       reasons: reasons.map(([label, hint, n]) => ({ label, hint, n, w: Math.round(n / 4 * 100) + '%' })),
       dayLabels: raw.map(([l]) => l),
-      heat: heatRaw.map(([name, vals]) => ({ name, cells: vals.map(cell) }))
+      heat: heatRaw.map(([name, vals]) => Object.assign({ name, cells: vals.map(cell) }, sw(name)))
     };
   }
 }

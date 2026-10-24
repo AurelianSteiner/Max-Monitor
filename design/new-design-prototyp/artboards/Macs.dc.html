@@ -40,7 +40,7 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
       <div role="group" aria-label="Filter" style="margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap">
         <button type="button" aria-pressed="true" style="font: inherit; font-size: 13px; font-weight: 600; border: 1px solid #18181B; background: #18181B; color: #FFFFFF; border-radius: 999px; padding: 6px 12px">Alle 6</button>
         <button type="button" aria-pressed="false" style="font: inherit; font-size: 13px; font-weight: 500; border: 1px solid #E4E4E7; background: #FFFFFF; border-radius: 999px; padding: 6px 12px">Arbeiten 2</button>
-        <button type="button" aria-pressed="false" style="font: inherit; font-size: 13px; font-weight: 500; border: 1px solid #E4E4E7; background: #FFFFFF; border-radius: 999px; padding: 6px 12px">Frei 1</button>
+        <button type="button" aria-pressed="false" style="font: inherit; font-size: 13px; font-weight: 500; border: 1px solid #E4E4E7; background: #FFFFFF; border-radius: 999px; padding: 6px 12px">Startet gleich 1</button>
         <button type="button" aria-pressed="false" style="font: inherit; font-size: 13px; font-weight: 600; border: 1px solid #FECACA; background: #FEF2F2; color: #991B1B; border-radius: 999px; padding: 6px 12px">Probleme 3</button>
       </div>
     </div>
@@ -61,8 +61,9 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
             <sc-for list="{{macs}}" as="m" hint-placeholder-count="6">
               <tr style="border-top: 1px solid #F0EFEC; background: {{m.rowBg}}">
                 <td style="padding: 12px 16px; vertical-align: top">
-                  <div style="font-weight: 600">{{m.name}}</div>
-                  <div style="color: #52525B; font-size: 12px; margin-top: 2px">{{m.model}}</div>
+                  <div style="display: flex; align-items: center; gap: 8px; font-weight: 600"><span aria-hidden="true" style="flex: 0 0 auto; width: 10px; height: 10px; border-radius: 3px; background: {{m.swatchBg}}; box-shadow: inset 0 0 0 1.5px {{m.swatchRing}}"></span>{{m.name}}</div>
+                  <div style="color: #52525B; font-size: 12px; margin: 2px 0 0 18px">{{m.model}}</div>
+                  <div style="color: #6B6B76; font-size: 11.5px; margin: 1px 0 0 18px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace">{{m.host}}</div>
                 </td>
                 <td style="padding: 12px 8px; vertical-align: top">
                   <span style="display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12px; color: {{m.fg}}; background: {{m.bg}}; border-radius: 999px; padding: 3px 9px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; background: {{m.dot}}"></span>{{m.state}}</span>
@@ -93,9 +94,10 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
 
       <aside aria-labelledby="mac-detail" style="flex: 1 1 340px; min-width: 0; background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 16px">
         <div>
-          <h2 id="mac-detail" style="margin: 0; font-size: 18px; font-weight: 700">macbook-1</h2>
+          <h2 id="mac-detail" style="margin: 0; font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 9px"><span aria-hidden="true" style="width: 14px; height: 14px; border-radius: 4px; background: #B52B36; box-shadow: inset 0 0 0 1.5px rgba(0,0,0,0.18)"></span>Rot</h2>
           <div style="color: #52525B; font-size: 13px; margin-top: 3px">MacBook Pro 16" · M4 Pro · Anna</div>
-          <div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px"><span style="color: #1D4ED8; background: #EFF4FF; border-radius: 999px; padding: 3px 9px; font-weight: 600">Arbeitet</span><span style="color: #3F3F46; background: #F4F4F5; border-radius: 999px; padding: 3px 9px; font-weight: 600">4 heute fertig · Ø 22 min</span></div>
+          <div style="color: #6B6B76; font-size: 12px; margin-top: 2px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace">macbook-1</div>
+          <div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px"><span style="color: #1D4ED8; background: #EFF4FF; border-radius: 999px; padding: 3px 9px; font-weight: 600">Arbeitet</span><span style="color: #3F3F46; background: #F4F4F5; border-radius: 999px; padding: 3px 9px; font-weight: 600">4 heute fertig · typisch 22 min</span></div>
         </div>
         <div>
           <h3 style="margin: 0 0 8px; font-size: 13px; font-weight: 600">Bereitschaft</h3>
@@ -108,8 +110,8 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
         <div>
           <h3 style="margin: 0 0 8px; font-size: 13px; font-weight: 600">Claude-Kontingent</h3>
           <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
-            <div style="background: #FAFAF9; border: 1px solid #F0EFEC; border-radius: 11px; padding: 10px 12px"><div style="font-size: 12px; color: #52525B">5-h-Fenster</div><div style="font-size: 22px; font-weight: 700">64 %</div><div style="font-size: 12px; color: #52525B">frei ab 15:02</div></div>
-            <div style="background: #FAFAF9; border: 1px solid #F0EFEC; border-radius: 11px; padding: 10px 12px"><div style="font-size: 12px; color: #52525B">Woche</div><div style="font-size: 22px; font-weight: 700">58 %</div><div style="font-size: 12px; color: #52525B">neu ab Sa 18:00</div></div>
+            <div style="background: #FAFAF9; border: 1px solid #F0EFEC; border-radius: 11px; padding: 10px 12px"><div style="font-size: 12px; color: #52525B">5-h-Fenster</div><div style="font-size: 22px; font-weight: 700">64 %</div><div style="font-size: 12px; color: #52525B">Reset um 15:02</div></div>
+            <div style="background: #FAFAF9; border: 1px solid #F0EFEC; border-radius: 11px; padding: 10px 12px"><div style="font-size: 12px; color: #52525B">Woche</div><div style="font-size: 22px; font-weight: 700">58 %</div><div style="font-size: 12px; color: #52525B">Reset Sa 18:00</div></div>
           </div>
         </div>
         <div>
@@ -129,22 +131,26 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
 <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1080}}'>
 class Component extends DCLogic {
   renderVals() {
-    const q = (v) => (parseInt(v, 10) >= 80 ? '#DC2626' : parseInt(v, 10) >= 60 ? '#D97706' : '#2563EB');
-    const mac = (o) => Object.assign({ rowBg: '#FFFFFF', hasFix: false }, o, { q5c: q(o.q5), qwc: q(o.qw) });
+    // Kontingent-Schwellen wie in der Statistik-Heatmap: ab 60 % Warnung (Bernstein), ab 90 % „Limit fast erreicht“ (Rot).
+    const q = (v) => (parseInt(v, 10) >= 90 ? '#DC2626' : parseInt(v, 10) >= 60 ? '#D97706' : '#2563EB');
+    // Anzeigenamen und Tuck-Farben wie in team-server/worker-identities.json; persönliche Macs ohne Farbe.
+    const W = { Rot: '#B52B36', Blau: '#2458A6', Gelb: '#E6BE35', Schwarz: '#17191D' };
+    const sw = (name) => (W[name] ? { swatchBg: W[name], swatchRing: 'rgba(0,0,0,0.18)' } : { swatchBg: 'transparent', swatchRing: '#A1A1AA' });
+    const mac = (o) => Object.assign({ rowBg: '#FFFFFF', hasFix: false }, o, sw(o.name), { q5c: q(o.q5), qwc: q(o.qw) });
     return {
       macs: [
-        mac({ name: 'macbook-1', model: 'MacBook Pro 16" · M4 Pro · Anna', state: 'Arbeitet', fg: '#1D4ED8', bg: '#EFF4FF', dot: '#2563EB', seen: 'Meldung gerade eben', task: 'TISSO Herbst-Newsletter – Mail 01', q5: '64%', qw: '58%', battery: '82 % · lädt', rowBg: '#F8FAFF' }),
-        mac({ name: 'macbook-von-till-main-2', model: 'MacBook Air 15" · M3 · Till', state: 'Arbeitet', fg: '#1D4ED8', bg: '#EFF4FF', dot: '#2563EB', seen: 'Meldung gerade eben', task: 'Upload Bergfreunde Wintersale · 6 %', q5: '27%', qw: '35%', battery: '93 % · lädt' }),
-        mac({ name: 'macbook-2', model: 'MacBook Air 13" · M2', state: 'Frei', fg: '#166534', bg: '#ECFDF3', dot: '#16A34A', seen: 'Meldung gerade eben', task: 'Reserviert: QA Weinhaus Advent', q5: '8%', qw: '22%', battery: '57 %' }),
-        mac({ name: 'newsletter-mac-141b2976', model: 'MacBook Pro 14" · M3 Pro', state: 'Anmeldung abgelaufen', fg: '#991B1B', bg: '#FEF2F2', dot: '#DC2626', seen: 'Meldung gerade eben', task: 'Nimmt keine Aufgaben an', hasFix: true, fix: 'Claude neu anmelden', q5: '12%', qw: '41%', battery: 'Netzteil' }),
-        mac({ name: 'macworker-5-schwarz', model: 'Mac mini · M2 Pro', state: 'Meldung fehlt', fg: '#92400E', bg: '#FFFBEB', dot: '#D97706', seen: 'Still seit 18 min', task: 'Keine Aufgabe', hasFix: true, fix: 'Worker prüfen', q5: '44%', qw: '70%', battery: 'Netzteil' }),
-        mac({ name: 'macbook-till-main', model: 'MacBook Pro · Till', state: 'Offline', fg: '#3F3F46', bg: '#F4F4F5', dot: '#A1A1AA', seen: 'Zuletzt vor 2 h', task: 'Nicht erreichbar', q5: '0%', qw: '17%', battery: '–' })
+        mac({ name: 'Rot', host: 'macbook-1', model: 'MacBook Pro 16" · M4 Pro · Anna', state: 'Arbeitet', fg: '#1D4ED8', bg: '#EFF4FF', dot: '#2563EB', seen: 'Meldung gerade eben', task: 'TISSO Herbst-Newsletter – Mail 01', q5: '64%', qw: '58%', battery: '82 % · lädt', rowBg: '#F8FAFF' }),
+        mac({ name: 'MacBook von Till', host: 'macbook-von-till-main-2', model: 'MacBook Air 15" · M3 · Till', state: 'Arbeitet', fg: '#1D4ED8', bg: '#EFF4FF', dot: '#2563EB', seen: 'Meldung gerade eben', task: 'Upload Bergfreunde Wintersale · 6 %', q5: '27%', qw: '35%', battery: '93 % · lädt' }),
+        mac({ name: 'Blau', host: 'macbook-2', model: 'MacBook Air 13" · M2', state: 'Startet gleich', fg: '#1D4ED8', bg: '#EFF4FF', dot: '#93C5FD', seen: 'Meldung gerade eben', task: 'QA Weinhaus Advent · reserviert', q5: '8%', qw: '22%', battery: '57 %' }),
+        mac({ name: 'Gelb', host: 'newsletter-mac-141b2976', model: 'MacBook Pro 14" · M3 Pro', state: 'Anmeldung abgelaufen', fg: '#991B1B', bg: '#FEF2F2', dot: '#DC2626', seen: 'Meldung gerade eben', task: 'Nimmt keine Aufgaben an', hasFix: true, fix: 'Claude neu anmelden', q5: '12%', qw: '41%', battery: 'Netzteil' }),
+        mac({ name: 'Schwarz', host: 'macworker-5-schwarz', model: 'Mac mini · M2 Pro', state: 'Meldung fehlt', fg: '#92400E', bg: '#FFFBEB', dot: '#D97706', seen: 'Still seit 18 min', task: 'Keine Aufgabe', hasFix: true, fix: 'Worker prüfen', q5: '44%', qw: '70%', battery: 'Netzteil' }),
+        mac({ name: 'Till Main', host: 'macbook-till-main', model: 'MacBook Pro · Till', state: 'Offline', fg: '#3F3F46', bg: '#F4F4F5', dot: '#A1A1AA', seen: 'Zuletzt vor 2 h', task: 'Nicht erreichbar', q5: '0%', qw: '17%', battery: '–' })
       ],
       checks: [
         { icon: '✓', bg: '#DCFCE7', fg: '#166534', label: 'Claude angemeldet', note: 'OAuth gültig' },
         { icon: '✓', bg: '#DCFCE7', fg: '#166534', label: 'Worker läuft', note: 'Worker 2' },
         { icon: '✓', bg: '#DCFCE7', fg: '#166534', label: 'Meldet sich regelmäßig', note: 'gerade eben' },
-        { icon: '!', bg: '#FEF3C7', fg: '#92400E', label: 'Temperatur erhöht', note: 'CPU 83 %' }
+        { icon: '!', bg: '#FEF3C7', fg: '#92400E', label: 'Hohe CPU-Last', note: '83 % seit 20 min' }
       ]
     };
   }

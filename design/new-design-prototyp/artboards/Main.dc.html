@@ -44,7 +44,7 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
     <div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px">
       <div>
         <h1 style="margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.02em">{{headline}}</h1>
-        <p style="margin: 6px 0 0; color: #52525B; font-size: 15px">10 heute fertig · 3 von 6 Macs sind bereit · nächstes Kontingent-Reset in 2 h 14 min</p>
+        <p style="margin: 6px 0 0; color: #52525B; font-size: 15px">10 heute fertig · 3 von 6 Macs einsatzfähig · nächstes Kontingent-Reset in 2 h 14 min</p>
       </div>
       <span style="font-size: 12px; font-weight: 600; color: #92400E; background: #FEF3C7; border-radius: 999px; padding: 4px 10px">Beispieldaten</span>
     </div>
@@ -60,23 +60,51 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
     </div>
 
     <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: stretch">
-      <section aria-labelledby="ws-h" style="flex: 999 1 640px; min-width: 0; background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column">
-        <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; flex-wrap: wrap">
-          <h2 id="ws-h" style="margin: 0; font-size: 16px; font-weight: 600">Werkstatt</h2>
-          <div role="group" aria-label="Darstellung" style="display: flex; background: #F4F4F2; border-radius: 9px; padding: 3px; gap: 2px">
-            <button type="button" aria-pressed="true" style="border: 0; font: inherit; font-size: 13px; font-weight: 600; background: #FFFFFF; border-radius: 7px; padding: 6px 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.08)">Werkstatt</button>
-            <button type="button" aria-pressed="false" style="border: 0; font: inherit; font-size: 13px; font-weight: 500; color: #52525B; background: transparent; border-radius: 7px; padding: 6px 12px">Liste</button>
+      <div style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 20px">
+        <section aria-labelledby="ws-h" style="background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; overflow: hidden">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; flex-wrap: wrap">
+            <h2 id="ws-h" style="margin: 0; font-size: 16px; font-weight: 600">Werkstatt</h2>
+            <div role="group" aria-label="Darstellung" style="display: flex; background: #F4F4F2; border-radius: 9px; padding: 3px; gap: 2px">
+              <button type="button" aria-pressed="true" style="border: 0; font: inherit; font-size: 13px; font-weight: 600; background: #FFFFFF; border-radius: 7px; padding: 6px 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.08)">Werkstatt</button>
+              <button type="button" aria-pressed="false" style="border: 0; font: inherit; font-size: 13px; font-weight: 500; color: #52525B; background: transparent; border-radius: 7px; padding: 6px 12px">Liste</button>
+            </div>
           </div>
-        </div>
-        <img src="/_blob/fe1e8fb9f1107f6f767018454b2108a5" alt="Werkstatt: sechs Tucks an ihren Tischen, Schrank, Scanner und Ergebniskiste" style="display: block; width: 100%; height: auto">
-        <div style="display: flex; flex-wrap: wrap; gap: 16px; padding: 12px 18px; border-top: 1px solid #F0EFEC; font-size: 12.5px; color: #52525B">
-          <span>Briefe nach Aufgabenart:</span>
-          <sc-for list="{{workflows}}" as="w" hint-placeholder-count="4">
-            <span style="display: flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 3px; background: {{w.color}}"></span>{{w.name}}</span>
-          </sc-for>
-          <span style="margin-left: auto">Tuck anklicken → Nahansicht mit Aufgabe und Verlauf</span>
-        </div>
-      </section>
+          <img src="/_blob/fe1e8fb9f1107f6f767018454b2108a5" alt="Werkstatt: sechs Tucks an ihren Tischen, Schrank, Scanner und Ergebniskiste" style="display: block; width: 100%; height: auto">
+          <div style="display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 12px 18px; border-top: 1px solid #F0EFEC; font-size: 12.5px; color: #52525B">
+            <span>Briefe nach Aufgabenart:</span>
+            <sc-for list="{{workflows}}" as="w" hint-placeholder-count="4">
+              <span style="display: flex; align-items: center; gap: 6px"><img src="{{w.icon}}" alt="" width="15" height="15" style="display: block">{{w.name}}</span>
+            </sc-for>
+            <span style="margin-left: auto">Tuck anklicken → Nahansicht mit Aufgabe und Verlauf</span>
+          </div>
+        </section>
+
+        <section aria-labelledby="flow-h" style="background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; padding: 16px 18px">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px">
+            <h2 id="flow-h" style="margin: 0; font-size: 16px; font-weight: 600">Fluss je Aufgabenart <span style="color: #6B6B76; font-weight: 500">· heute</span></h2>
+            <div style="display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #52525B">
+              <sc-for list="{{legend}}" as="l" hint-placeholder-count="4">
+                <span style="display: flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; background: {{l.color}}"></span>{{l.label}}</span>
+              </sc-for>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 14px">
+            <sc-for list="{{flows}}" as="f" hint-placeholder-count="4">
+              <div style="display: grid; grid-template-columns: 140px minmax(0, 1fr) 230px; align-items: center; gap: 16px">
+                <div style="display: flex; align-items: center; gap: 8px; font-weight: 600"><img src="{{f.icon}}" alt="" width="16" height="16" style="display: block">{{f.name}}</div>
+                <div style="display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: #F4F4F5; gap: 2px" role="img" aria-label="{{f.aria}}">
+                  <sc-for list="{{f.segs}}" as="s" hint-placeholder-count="4">
+                    <span style="flex: {{s.n}} 0 0; background: {{s.color}}"></span>
+                  </sc-for>
+                </div>
+                <div style="display: flex; gap: 10px; font-size: 12.5px; color: #3F3F46; justify-content: flex-end">
+                  <span>{{f.summary}}</span><span style="color: #6B6B76">typisch {{f.typical}}</span>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+      </div>
 
       <section aria-labelledby="att-h" style="flex: 1 1 360px; min-width: 0; background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; display: flex; flex-direction: column">
         <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 18px 8px">
@@ -88,7 +116,10 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
             <li style="display: flex; gap: 12px; align-items: flex-start; padding: 10px 8px; border-radius: 10px; border-bottom: 1px solid #F4F4F2">
               <span aria-hidden="true" style="flex: 0 0 auto; width: 30px; height: 30px; border-radius: 8px; background: {{a.bg}}; color: {{a.fg}}; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px">{{a.icon}}</span>
               <div style="flex: 1 1 auto; min-width: 0">
-                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+                <div style="display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap">
+                  <sc-if value="{{a.isMac}}" hint-placeholder-val="{{false}}">
+                    <span aria-hidden="true" style="flex: 0 0 auto; width: 10px; height: 10px; border-radius: 3px; background: {{a.swatchBg}}; box-shadow: inset 0 0 0 1.5px {{a.swatchRing}}"></span>
+                  </sc-if>
                   <span style="font-weight: 600">{{a.title}}</span>
                   <span style="font-size: 11.5px; font-weight: 600; color: #3F3F46; background: #F4F4F5; border-radius: 6px; padding: 2px 6px">{{a.kind}}</span>
                 </div>
@@ -104,79 +135,68 @@ a{color:#1D4ED8}a:hover{color:#1E3A8A}
       </section>
     </div>
 
-    <div style="display: flex; flex-wrap: wrap; gap: 20px">
-      <section aria-labelledby="flow-h" style="flex: 3 1 640px; min-width: 0; background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; padding: 16px 18px">
-        <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px">
-          <h2 id="flow-h" style="margin: 0; font-size: 16px; font-weight: 600">Fluss je Aufgabenart <span style="color: #6B6B76; font-weight: 500">· heute</span></h2>
-          <div style="display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #52525B">
-            <sc-for list="{{legend}}" as="l" hint-placeholder-count="4">
-              <span style="display: flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 3px; background: {{l.color}}"></span>{{l.label}}</span>
-            </sc-for>
-          </div>
-        </div>
-        <div style="display: flex; flex-direction: column; gap: 14px">
-          <sc-for list="{{flows}}" as="f" hint-placeholder-count="4">
-            <div style="display: grid; grid-template-columns: 150px minmax(0, 1fr) 220px; align-items: center; gap: 16px">
-              <div style="display: flex; align-items: center; gap: 8px; font-weight: 600"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 3px; background: {{f.color}}"></span>{{f.name}}</div>
-              <div style="display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: #F4F4F5; gap: 2px" role="img" aria-label="{{f.aria}}">
-                <sc-for list="{{f.segs}}" as="s" hint-placeholder-count="4">
-                  <span style="flex: {{s.n}} 0 0; background: {{s.color}}"></span>
-                </sc-for>
+    <section aria-labelledby="mac-h" style="background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; padding: 16px 18px">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px">
+        <h2 id="mac-h" style="margin: 0; font-size: 16px; font-weight: 600">Macs <span style="color: #6B6B76; font-weight: 500; font-size: 13px">· Balken = Claude-Kontingent im 5-h-Fenster</span></h2>
+        <a href="Macs.dc.html" style="font-size: 13px; text-decoration: none; font-weight: 500">Details</a>
+      </div>
+      <ul style="list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 10px">
+        <sc-for list="{{macs}}" as="m" hint-placeholder-count="6">
+          <li style="display: grid; grid-template-columns: minmax(0, 1fr) 104px; gap: 14px; align-items: center; padding: 10px 12px; border: 1px solid #F0EFEC; border-radius: 12px">
+            <div style="min-width: 0">
+              <div style="display: flex; align-items: center; gap: 8px; min-width: 0">
+                <span aria-hidden="true" style="flex: 0 0 auto; width: 10px; height: 10px; border-radius: 3px; background: {{m.swatchBg}}; box-shadow: inset 0 0 0 1.5px {{m.swatchRing}}"></span>
+                <span style="font-weight: 600; font-size: 13px; white-space: nowrap">{{m.name}}</span>
+                <span style="font-size: 12px; color: {{m.stateColor}}; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{m.state}}</span>
               </div>
-              <div style="display: flex; gap: 10px; font-size: 12.5px; color: #3F3F46; justify-content: flex-end">
-                <span>{{f.summary}}</span><span style="color: #6B6B76">Ø {{f.avg}}</span>
-              </div>
+              <div style="font-size: 12px; color: #52525B; margin: 3px 0 0 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{m.task}}</div>
             </div>
-          </sc-for>
-        </div>
-      </section>
-
-      <section aria-labelledby="mac-h" style="flex: 2 1 420px; min-width: 0; background: #FFFFFF; border: 1px solid #E7E5E0; border-radius: 16px; padding: 16px 18px">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px">
-          <h2 id="mac-h" style="margin: 0; font-size: 16px; font-weight: 600">Macs</h2>
-          <a href="Macs.dc.html" style="font-size: 13px; text-decoration: none; font-weight: 500">Details</a>
-        </div>
-        <ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column">
-          <sc-for list="{{macs}}" as="m" hint-placeholder-count="6">
-            <li style="display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid #F4F4F2">
-              <div style="min-width: 0">
-                <div style="display: flex; align-items: center; gap: 8px"><span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: {{m.dot}}"></span><span style="font-weight: 600; font-size: 13px">{{m.name}}</span><span style="font-size: 12px; color: {{m.stateColor}}; font-weight: 600">{{m.state}}</span></div>
-                <div style="font-size: 12px; color: #52525B; margin: 2px 0 0 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{m.task}}</div>
-              </div>
-              <div title="Claude-Kontingent im 5-h-Fenster">
-                <div style="height: 6px; border-radius: 3px; background: #F0F0F2; overflow: hidden"><div style="height: 100%; width: {{m.quota}}; background: {{m.quotaColor}}"></div></div>
-                <div style="font-size: 11.5px; color: #52525B; margin-top: 3px; text-align: right">{{m.quotaLabel}}</div>
-              </div>
-            </li>
-          </sc-for>
-        </ul>
-      </section>
-    </div>
+            <div title="Claude-Kontingent im 5-h-Fenster">
+              <div style="height: 6px; border-radius: 3px; background: #F0F0F2; overflow: hidden"><div style="height: 100%; width: {{m.quota}}; background: {{m.quotaColor}}"></div></div>
+              <div style="font-size: 11.5px; color: #52525B; margin-top: 3px; text-align: right">{{m.quotaLabel}}</div>
+            </div>
+          </li>
+        </sc-for>
+      </ul>
+    </section>
   </main>
 </div>
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1240}}'>
 class Component extends DCLogic {
   renderVals() {
-    const C = { wait: '#D97706', run: '#2563EB', block: '#DC2626', done: '#16A34A' };
+    // Farbe = Zustand: Grau wartet/offline, Blau läuft, Rot blockiert, Grün fertig; Bernstein nur für Warnungen.
+    const C = { wait: '#A1A1AA', run: '#2563EB', block: '#DC2626', done: '#16A34A' };
+    // Aufgabenart = Symbol wie im Aufgaben-Schrank der Werkstatt (nicht als Farbfläche neben Zustandsfarben).
+    const svg = (color, body) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`);
+    const ICON = {
+      Newsletter: svg('#2F6FEB', '<path d="M4 1.8h5.2L12.5 5v9.2H4z"/><path d="M9 1.8V5h3.5M6 8.2h4.5M6 11h4.5"/>'),
+      Upload: svg('#EA7A16', '<path d="M4.6 12.4H4.2a2.9 2.9 0 0 1-.3-5.8 4.1 4.1 0 0 1 7.9-1.4 3.1 3.1 0 0 1 .3 7.2"/><path d="M8 14V8.4M5.9 10.4 8 8.3l2.1 2.1"/>'),
+      'Übersetzung': svg('#0D9488', '<path d="M2 3.6h6.6M5.3 2v1.6M3.4 3.6c.6 2.1 2 3.7 3.9 4.6M7.2 3.6c-.6 2.3-2.3 4.2-4.6 5.2"/><path d="M8.6 14l2.4-5.8 2.4 5.8M9.4 12.1h3.2"/>'),
+      QA: svg('#7C3AED', '<rect x="2.2" y="2.2" width="11.6" height="11.6" rx="2.6"/><path d="M5.2 8.2l2 2 3.8-4.2"/>')
+    };
+    // Anzeigenamen und Tuck-Farben wie in team-server/worker-identities.json; persönliche Macs ohne Farbe.
+    const W = { Rot: '#B52B36', Blau: '#2458A6', Gelb: '#E6BE35', Schwarz: '#17191D' };
+    const sw = (name) => (W[name] ? { swatchBg: W[name], swatchRing: 'rgba(0,0,0,0.18)' } : { swatchBg: 'transparent', swatchRing: '#A1A1AA' });
     const wf = [
-      { name: 'Newsletter', color: '#2F6FEB', w: 1, r: 1, b: 1, d: 5, avg: '31 min' },
-      { name: 'Upload', color: '#EA7A16', w: 1, r: 1, b: 1, d: 2, avg: '12 min' },
-      { name: 'Übersetzung', color: '#0D9488', w: 1, r: 0, b: 0, d: 1, avg: '18 min' },
-      { name: 'QA', color: '#7C3AED', w: 1, r: 0, b: 1, d: 2, avg: '9 min' }
+      { name: 'Newsletter', w: 1, r: 1, b: 1, d: 5, typical: '31 min' },
+      { name: 'Upload', w: 1, r: 1, b: 1, d: 2, typical: '12 min' },
+      { name: 'Übersetzung', w: 1, r: 0, b: 0, d: 1, typical: '18 min' },
+      { name: 'QA', w: 1, r: 0, b: 1, d: 2, typical: '9 min' }
     ];
     // Beispiel-"jetzt": 12:48 Uhr – alle Zeitangaben auf allen vier Seiten beziehen sich darauf.
     const attention = [
-      { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'Mac', title: 'newsletter-mac-141b2976', reason: 'Claude-Anmeldung abgelaufen – nimmt keine Aufgaben an', since: 'seit 30 min', action: 'Claude neu anmelden' },
-      { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'Upload', title: 'Outdoor-Shop Willkommensflow', reason: 'Blockiert: Klaviyo-Liste nicht gefunden', since: 'seit 1 h · macbook-von-till-main-2', action: 'Liste zuordnen' },
-      { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'Newsletter', title: 'Weinhaus Abverkauf – Mail 02', reason: 'Blockiert: Briefing unvollständig', since: 'seit 42 min · macbook-1', action: 'Briefing öffnen' },
-      { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'QA', title: 'QA Gartenmarkt Frühbucher', reason: 'Blockiert: 2 Prüfpunkte offen', since: 'seit 25 min · macbook-2', action: 'Prüfbericht öffnen' },
-      { icon: '?', bg: '#FEF3C7', fg: '#92400E', kind: 'Mac', title: 'macworker-5-schwarz', reason: 'Meldet sich seit 18 min nicht', since: 'letzte Meldung 12:30', action: 'Worker prüfen' },
-      { icon: '–', bg: '#F4F4F5', fg: '#3F3F46', kind: 'Mac', title: 'macbook-till-main', reason: 'Offline seit 2 h', since: 'zuletzt gesehen 10:48', action: 'Details' }
-    ];
+      { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'Mac', title: 'Gelb', reason: 'Claude-Anmeldung abgelaufen – nimmt keine Aufgaben an', since: 'seit 30 min', action: 'Claude neu anmelden' },
+      { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'Upload', title: 'Outdoor-Shop Willkommensflow', reason: 'Blockiert: Klaviyo-Liste nicht gefunden', since: 'seit 1 h · MacBook von Till', action: 'Liste zuordnen' },
+      { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'Newsletter', title: 'Weinhaus Abverkauf – Mail 02', reason: 'Blockiert: Briefing unvollständig', since: 'seit 42 min · Rot', action: 'Briefing öffnen' },
+      { icon: '!', bg: '#FEE2E2', fg: '#B91C1C', kind: 'QA', title: 'QA Gartenmarkt Frühbucher', reason: 'Blockiert: 2 Prüfpunkte offen', since: 'seit 25 min · Blau', action: 'Prüfbericht öffnen' },
+      { icon: '?', bg: '#FEF3C7', fg: '#92400E', kind: 'Mac', title: 'Schwarz', reason: 'Meldet sich seit 18 min nicht', since: 'letzte Meldung 12:30', action: 'Worker prüfen' },
+      { icon: '–', bg: '#F4F4F5', fg: '#3F3F46', kind: 'Mac', title: 'Till Main', reason: 'Offline seit 2 h', since: 'zuletzt gesehen 10:48', action: 'Details' }
+    ].map((a) => Object.assign({ isMac: a.kind === 'Mac' }, a, a.kind === 'Mac' ? sw(a.title) : {}));
     const running = wf.reduce((n, w) => n + w.r, 0);
-    const macIssues = attention.filter((a) => a.kind === 'Mac').length;
+    const macIssues = attention.filter((a) => a.isMac).length;
     const taskIssues = attention.length - macIssues;
+    const mac = (o) => Object.assign({}, o, sw(o.name));
     return {
       headline: `${running} Aufgaben laufen – ${taskIssues} Aufgaben und ${macIssues} Macs brauchen dich`,
       attentionCount: attention.length,
@@ -184,28 +204,28 @@ class Component extends DCLogic {
         { label: 'Läuft jetzt', value: String(running), sub: 'TISSO Herbst-Newsletter · Upload Bergfreunde', color: C.run },
         { label: 'Wartet', value: '4', sub: 'Älteste wartet seit 18 min', color: C.wait },
         { label: 'Blockiert', value: '3', sub: 'Braucht eine Entscheidung', color: C.block },
-        { label: 'Heute fertig', value: '10', sub: 'Ø Durchlauf 22 min', color: C.done },
-        { label: 'Macs bereit', value: '3 / 6', sub: '2 arbeiten · 3 mit Problem', color: '#71717A' }
+        { label: 'Heute fertig', value: '10', sub: 'typisch 22 min pro Aufgabe', color: C.done },
+        { label: 'Macs einsatzfähig', value: '3 / 6', sub: '2 arbeiten · 1 startet gleich · 3 mit Problem', color: C.done }
       ],
-      workflows: wf.map((w) => ({ name: w.name, color: w.color })),
+      workflows: wf.map((w) => ({ name: w.name, icon: ICON[w.name] })),
       legend: [
         { label: 'Wartet', color: C.wait }, { label: 'Läuft', color: C.run },
         { label: 'Blockiert', color: C.block }, { label: 'Fertig', color: C.done }
       ],
       flows: wf.map((w) => ({
-        name: w.name, color: w.color, avg: w.avg,
+        name: w.name, icon: ICON[w.name], typical: w.typical,
         segs: [{ n: w.w, color: C.wait }, { n: w.r, color: C.run }, { n: w.b, color: C.block }, { n: w.d, color: C.done }],
         summary: `${w.w + w.r + w.b} offen · ${w.d} fertig`,
         aria: `${w.name}: ${w.w} wartet, ${w.r} läuft, ${w.b} blockiert, ${w.d} fertig`
       })),
       attention,
       macs: [
-        { name: 'macbook-1', state: 'Arbeitet', stateColor: '#1D4ED8', dot: '#2563EB', task: 'TISSO Herbst-Newsletter – Mail 01', quota: '64%', quotaColor: '#D97706', quotaLabel: '64 % · 5 h' },
-        { name: 'macbook-von-till-main-2', state: 'Arbeitet', stateColor: '#1D4ED8', dot: '#2563EB', task: 'Upload Bergfreunde Wintersale · 6 %', quota: '27%', quotaColor: '#2563EB', quotaLabel: '27 % · 5 h' },
-        { name: 'macbook-2', state: 'Frei', stateColor: '#15803D', dot: '#16A34A', task: 'Reserviert: QA Weinhaus Advent', quota: '8%', quotaColor: '#2563EB', quotaLabel: '8 % · 5 h' },
-        { name: 'newsletter-mac-141b2976', state: 'Anmeldung abgelaufen', stateColor: '#B91C1C', dot: '#DC2626', task: 'Keine Aufgabe', quota: '12%', quotaColor: '#A1A1AA', quotaLabel: '12 % · 5 h' },
-        { name: 'macworker-5-schwarz', state: 'Meldung fehlt', stateColor: '#92400E', dot: '#D97706', task: 'Keine Aufgabe', quota: '44%', quotaColor: '#A1A1AA', quotaLabel: '44 % · 5 h' },
-        { name: 'macbook-till-main', state: 'Offline', stateColor: '#52525B', dot: '#A1A1AA', task: 'Seit 2 h nicht erreichbar', quota: '0%', quotaColor: '#A1A1AA', quotaLabel: '–' }
+        mac({ name: 'Rot', state: 'Arbeitet', stateColor: '#1D4ED8', task: 'TISSO Herbst-Newsletter – Mail 01', quota: '64%', quotaColor: '#D97706', quotaLabel: '64 %' }),
+        mac({ name: 'MacBook von Till', state: 'Arbeitet', stateColor: '#1D4ED8', task: 'Upload Bergfreunde Wintersale · 6 %', quota: '27%', quotaColor: '#2563EB', quotaLabel: '27 %' }),
+        mac({ name: 'Blau', state: 'Startet gleich', stateColor: '#1D4ED8', task: 'QA Weinhaus Advent · reserviert', quota: '8%', quotaColor: '#2563EB', quotaLabel: '8 %' }),
+        mac({ name: 'Gelb', state: 'Anmeldung abgelaufen', stateColor: '#B91C1C', task: 'Keine Aufgabe', quota: '12%', quotaColor: '#A1A1AA', quotaLabel: '12 %' }),
+        mac({ name: 'Schwarz', state: 'Meldung fehlt', stateColor: '#92400E', task: 'Keine Aufgabe', quota: '44%', quotaColor: '#A1A1AA', quotaLabel: '44 %' }),
+        mac({ name: 'Till Main', state: 'Offline', stateColor: '#52525B', task: 'Seit 2 h nicht erreichbar', quota: '0%', quotaColor: '#A1A1AA', quotaLabel: '–' })
       ]
     };
   }

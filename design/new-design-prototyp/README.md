@@ -43,29 +43,51 @@ nicht direkt im Browser. Das Werkstatt-Bild ist dort als Asset
 
 ## Leitideen des Entwurfs
 
-1. **Ein Satz statt Zahlensalat** oben („2 Aufgaben laufen, 3 brauchen dich“)
-   plus fünf große Kacheln: Läuft · Wartet · Blockiert · Heute fertig · Macs bereit.
+1. **Ein Satz statt Zahlensalat** oben („2 Aufgaben laufen – 3 Aufgaben und
+   3 Macs brauchen dich“) plus fünf große Kacheln: Läuft · Wartet · Blockiert ·
+   Heute fertig · Macs einsatzfähig (arbeiten, starten gleich oder frei – im
+   Gegensatz zu „mit Problem“). Ein Mac mit reservierter Aufgabe heißt
+   „Startet gleich“ wie im echten Dashboard, nicht „Frei“.
 2. **„Braucht dich“**: eine Liste für Mac- und Aufgabenprobleme, Grund in
    Klartext, je ein Knopf zum Beheben („Claude neu anmelden“, „Liste
    zuordnen“ …) – mit denselben Beschriftungen wie auf Aufgaben und Macs.
 3. **Fluss je Aufgabenart** statt Balkendiagrammen: ein gestapelter Balken
    (wartet/läuft/blockiert/fertig) + typische Dauer pro Art.
-4. **Art-Farben = Brief-Farben der Werkstatt**: Newsletter blau, Upload orange,
-   Übersetzung türkis, QA lila.
+4. **Aufgabenart = Symbol aus dem Aufgaben-Schrank der Werkstatt** (Dokument
+   blau = Newsletter, Wolke orange = Upload, Übersetzen türkis, Häkchen lila =
+   QA) statt farbiger Quadrate – so konkurrieren Art-Farben nicht mit den
+   Zustandsfarben. Reine Art-Farbflächen nur in Diagrammen, die ausschließlich
+   nach Art aufschlüsseln (Statistik).
 5. **Aufgaben als Board** (Wartet · Läuft · Blockiert · Fertig heute) mit
    Detail-Panel inkl. Schritten; „Verlauf heute“ ersetzt das Log.
-6. **Macs als kompakte Zeilen**: Zustand in Worten, aktuelle Aufgabe,
-   beschriftetes „Claude-Kontingent“ (5-h-Fenster / Woche); Technik
-   (CPU, RAM, Platte, Version) nur im Detail-Panel mit Bereitschafts-Check.
+6. **Macs als kompakte Zeilen**: Anzeigename mit Tuck-Farbe („Rot“, „Blau“,
+   „Gelb“, „Schwarz“, „MacBook von Till“ – aus
+   `team-server/worker-identities.json`, wie im echten Dashboard), Zustand in
+   Worten, aktuelle Aufgabe, beschriftetes „Claude-Kontingent“ (5-h-Fenster /
+   Woche); Rechnername und Technik (CPU, RAM, Platte, Version) nur auf der
+   Macs-Seite bzw. im Detail-Panel mit Bereitschafts-Check.
 7. **Statistik beantwortet Fragen**: Wie viel wird fertig? Wie lange dauert es
-   (typisch + langsamste 10 %)? Warum hängt es? Wann wird das Kontingent knapp
-   (Raster Mac × Tag)?
+   (typisch = Median, dazu „jede 10. ab …“)? Warum hängt es? Wann wird das
+   Kontingent knapp (Raster Mac × Tag)? Dauern heißen überall „typisch“, nie Ø.
+8. **Übersicht ohne Leerfläche**: Werkstatt und Fluss links, „Braucht dich“
+   rechts, Macs als Kachelreihe darunter – bei 1440 px passt alles auf einen
+   Bildschirm, bei 1180 px ist der Fluss ohne Scrollen sichtbar.
 
 ## Stil
 
 Inter, heller Grund `#F5F5F3`, weiße Karten mit feinem Rand, Akzent Blau
-`#2563EB`; Status: läuft blau, wartet bernstein, blockiert rot, fertig grün;
-Texte mit ≥ 4,5:1 Kontrast, echte Buttons/Links (tastaturbedienbar).
+`#2563EB`; Texte mit ≥ 4,5:1 Kontrast, echte Buttons/Links (tastaturbedienbar).
+
+Drei Farbsysteme, klar getrennt:
+
+- **Zustand = Farbe** (immer mit Wort daneben): wartet/offline grau, läuft
+  blau, blockiert/Fehler rot, fertig/ok grün; Bernstein nur für Warnungen
+  (Kontingent ab 60 %, Meldung fehlt, hohe CPU-Last), Rot fürs Kontingent ab
+  90 %.
+- **Aufgabenart = Symbol** in Schrank-Farbe (siehe 4).
+- **Mac = Name + kleines Tuck-Farbfeld**, nur wo der Mac selbst das Thema ist
+  (Mac-Zeilen, Mac-Einträge in „Braucht dich“, Heatmap); persönliche Macs
+  ohne Tuck-Farbe bekommen ein leeres Feld.
 
 ## Offen / nächste Schritte
 
