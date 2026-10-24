@@ -898,3 +898,11 @@ Bei einer Paket-Mail wird kein allgemeines Figma-Testboard und kein älteres
 bleibt sichtbar, etwa nach einem PM-Rückweg. Bestehende Figma-Aufträge und ihre
 Historie behalten die bisherigen Links. Ein fehlender Mail-Link gilt nicht als
 belegter Fertigstand und ändert weder Admission noch Aufgabenbesitz.
+
+PM-Aufträge zum Figma-Rückweg erscheinen als eigene Aufgabenart mit ihrem
+unveränderlichen Hub-Mailbezug. Sie verwenden den bestehenden Reservierungsbesitz
+und einen regulären Workerplatz; ein ClickUp-Startstatus oder Slack-Post wird dafür
+nicht erzeugt. Die Queue prüft den tatsächlichen Kandidatenhash und Kundenscope
+gegen den Reservierungsbeleg. Erst der abgeschlossene Hub-Import mit geprüftem
+Quell-, Metadaten-, Footer- und Framebeleg zeigt einen Figma-Ziellink. Bei einer
+unlesbaren Importquelle bleibt der bisherige vollständige Snapshot erhalten.

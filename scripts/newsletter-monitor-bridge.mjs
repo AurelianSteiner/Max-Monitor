@@ -306,6 +306,7 @@ export function loadWorkerAdmission(root, load = require) {
 // Job kind, ClickUp ID and status epoch of a worker job ID (src/jobs.js, compactTask).
 function jobIdentity(value) {
   const jobId = String(value ?? '');
+  if (/^figma-import:[a-f0-9]{64}$/.test(jobId)) return { kind: 'figma-import', taskId: jobId, workflow: 'figma-import' };
   const correction = CORRECTION_JOB.exec(jobId);
   const translation = /^(.+)-uebersetzung-(en|it|fr|se|sp)$/.exec(jobId);
   const upload = /^(.+)-klaviyo$/.exec(jobId);
@@ -378,6 +379,9 @@ export function parseRegisterClaim(doc) {
     || typeof doc.worker !== 'string' || !/^[a-z0-9][a-z0-9-]{1,40}$/.test(doc.worker) || !CLAIM_STATES.has(doc.state)
     || typeof doc.ts !== 'string' || !/^\d+\.\d+$/.test(doc.ts)) return null;
   const jobId = doc.taskId;
+  const isImport = /^figma-import:[a-f0-9]{64}$/.test(jobId);
+  if (isImport && (doc.jobKind !== 'figma-import' || !/^[a-f0-9]{64}$/.test(doc.candidateHash || '')
+    || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(doc.writeScope || ''))) return null;
   // Separate test orders and legacy Freigaben IDs are no monitor jobs (as in parseClaim).
   if (/-klaviyo-pruefauftrag$/.test(jobId) || (/^korrektur-/.test(jobId) && !CORRECTION_JOB.test(jobId))) return null;
   const heartbeat = Number(doc.heartbeat);
@@ -395,6 +399,7 @@ export function parseRegisterClaim(doc) {
     threadHeartbeat: null,
     ...(paused ? { paused: true, ...(doc.portable === true ? { portable: true } : {}) } : {}),
     workflow: identity.workflow ?? identity.kind, reactions, hub: true,
+    ...(isImport ? { candidateHash: doc.candidateHash, writeScope: doc.writeScope } : {}),
     ...(typeof doc.channel === 'string' && /^C[A-Z0-9]{5,20}$/.test(doc.channel) ? { channelId: doc.channel } : {}),
     // Fehleraudit 19.10.2026: the worker's typed owner of a finished run; any other value is dropped.
     ...(BLOCKER_OWNERS.has(doc.owner) ? { owner: doc.owner } : {}),
@@ -436,6 +441,54 @@ export function readHubReservations(runtimeDir, { now = Date.now(), lookbackDays
     }
     return claims;
   } finally { db.close(); }
+}
+
+export function readHubFigmaImports(runtimeDir, { now = Date.now(), lookbackDays = 60 } = {}) {
+  const file = path.join(runtimeDir, 'data', 'customer-intelligence.sqlite');
+  if (!fsSync.existsSync(file)) return [];
+  const db = new (require('node:sqlite').DatabaseSync)(file, { readOnly: true, timeout: 2000 });
+  try {
+    db.exec('PRAGMA query_only=ON');
+    if (!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='mail_package_figma_imports'").get()) return [];
+    const rows = db.prepare("SELECT customer_id,mail_id,intent_id,request_hash,source_ref,target_file_key,status,admission,result,error,created_at,updated_at FROM mail_package_figma_imports WHERE status<>'completed' OR updated_at>=? ORDER BY created_at,intent_id LIMIT 5001")
+      .all(new Date(now - lookbackDays * 86400000).toISOString());
+    if (rows.length > 5000) throw Error('Zu viele PM-Figma-Aufträge; bisheriger Snapshot bleibt erhalten.');
+    return rows.map(row => ({ customerId: row.customer_id, mailId: row.mail_id, intentId: row.intent_id, requestHash: row.request_hash,
+      sourceRef: JSON.parse(row.source_ref), targetFileKey: row.target_file_key, status: row.status,
+      admission: row.admission ? JSON.parse(row.admission) : null, result: row.result ? JSON.parse(row.result) : null,
+      error: row.error, createdAt: row.created_at, updatedAt: row.updated_at }));
+  } finally { db.close(); }
+}
+
+export function buildFigmaImportQueue(intents, claims, { now = Date.now(), staleMinutes = 30 } = {}) {
+  const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
+  return intents.map(intent => {
+    const ref = intent.sourceRef, taskId = 'figma-import:' + intent.intentId;
+    const mailUrl = mailLink('https://api.ruegamer-steiner.de/editor/public/mail.html?' + new URLSearchParams({ customer: intent.customerId, mail: intent.mailId, version: String(ref?.version) }));
+    if (!/^[a-f0-9]{64}$/.test(intent.intentId || '') || !mailUrl || !Number.isSafeInteger(ref?.version) || ref.version < 1
+      || ref.customerId !== intent.customerId || ref.mailId !== intent.mailId || !/^[a-f0-9]{64}$/.test(ref.contentHash || '')
+      || typeof ref.mailKey !== 'string' || crypto.createHash('sha256').update(ref.mailKey).digest('hex') !== ref.mailId
+      || !['pending', 'importing', 'failed', 'completed'].includes(intent.status)) throw Error('PM-Figma-Auftrag enthält keine eindeutige Mailquelle.');
+    const candidateHash = crypto.createHash('sha256').update(JSON.stringify(canonical({ schema: 'rs.mail-package-figma-candidate/v1', customerId: intent.customerId,
+      mailId: intent.mailId, intentId: intent.intentId, sourceRef: ref, targetFileKey: intent.targetFileKey, requestHash: intent.requestHash }))).digest('hex');
+    const matching = claims.filter(claim => claim.jobId === taskId && claim.workflow === 'figma-import'
+      && claim.candidateHash === candidateHash && claim.writeScope === intent.customerId);
+    const claim = selectCurrentClaim(matching, now, staleMinutes), live = claim && LIVE_CLAIM_STATES.has(claim.state)
+      && claim.paused !== true && now - claim.heartbeat * 1000 <= staleMinutes * 60000;
+    const completed = intent.status === 'completed', target = completed && figmaLink(intent.result?.target?.url);
+    if (completed && (!target || JSON.stringify(canonical(intent.result?.sourceRef)) !== JSON.stringify(canonical(ref))
+      || intent.result?.metadataVerified !== true || intent.result?.footerVerified !== true
+      || !intent.result?.editableTextNodes || !/^[a-f0-9]{64}$/.test(intent.result?.frameSha256 || '')))
+      throw Error('Abgeschlossener PM-Figma-Auftrag hat keinen bestätigten Zielbezug.');
+    const status = completed ? 'completed' : intent.status === 'failed' ? 'blocked' : live ? 'running' : 'queued';
+    return { id: taskId, title: 'PM-Figma-Rückweg', workflow: 'figma-import', status, company: intent.customerId, mailUrl,
+      figmaUrl: target || undefined, workerId: completed ? intent.admission?.physicalWorkerId : live ? claim.workerId : undefined,
+      attemptId: completed ? intent.admission?.runId : claim?.runId, updatedAt: intent.updatedAt,
+      ...(completed ? { completedAt: intent.updatedAt, completionSource: 'review', progress: 100 } : {}),
+      ...(intent.status === 'failed' ? { blockedReason: 'Import angehalten; gespeicherten Ausgang desselben Auftrags prüfen.', responsibleRole: 'Technik' } : {}),
+      phase: completed ? 'Figma-Mail bestätigt' : live ? 'PM-Figma-Rückweg in Bearbeitung' : intent.status === 'failed' ? 'PM-Figma-Rückweg angehalten' : 'Wartet auf regulären Workerplatz' };
+  });
 }
 
 // The register decides ownership, state and pause exactly as for the workers.
@@ -1684,7 +1737,7 @@ export function applyBlockerGrace(rows, previousTasks = [], now = Date.now()) {
 // errorPayloads (optional Map): filled with ts -> metadata of every top-level copy
 // in #ai-fehler, only after a complete read of that channel; the error-copy
 // cleanup decides from it which copies stay before reading any thread.
-export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, pmRouting, checkpointReader, reservationReader, maxTasksOf, claimReader = listClaims, statusCache, epochRefusals = new Map(), warn = () => {}, admission = workerAdmission(), errorPayloads, now = Date.now() }) {
+export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, figmaBoardUrl, previews, previousTasks, salesReader, questionReader, pmRouting, checkpointReader, reservationReader, figmaImportReader, maxTasksOf, claimReader = listClaims, statusCache, epochRefusals = new Map(), warn = () => {}, admission = workerAdmission(), errorPayloads, now = Date.now() }) {
   validateWorkflows(workflows);
   const issues = new Map();
   const onMessage = message => {
@@ -1696,7 +1749,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   const errorChannel = config.monitor_channels?.errors || (config.fehler?.enabled ? config.fehler.channel_id : undefined);
   const errorMessages = [];
   const statuses = [...new Set([...workflows.flatMap(workflow => workflow.startStatuses ?? []), ...Object.keys(CORRECTION_STATUSES)].map(normalizeStatus))];
-  const [taskResult, claimResult, workerResult, issueResult, salesResult, questionResult, checkpointResult, reservationResult] = await Promise.allSettled([
+  const [taskResult, claimResult, workerResult, issueResult, salesResult, questionResult, checkpointResult, reservationResult, figmaImportResult] = await Promise.allSettled([
     (async () => {
       const variants = await discoverTags(hubFetch, config.clickup.workspace_id, workflows);
       // Tags keep completed and blocked history visible; the start statuses are
@@ -1745,6 +1798,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
     Promise.resolve().then(() => questionReader ? questionReader() : { sets: [], jobs: [] }),
     Promise.resolve().then(() => checkpointReader ? checkpointReader() : []),
     Promise.resolve().then(() => reservationReader ? reservationReader(now) : null),
+    Promise.resolve().then(() => figmaImportReader ? figmaImportReader(now) : []),
   ]);
   // Clear resolved notices only after every configured warning channel was read completely.
   const workerIssues = claimResult.status === 'fulfilled' && issueResult.status === 'fulfilled' ? [...issues.values()] : undefined;
@@ -1756,8 +1810,8 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
       if (typeof message.ts === 'string' && value && typeof value === 'object') errorPayloads.set(message.ts, value);
     }
   }
-  if ([taskResult, claimResult, issueResult, salesResult, questionResult, checkpointResult].some(result => result.status === 'rejected')) {
-    const error = [taskResult, claimResult, issueResult, salesResult, questionResult, checkpointResult].find(result => result.status === 'rejected').reason;
+  if ([taskResult, claimResult, issueResult, salesResult, questionResult, checkpointResult, figmaImportResult].some(result => result.status === 'rejected')) {
+    const error = [taskResult, claimResult, issueResult, salesResult, questionResult, checkpointResult, figmaImportResult].find(result => result.status === 'rejected').reason;
     return { ...(workerIssues === undefined ? {} : { workerIssues }), source: {
       name: SOURCE_NAME, error: displayText(error.message, 300, 'Quellenabfrage fehlgeschlagen.'),
     } };
@@ -1804,6 +1858,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
     return { source: { name: SOURCE_NAME, error: displayText(error.message, 300, 'Korrekturquelle nicht lesbar.') } };
   }
   const queue = buildQueue(tasks, claims, workflows, { ...queueOptions, unavailableCorrectionSources: unavailable });
+  queue.push(...buildFigmaImportQueue(figmaImportResult.value, claims, queueOptions));
   // Keep a confirmed date after its source thread leaves the history window.
   // Any currently visible attempt prevents borrowing an older success.
   retainCompletionDates(queue, previousTasks, claims);
@@ -1998,6 +2053,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
           previews, previousTasks: cached?.tasks, ...(typeof maxTasksPerMac === 'function' ? { maxTasksOf: maxTasksPerMac } : {}),
           ...(options.localHub ? { fleetReader: readLocalHubFleet,
             reservationReader: time => readHubReservations(hubRuntimeDirectory(options.localHub), { now: time, lookbackDays: Number(config.claims?.lookback_days) || 60 }),
+            figmaImportReader: time => readHubFigmaImports(hubRuntimeDirectory(options.localHub), { now: time, lookbackDays: Number(config.claims?.lookback_days) || 60 }),
             salesReader: time => readLocalSales(path.join(options.localHub, 'sales-newsletter'), time),
             questionReader: () => readPmQuestions(path.join(options.localHub, '..', 'rs-pm-question-pilot', 'state.sqlite')),
             checkpointReader: () => readStoredCheckpoints(options.localHub) } : {}) }), cachedSource: cached?.source,

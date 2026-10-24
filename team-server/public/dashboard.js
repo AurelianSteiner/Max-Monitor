@@ -82,6 +82,7 @@
   };
   const workflowNames = {
     correction: "Korrektur",
+    "figma-import": "PM-Figma-Rückweg",
     sales: "Sales",
     "pre-gen": "Pre-Gen",
     pregen: "Pre-Gen",

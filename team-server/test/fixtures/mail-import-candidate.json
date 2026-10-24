@@ -1,0 +1,29 @@
+{
+  "provenance": "Synthetic contract vector emitted by Hub eccb086 figma-import-admission.candidate",
+  "intent": {
+    "customerId": "test",
+    "mailId": "13bbd52a88c5347a1e000d0e61fb66e4e281c1cb0c6ffd3bc8b451f3c3c48ff3",
+    "intentId": "5054c4ebee2e550fe11ac714e884a7fcf39db6cedd4d68dde8501d39564a05c5",
+    "requestHash": "678ec51ec31040e6a71c96f676c75dff6a10f561a7cf70b51166d08e5a8b37d1",
+    "sourceRef": {
+      "customerId": "test",
+      "mailId": "13bbd52a88c5347a1e000d0e61fb66e4e281c1cb0c6ffd3bc8b451f3c3c48ff3",
+      "mailKey": "test/clickup:package-test:master/de-DE",
+      "version": 2,
+      "contentHash": "0e3231e4bce44a87c6f256dd7a2949823673d242c829d68be304161b50f105c5"
+    },
+    "targetFileKey": "TESTFILE123",
+    "status": "pending",
+    "admission": null,
+    "result": null,
+    "error": null,
+    "createdAt": "2026-10-07T11:00:00.000Z",
+    "updatedAt": "2026-10-07T11:00:00.000Z"
+  },
+  "candidate": {
+    "schema": "rs.mail-package-figma-candidate/v1",
+    "jobKind": "figma-import",
+    "taskId": "figma-import:5054c4ebee2e550fe11ac714e884a7fcf39db6cedd4d68dde8501d39564a05c5",
+    "candidateHash": "f0f1a2dcaf0df1460f79e55c164078e6ffe3be35d9799c4fb9e40fe8a1bb40ba"
+  }
+}
