@@ -326,6 +326,7 @@ function claimDetails(kind, state, paused, text, reactions) {
   const terminalLine = text.split('\n')[1] || '';
   const doneLabel = ['final', 'released'].includes(state) && /^(?:✅|:white_check_mark:)\s*Fertig:/u.test(terminalLine);
   return { doneLabel, ...claimOutcome(kind, state, paused, doneLabel, reactions),
+    mailUrl: [...text.matchAll(/<([^|>]+)(?:\|[^>]+)?>/g)].map(match => mailLink(match[1])).find(Boolean),
     ...(kind === 'correction' ? { figmaUrl: [...text.matchAll(/<([^|>]+)(?:\|[^>]+)?>/g)]
       .map(match => figmaLink(match[1])).find(Boolean) } : {}),
     url, company: displayText((/^[*]?[^\n·]+\s·\s(.+?)[*]?$/u.exec(text.split('\n')[0])?.[1] || (kind === 'correction' ? text.split('\n')[0] : '')).replace(/[*`]/g, ''), 200),
@@ -731,11 +732,32 @@ function figmaLink(value) {
   return undefined;
 }
 
-function taskFigmaLink(task, preferGenerated) {
+function mailLink(value) {
+  if (typeof value !== 'string' || value.length > 2000) return undefined;
+  try {
+    const url = new URL(value), keys = [...url.searchParams.keys()];
+    if (url.origin === 'https://api.ruegamer-steiner.de' && !url.username && !url.password && !url.hash
+      && url.pathname === '/editor/public/mail.html'
+      && keys.every(key => ['customer', 'mail', 'version'].includes(key)) && new Set(keys).size === keys.length
+      && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(url.searchParams.get('customer') || '')
+      && /^[a-f0-9]{64}$/.test(url.searchParams.get('mail') || '')
+      && (!url.searchParams.has('version') || /^[1-9][0-9]*$/.test(url.searchParams.get('version'))
+        && Number.isSafeInteger(Number(url.searchParams.get('version'))))) return url.href;
+  } catch { /* Invalid optional source metadata cannot interrupt the queue. */ }
+  return undefined;
+}
+
+function taskMailSource(task) {
+  const fields = (Array.isArray(task?.custom_fields) ? task.custom_fields : [])
+    .filter(field => String(field?.name || '').trim().toLowerCase() === 'mail link');
+  return { present: fields.some(field => field.value !== undefined && field.value !== null && field.value !== ''), url: fields.length === 1 && fields[0].type === 'url' ? mailLink(fields[0].value) : undefined };
+}
+
+function taskFigmaLink(task, preferGenerated, sourceOnly = false) {
   const fields = Array.isArray(task.custom_fields) ? task.custom_fields.filter(field => field && typeof field === 'object') : [];
   const generated = fields.find(field => field.id === 'ef2ba681-7e9d-40a3-b79a-dda5cd402015');
   const source = fields.find(field => field.id === '3530f8a4-44e1-4ea5-894d-4d87fb5c418d');
-  const candidates = [
+  const candidates = sourceOnly ? fields.filter(field => field.id === '3530f8a4-44e1-4ea5-894d-4d87fb5c418d' || String(field.name || '').trim().toLowerCase() === 'figma link') : [
     // Pre-Gen opens its generated result. Uploads open the current task source,
     // which can differ after the design team has moved or corrected the mail.
     ...(preferGenerated ? [generated, source] : [source, generated]),
@@ -951,6 +973,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       // Resolve that state before attaching the exact attempt's completion date.
       const evidence = status === 'completed' || taskState.preGenFinished({ workflow: workflow.queueWorkflow ?? workflow.id, sourceStatus: taskStatus(task) })
         ? completionEvidence(matches) : {};
+      const mailSource = taskMailSource(task);
       rows.push({ id: `clickup:${workflow.id}:${task.id}`, title, url, workflow: workflow.queueWorkflow ?? workflow.id, status,
         ...languagePackage(task, tasks, workflow),
         contentKind: contentKind(task, matches),
@@ -958,7 +981,9 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         completionSource: evidence.completionSource || (status === 'completed' ? finished ? 'register' : 'clickup' : undefined),
         sourceStatus: displayText(typeof task.status === 'string' ? task.status : task.status?.status, 120),
         company: task.folder?.hidden ? undefined : displayText(task.folder?.name, 200),
-        figmaUrl: taskFigmaLink(task, (workflow.claimWorkflow ?? workflow.id) === 'newsletter') || ((workflow.claimWorkflow ?? workflow.id) === 'newsletter' ? figmaLink(figmaBoardUrl) : undefined),
+        mailUrl: mailSource.url,
+        figmaUrl: mailSource.present ? taskFigmaLink(task, false, true)
+          : taskFigmaLink(task, (workflow.claimWorkflow ?? workflow.id) === 'newsletter') || ((workflow.claimWorkflow ?? workflow.id) === 'newsletter' ? figmaLink(figmaBoardUrl) : undefined),
         workerId: claim?.paused && claim.portable ? undefined : claim?.workerId, attemptId: claim?.runId, blockerOwner: claim?.owner, phase: displayText(phase, 160), progress: status === 'completed' ? 100 : undefined,
         updatedAt: taskDate(task.date_updated, updatedAt), tags: [...new Set(tags.map(tag => displayText(tag, 80)).filter(Boolean))].slice(0, 30),
         // Internal only: addRunDetails reads progress and renders of this attempt, then removes it.
@@ -992,7 +1017,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       const title = displayText(claim.title, 300, taskId);
       rows.push({ id: `clickup:${workflow.id}:${taskId}`, title: workflow.titleSuffix ? `${title} · ${workflow.titleSuffix}` : title,
         url: sourceUrl, workflow: workflow.queueWorkflow ?? workflow.id,
-        contentKind: contentKind({ name: title }, matches), company: claim.company,
+        contentKind: contentKind({ name: title }, matches), company: claim.company, mailUrl: claim.mailUrl, figmaUrl: claim.figmaUrl,
         status: 'completed', phase: 'Abgeschlossen', progress: 100, workerId: claim.workerId, attemptId: claim.runId,
         ...evidence, completionSource: evidence.completionSource || 'register',
         updatedAt: evidence.completedAt || new Date(claim.heartbeat * 1000).toISOString(),
@@ -1034,7 +1059,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
     rows.push({ id: `correction:${claim.jobId}`, title: displayText(claim.title || task?.name, 300, `Korrektur ${claim.taskId}`),
       url: claim.url || (claim.taskId !== claim.jobId ? `https://app.clickup.com/t/${encodeURIComponent(claim.taskId)}` : undefined), workflow: 'correction',
       company: claim.company === 'Korrektur' ? undefined : claim.company, status, workerId: claim.paused && claim.portable ? undefined : claim.workerId, attemptId: claim.runId, blockerOwner: claim.owner,
-      figmaUrl: claim.figmaUrl,
+      figmaUrl: claim.figmaUrl, mailUrl: claim.mailUrl,
       phase, progress: status === 'completed' ? 100 : undefined, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
       ...completionEvidence([claim]),
       run: { id: claim.runId, jobId: claim.jobId, workerId: claim.workerId, ts: threadOf(claim), taskId: claim.taskId, channelId: claim.channelId, heartbeat: threadBeat(claim) } });

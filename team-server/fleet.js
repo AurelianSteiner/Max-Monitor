@@ -269,6 +269,20 @@ function validateQueue(body) {
         || parsed.username || parsed.password || !/^\/(design|file|proto|board)\/[^/]+/.test(parsed.pathname))
         throw new FleetError(400, "task.figmaUrl muss auf ein Figma-Board verweisen");
     }
+    const mailUrl = string(raw.mailUrl, "task.mailUrl", 2000, true);
+    if (mailUrl) {
+      let parsed;
+      try { parsed = new URL(mailUrl); } catch { throw new FleetError(400, "task.mailUrl ist ungültig"); }
+      const keys = [...parsed.searchParams.keys()];
+      if (parsed.origin !== 'https://api.ruegamer-steiner.de' || parsed.username || parsed.password || parsed.hash
+        || parsed.pathname !== '/editor/public/mail.html'
+        || keys.some(key => !['customer', 'mail', 'version'].includes(key)) || new Set(keys).size !== keys.length
+        || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(parsed.searchParams.get('customer') || '')
+        || !/^[a-f0-9]{64}$/.test(parsed.searchParams.get('mail') || '')
+        || parsed.searchParams.has('version') && (!/^[1-9][0-9]*$/.test(parsed.searchParams.get('version'))
+          || !Number.isSafeInteger(Number(parsed.searchParams.get('version')))))
+        throw new FleetError(400, "task.mailUrl muss auf eine eindeutige Hub-Mail verweisen");
+    }
     const tags = raw.tags === undefined ? [] : raw.tags;
     if (!Array.isArray(tags) || tags.length > 30) throw new FleetError(400, "task.tags ist ungültig");
     return optionalFields({
@@ -284,6 +298,7 @@ function validateQueue(body) {
       tags: [...new Set(tags.map((tag) => string(tag, "task.tag", 80)))],
       url,
       figmaUrl,
+      mailUrl,
       company: string(raw.company, "task.company", 200, true),
       sourceStatus: string(raw.sourceStatus, "task.sourceStatus", 120, true),
       workerId: string(raw.workerId, "task.workerId", 120, true),

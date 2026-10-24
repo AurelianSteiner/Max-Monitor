@@ -1857,14 +1857,14 @@
       const actions = node("td");
       const actionGroup = node("div", "queue-actions");
       const links = node("div", "task-links");
-      for (const [label, value] of [["Slack", task.errorUrl], [task.workflow === "sales" ? "Shop" : "ClickUp", task.url], ["Figma", task.figmaUrl]]) {
+      for (const [label, value] of [["Slack", task.errorUrl], [task.workflow === "sales" ? "Shop" : "ClickUp", task.url], ["Mail", task.mailUrl], ["Figma", task.figmaUrl]]) {
         const href = safeLink(value);
         if (!href) continue;
         const link = node("a", "text-button", `${label} ↗`);
         link.href = href;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
-        link.setAttribute("aria-label", `${label === "Figma" ? "Figma-Board" : label === "Slack"
+        link.setAttribute("aria-label", `${label === "Figma" ? "Figma-Board" : label === "Mail" ? "Mail im Hub" : label === "Slack"
           ? task.status === "clarification" ? "Klärung in Slack" : "Fehler in Slack" : label} öffnen: ${task.title || task.id}`);
         links.append(link);
       }
@@ -2079,6 +2079,14 @@
     if (url) {
       const link = node("a", "button primary", task.workflow === "sales" ? "Shop öffnen ↗" : "In ClickUp öffnen ↗");
       link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      children.push(link);
+    }
+    const mailUrl = safeLink(task.mailUrl);
+    if (mailUrl) {
+      const link = node("a", "button secondary", "Mail im Hub öffnen ↗");
+      link.href = mailUrl;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       children.push(link);

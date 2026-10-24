@@ -883,3 +883,18 @@ Beim Rollout nur geprüfte Relay-Dateien aktualisieren und vorhandene zusätzlic
 Live-Wartungshelfer erhalten; die laufende Relay-Revision, die echte Fleet-Antwort
 und frische Worker-Polls nachweisen. Simulationen erzeugen keine ClickUp-Aufgaben,
 FileStage-Uploads, Kundenschreibvorgänge oder Nachrichten.
+
+
+### Mail-Paket-Quellen
+
+Die Queue und die Auftragsdetails zeigen das ClickUp-Feld `Mail Link` als „Mail“.
+Der Link öffnet die Hub-Mailseite mit ihren unveränderlichen Versionen. Ein
+versionierter Abschlusslink bleibt auch nach einem Relay-Neustart an genau den
+Abschluss dieses Laufs gebunden; ein neuerer Aufgabenlink ersetzt ihn nicht.
+Der Relay nimmt nur eindeutige Hub-Mail-URLs ohne Zugangsdaten an.
+
+Bei einer Paket-Mail wird kein allgemeines Figma-Testboard und kein älteres
+`Figma Pre-Gen` als Ergebnis ergänzt. Ein ausdrücklich vorhandener `Figma Link`
+bleibt sichtbar, etwa nach einem PM-Rückweg. Bestehende Figma-Aufträge und ihre
+Historie behalten die bisherigen Links. Ein fehlender Mail-Link gilt nicht als
+belegter Fertigstand und ändert weder Admission noch Aufgabenbesitz.

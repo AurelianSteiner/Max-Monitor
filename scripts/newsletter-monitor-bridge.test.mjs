@@ -1242,3 +1242,32 @@ test('the snapshot compares reservations with the Mac heartbeats it read from th
     }, fleetReader: async () => [{ workerId: 'macbook-2', name: 'macbook-2', lastSeenAt: new Date(now - 45000).toISOString() }] });
   assert.deepEqual([snapshot.tasks[0].status, snapshot.tasks[0].phase], ['queued', 'Wartet · Mac aktiv, Reservierungsmeldung an den RS Hub verzögert']);
 });
+
+
+test('package tasks open their Hub source without inventing a generated or configured Figma result', () => {
+  const mailUrl = 'https://api.ruegamer-steiner.de/editor/public/mail.html?customer=test&mail=' + 'a'.repeat(64);
+  const raw = { ...taskIn('pre-gen', 'package'), custom_fields: [
+    { name: 'Mail Link', type: 'url', value: mailUrl },
+    { name: 'Figma Pre-Gen', id: 'ef2ba681-7e9d-40a3-b79a-dda5cd402015', type: 'url', value: 'https://figma.com/design/old' }
+  ] };
+  const row = buildQueue([raw], [], DEFAULT_WORKFLOWS, { now, figmaBoardUrl: 'https://figma.com/design/default' })[0];
+  assert.equal(row.mailUrl, mailUrl); assert.equal(row.figmaUrl, undefined);
+  raw.custom_fields.push({ name: 'Figma Link', type: 'url', value: 'https://figma.com/design/explicit-fallback' });
+  const fallback = buildQueue([raw], [], DEFAULT_WORKFLOWS, { now })[0];
+  assert.equal(fallback.mailUrl, mailUrl); assert.equal(fallback.figmaUrl, 'https://figma.com/design/explicit-fallback');
+  raw.custom_fields[0].value += '&mail=' + 'b'.repeat(64);
+  assert.equal(buildQueue([raw], [], DEFAULT_WORKFLOWS, { now })[0].mailUrl, undefined);
+  raw.custom_fields[0].value = mailUrl; raw.custom_fields.push({ name: 'Mail Link', type: 'url', value: '' });
+  assert.equal(buildQueue([raw], [], DEFAULT_WORKFLOWS, { now })[0].mailUrl, undefined);
+});
+
+test('completed correction history retains only its own versioned Hub result across claim readers', () => {
+  const mailUrl = 'https://api.ruegamer-steiner.de/editor/public/mail.html?customer=test&mail=' + 'b'.repeat(64) + '&version=2';
+  const message = { ...jobClaim('ai_korrektur_claim', 'korrektur-cu-86cb1enj9@1791802497891-intern', 'macbook-1', 'final'),
+    text: '*Korrektur · Kunde*\n✅ Fertig: <https://app.clickup.com/t/86cb1enj9|Mail>\n<' + mailUrl + '|Mail im Hub öffnen>' };
+  const claim = parseClaim(message); assert.ok(claim); assert.equal(claim.mailUrl, mailUrl);
+  const row = buildQueue([], [claim], DEFAULT_WORKFLOWS, { now })[0];
+  assert.equal(row.mailUrl, mailUrl); assert.equal(row.figmaUrl, undefined);
+  const unsafe = parseClaim({ ...message, text: message.text.replace('api.ruegamer-steiner.de', 'evil.test') });
+  assert.equal(buildQueue([], [unsafe], DEFAULT_WORKFLOWS, { now })[0].mailUrl, undefined);
+});

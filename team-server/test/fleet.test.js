@@ -499,3 +499,20 @@ test('worker failures survive heartbeat, source outages and restart, and clear o
     assert.equal(unknown.workerIssues.length, 1);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
+
+
+test("exact Hub mail links survive relay restart and malformed replacements leave history unchanged", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "max-monitor-mail-links-"));
+  const mailUrl = 'https://api.ruegamer-steiner.de/editor/public/mail.html?customer=test&mail=' + 'a'.repeat(64) + '&version=2';
+  try {
+    const store = createFleetStore(directory);
+    store.updateQueue("DEMO1234", { tasks: [task("package", { mailUrl }), task("legacy", { figmaUrl: 'https://figma.com/design/source' })], source: { name: "ClickUp" } });
+    const previous = createFleetStore(directory).snapshot("DEMO1234").queue.tasks;
+    assert.equal(previous.find(row => row.id === 'package').mailUrl, mailUrl);
+    assert.equal(previous.find(row => row.id === 'legacy').mailUrl, undefined);
+    for (const unsafe of [mailUrl.replace('api.ruegamer-steiner.de', 'api.ruegamer-steiner.de.evil.test'), mailUrl.replace('https:', 'http:'), mailUrl + '&version=3', mailUrl + '&next=https://evil.test', mailUrl + '#foreign', mailUrl.replace('version=2', 'version=9007199254740992'), mailUrl.replace('https://', 'https://user:pass@'), mailUrl.replace('customer=test', 'customer=../other')]) {
+      assert.throws(() => store.updateQueue("DEMO1234", { tasks: [task("bad", { mailUrl: unsafe })], source: { name: "ClickUp" } }), error => error.status === 400);
+      assert.deepEqual(store.snapshot("DEMO1234").queue.tasks, previous);
+    }
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
