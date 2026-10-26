@@ -39,6 +39,9 @@
         <button class="nav-item" data-view="queue" data-status="clarification" title="Alle Aufgaben mit offenen PM-Rückfragen">
           PM Rückfragen <span id="nav-clarification" class="nav-count">—</span>
         </button>
+        <button class="nav-item" data-view="queue" data-status="completed" data-queue-period="today" title="Heute erledigte Aufgaben · Europe/Berlin">
+          Heute erledigt <span id="nav-completed-today" class="nav-count">—</span>
+        </button>
         <button class="nav-item" data-view="machines">
           Macs <span id="nav-machines" class="nav-count">—</span>
         </button>
@@ -215,7 +218,7 @@
             ><button class="tab" data-status="paused" aria-pressed="false">
               Pausiert <span id="paused-count">0</span></button
             ><button class="tab" data-status="completed" aria-pressed="false">
-              Erledigt <span id="completed-count">0</span></button
+              Alle erledigten <span id="completed-count">0</span></button
             ><button class="tab" data-status="all" aria-pressed="false">
               Alle <span id="all-count">0</span></button>
           </div>
@@ -253,7 +256,7 @@
                 <th scope="col">Workflow</th>
                 <th scope="col">Status</th>
                 <th scope="col">Mac / Fortschritt</th>
-                <th scope="col">Abschluss / Änderung</th>
+                <th scope="col" id="queue-time-heading">Abschluss / Änderung</th>
                 <th scope="col" class="queue-links-heading">Aktionen</th>
               </tr>
             </thead>

@@ -785,18 +785,25 @@
       $(id).dataset.tone = countTone(status, count);
     }
     $("nav-machines").textContent = snapshot ? numberFormat.format(devices.length) : "—";
+    const completedToday = snapshot
+      ? tasksInPeriod(items, "today").filter(task => matchesStatus(task, "completed")).length : null;
+    $("nav-completed-today").textContent = completedToday == null ? "—" : numberFormat.format(completedToday);
+    $("nav-completed-today").dataset.tone = countTone("completed", completedToday);
     $("nav-attention").textContent = numberFormat.format(attention.length);
     $("nav-attention").hidden = !snapshot || !attention.length;
     $("log-attention-count").textContent = snapshot ? attention.length : "—";
     $("log-attention-count").dataset.tone = snapshot ? attention.length ? "bad" : "good" : "unknown";
     $("machine-count").textContent = devices.length;
-    const queueTitle = statusNames[statusFilter] || ({ open: "Offene Aufgaben", all: "Alle Aufgaben" })[statusFilter] || "Aufgaben";
+    const queueTitle = statusFilter === "completed" && queuePeriod === "today" ? "Heute erledigt"
+      : statusNames[statusFilter] || ({ open: "Offene Aufgaben", all: "Alle Aufgaben" })[statusFilter] || "Aufgaben";
     $("queue-title").textContent = queueTitle;
+    $("queue-time-heading").textContent = statusFilter === "completed" ? "Erledigt" : "Abschluss / Änderung";
     $("page-title").textContent =
       { overview: "Übersicht", queue: queueTitle, machines: "Macs", log: "Log", usage: "Verbrauch & Aufwand" }[view] || "Übersicht";
     document.querySelectorAll(".nav-item").forEach((button) => {
       const selected = button.dataset.view === view
-        && (!button.dataset.status || button.dataset.status === statusFilter);
+        && (!button.dataset.status || (button.dataset.status === statusFilter
+          && (button.dataset.queuePeriod || "all") === queuePeriod));
       button.classList.toggle("selected", selected);
       button.setAttribute(
         "aria-current",
@@ -809,13 +816,15 @@
     $("log-section").hidden = view !== "log";
     if($("usage-section")) $("usage-section").hidden = view !== "usage";
     document.querySelectorAll("#status-tabs .tab").forEach((button) => {
+      const selected = button.dataset.status === statusFilter
+        && (statusFilter !== "completed" || queuePeriod === "all");
       button.classList.toggle(
         "selected",
-        button.dataset.status === statusFilter,
+        selected,
       );
       button.setAttribute(
         "aria-pressed",
-        String(button.dataset.status === statusFilter),
+        String(selected),
       );
     });
     document.querySelectorAll("#log-filters .tab").forEach((button) => {
@@ -826,7 +835,7 @@
     $("worker-filter").hidden = !workerFilter;
     $("worker-filter-label").textContent = `Aufgaben für ${workerName(workerFilter)}`;
     $("queue-period-filter").hidden = queuePeriod !== "today";
-    $("queue-period-label").textContent = `Offen + heute abgeschlossen · ${productionDay(Date.now())}`;
+    $("queue-period-label").textContent = `${statusFilter === "completed" ? "Heute erledigt" : "Offen + heute abgeschlossen"} · ${productionDay(Date.now())}`;
     document.querySelectorAll("[data-pipeline-period]").forEach((button) => {
       const selected = button.dataset.pipelinePeriod === pipelinePeriod;
       button.classList.toggle("selected", selected);
@@ -1643,10 +1652,10 @@
       $("machine-grid").append(card);
     });
   }
-  function filtered(items, { ignoreStatus = false } = {}) {
+  function filtered(items, { ignoreStatus = false, ignorePeriod = false } = {}) {
     const workerNames = new Map(machines().filter(machine => machine.workerId).map(machine => [machine.workerId, [workerName(machine.workerId, machine.name), machine.deviceName].filter(Boolean).join(" ")]));
     const needle = query.trim().toLocaleLowerCase();
-    return tasksInPeriod(items, queuePeriod)
+    return tasksInPeriod(items, ignorePeriod ? "all" : queuePeriod)
       .filter((task) => {
         if (
           !ignoreStatus && !matchesStatus(task, statusFilter)
@@ -1667,7 +1676,9 @@
           ] ?? 5) -
             ({ running: 0, blocked: 1, failed: 2, clarification: 3, paused: 4, queued: 5, completed: 6 }[
               b.status
-            ] ?? 5) || String(a.title).localeCompare(String(b.title)),
+            ] ?? 5) || (statusFilter === "completed"
+              ? (timestamp(b.completedAt) || 0) - (timestamp(a.completedAt) || 0) : 0)
+          || String(a.title).localeCompare(String(b.title)),
       );
   }
   function canComplete(task) {
@@ -1745,6 +1756,8 @@
     const scoped = filtered(items, { ignoreStatus: true });
     const statusCounts = { open: scoped.filter(isOpen).length, all: scoped.length };
     for (const status of ["marked", "running", "queued", "paused", "clarification", "blocked", "completed"]) statusCounts[status] = scoped.filter(task => matchesStatus(task, status)).length;
+    statusCounts.completed = filtered(items, { ignoreStatus: true, ignorePeriod: true })
+      .filter(task => matchesStatus(task, "completed")).length;
     for (const [status, count] of Object.entries(statusCounts)) {
       const label = $(`${status}-count`);
       if (label) {
@@ -1775,6 +1788,10 @@
       ? "Verbinde den Team-Server, um die vollständige Queue zu laden."
       : items.length === 0 && !snapshot.queue.source?.lastSuccessAt
         ? "Queue-Quelle noch nicht verbunden. Richte die Newsletter-Brücke ein, um offene ClickUp-Aufgaben zu sehen."
+        : statusFilter === "completed" && queuePeriod === "today"
+          ? tasksInPeriod(items, "today").some(task => matchesStatus(task, "completed"))
+            ? "Keine heute erledigten Aufgaben für diese Filter. Entferne die Suche oder Filter, um alle zu sehen."
+            : "Heute wurden noch keine Aufgaben erledigt."
         : statusFilter === "clarification"
           ? items.some(task => matchesStatus(task, "clarification"))
             ? "Keine PM-Rückfragen für diese Filter. Entferne die Suche oder Filter, um alle PM-Rückfragen zu sehen."
@@ -2600,7 +2617,7 @@
     .forEach((button) =>
       button.addEventListener("click", () => {
         if (button.classList.contains("nav-item") && button.dataset.status) {
-          openQueue(button.dataset.status);
+          openQueue(button.dataset.status, "", button.dataset.queuePeriod || "all");
           return;
         }
         selectView(
@@ -2613,6 +2630,7 @@
   document.querySelectorAll("#status-tabs .tab").forEach((button) =>
     button.addEventListener("click", () => {
       statusFilter = button.dataset.status;
+      if (statusFilter === "completed") queuePeriod = "all";
       queuePage = 0;
       saveFilters();
       render();
