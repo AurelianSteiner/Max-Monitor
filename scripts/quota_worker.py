@@ -38,7 +38,17 @@ def text(value, length=300):
     return re.sub(r"[\x00-\x1f\x7f]", " ", str(value or ""))[:length]
 
 
-def workflow(task_id, path=""):
+def workflow(task_id, path="", fassung=None):
+    # Like the worker (src/jobs.js runKind): a language version of its own ClickUp
+    # task ("FR | …") carries runs.fassung and is a translation, an existing-flow
+    # source stays a newsletter. Its task ID names no translation (Fehleraudit 26.10.2026).
+    try:
+        version = json.loads(fassung) if fassung else None
+    except (TypeError, ValueError):
+        version = None
+    if isinstance(version, dict) and version.get("sprache"):
+        existing = version.get("bestandsflow")
+        return "newsletter" if isinstance(existing, dict) and existing.get("schema") == "rs-existing-flow-source/v1" else "translation"
     value = (task_id + " " + str(path)).lower()
     if "sales-" in value or value.startswith("sales:"):
         return "sales"
@@ -145,12 +155,13 @@ def run_inventory(config, hours, now):
     cutoff = datetime.fromtimestamp(earliest, timezone.utc).isoformat().replace("+00:00", "Z")
     result = []
     session = "session_id" if "session_id" in columns else "NULL AS session_id"
+    fassung = "fassung" if "fassung" in columns else "NULL AS fassung"
     for row in db.execute("SELECT run_id,task_id,task_name,run_dir,state,started_at,finished_at," + session + "," + customer +
-                          " FROM runs WHERE finished_at IS NULL OR finished_at>=? ORDER BY queued_at DESC", (cutoff,)):
+                          "," + fassung + " FROM runs WHERE finished_at IS NULL OR finished_at>=? ORDER BY queued_at DESC", (cutoff,)):
         row = dict(row)
         result.append({"run_id": text(row["run_id"], 240), "task_id": text(row["task_id"]),
                        "title": text(row["task_name"]), "customer": text(row["customer_name"]),
-                       "kind": workflow(row["task_id"], row["run_dir"]), "started": row["started_at"],
+                       "kind": workflow(row["task_id"], row["run_dir"], row["fassung"]), "started": row["started_at"],
                        "finished": row["finished_at"], "state": row["state"],
                        "stream": str(Path(row["run_dir"]) / "stream.jsonl"), "session": row['session_id']})
     db.close()

@@ -6,7 +6,18 @@ Der Mac-Beobachter liest die exakte Claude-Sitzung und den ersten Zeitstempel au
 dem Anfang des Sales-Streams, auch wenn die aktive Laufdatei nach dem Abschluss
 bereits entfernt wurde. Damit bleiben die zugehörigen Unteragenten auffindbar.
 Der bestätigte Abschluss derselben zentralen Sales-Auftrags-ID schließt außerdem
-bereits erfasste, verwaiste Unterläufe. Später begonnene Versuche bleiben offen.
+bereits erfasste, verwaiste Unterläufe. Seit dem Fehleraudit vom 26.10.2026 endet
+eine Sales-Phase auch, wenn der Hub-Job blockiert ist (`blockiert`), nicht mehr
+gelistet wird (abgebrochen, `abgebrochen`) oder ohne lesbaren Abschlusszeitpunkt
+bzw. auf einem anderen Mac fertig wurde. Endzeit ist der Abschluss des Jobs, sonst
+der letzte erfasste Schritt der Phase. Später begonnene oder nicht gelistete
+Phasen bleiben offen, bis sie 30 Minuten still sind.
+
+Worker-Läufe (alle Arten außer Sales) behalten Ende und Zustand aus der
+Worker-Datenbank. Der Queue-Abschluss des Auftrags gilt nur, solange der Worker
+noch kein Ende meldet. Sprachfassungen als eigene ClickUp-Aufgabe zählen wie beim
+Worker (`runs.fassung`, `src/jobs.js runKind`) als Übersetzung; bereits als
+Newsletter erfasste Läufe wechseln mit ihren Ereignissen in den Übersetzungsauftrag.
 
 Für historische Lücken arbeitet `sales_usage_backfill.py` ausschließlich auf einer
 SQLite-Sicherung. Geprüfte Roharchive aller parallelen Aufgaben werden dort

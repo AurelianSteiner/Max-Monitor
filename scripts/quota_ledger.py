@@ -356,17 +356,42 @@ class Ledger:
             self.averages_changed('queue_changed')
             self.meta('average_queue_signature', signature)
         self.meta("task_context", context)
-        # A completed Sales job closes every recorded phase, including subagent
-        # streams that disappeared from inventory with the active receipt.
+        # A Sales phase ends with its Hub job, including subagent streams that
+        # disappeared from inventory with the active receipt (Fehleraudit
+        # 26.10.2026): completed (also without a readable completion date or on
+        # another Mac), blocked, or aborted (readLocalSales lists no aborted job).
+        # The end is the job's completion, else the phase's own last recorded turn.
+        # Without any Sales row the listing is unknown and nothing is closed.
+        sales = {clean(task.get("id")): task for task in (data.get("queue") or {}).get("tasks", [])
+                 if task.get("workflow") == "sales" and task.get("id")}
         reconciled = 0
-        for key, facts in context.items():
-            finished = stamp(facts.get('finished'))
-            if not key.startswith('task:sales:') or facts.get('state') != 'completed' or finished is None:
+        open_phases = self.db.execute("""SELECT worker,run_id,task_id,started,
+            (SELECT MAX(at) FROM events WHERE events.worker=runs.worker AND events.run_id=runs.run_id) AS last
+            FROM runs WHERE kind='sales' AND state IN ('running','queued','unverified')""").fetchall() if sales else []
+        for row in open_phases:
+            task = sales.get(row["task_id"])
+            status = task.get("status") if task else "aborted"
+            last = max((at for at in (row["started"], row["last"]) if at is not None), default=None)
+            # A phase newer than the job's end, or of a job not listed yet, may
+            # still be running: only a phase silent for 30 minutes is closed.
+            silent = last is not None and now - last >= 1800
+            if status == "completed":
+                completed = stamp(task.get("completedAt"))
+                if completed is not None and (row["started"] is None or row["started"] <= completed):
+                    state, end = "completed", completed
+                elif completed is None or silent:
+                    state, end = "completed", last
+                else:
+                    continue
+            elif status == "blocked":
+                state, end = "blockiert", last
+            elif status == "aborted" and silent:
+                state, end = "abgebrochen", last
+            else:
                 continue
-            reconciled += self.db.execute("""UPDATE runs SET state='completed',finished=?
-                WHERE kind='sales' AND task_id=? AND (started IS NULL OR started<=?)
-                AND state IN ('running','queued','unverified')""",
-                (finished, key[5:], finished)).rowcount
+            reconciled += self.db.execute("""UPDATE runs SET state=?,finished=COALESCE(?,finished)
+                WHERE worker=? AND run_id=? AND state IN ('running','queued','unverified')""",
+                (state, end, row["worker"], row["run_id"])).rowcount
         if reconciled:
             self.averages_changed('task_changed')
         self.meta("last_fleet_sample", iso(now))
@@ -494,11 +519,33 @@ class Ledger:
                     known = {**known, 'finished': None, 'state': None}
                 if not run_id or not task_id:
                     continue
-                finished = stamp(known.get("finished") or run.get("finished"))
+                # Fehleraudit 26.10.2026: a worker run keeps its own end. The queue
+                # completes the order, often hours later (claim heartbeat, PM review),
+                # and may complete it although this run ended blocked. Its date and
+                # state only stand in while the worker reports no end (Sales has none).
+                own_end = kind != "sales" and stamp(run.get("finished")) is not None
+                end = run.get("finished") if own_end else known.get("finished") or run.get("finished")
+                end_state = run.get("state") if own_end else known.get("state") or run.get("state")
+                finished = stamp(end)
                 if finished is not None and finished < since:
                     continue
                 job = kind + ":" + task_id
+                if kind == "translation":
+                    # Language versions ran as 'newsletter' before the collector read
+                    # runs.fassung: move this run with its turns to its own job.
+                    legacy = "newsletter:" + task_id
+                    if self.db.execute("SELECT 1 FROM runs WHERE worker=? AND run_id=? AND job=?",
+                                       (worker, run_id, legacy)).fetchone():
+                        self.db.execute("UPDATE runs SET job=?,kind=? WHERE worker=? AND run_id=?", (job, kind, worker, run_id))
+                        self.db.execute("UPDATE events SET job=? WHERE worker=? AND run_id=?", (job, worker, run_id))
+                        if not self.db.execute("SELECT 1 FROM runs WHERE job=? LIMIT 1", (legacy,)).fetchone():
+                            self.db.execute("UPDATE tool_usage SET job=? WHERE job=?", (job, legacy))
+                            self.db.execute("DELETE FROM compact_jobs WHERE job=?", (legacy,))
+                        reasons.add('task_changed')
                 compact = self.db.execute("SELECT finished FROM compact_jobs WHERE job=?", (job,)).fetchone()
+                if compact is None and kind == "translation":
+                    # Already compacted under its former kind: never count it twice.
+                    compact = self.db.execute("SELECT finished FROM compact_jobs WHERE job=?", ("newsletter:" + task_id,)).fetchone()
                 if (not payload.get('sales_replay') or kind != 'sales') and compact and finished is not None and finished <= compact[0] and now - compact[0] > 48 * 3600:
                     retired_runs.add(run_id)
                     continue
@@ -514,8 +561,8 @@ class Ledger:
                   pending_scan=COALESCE(excluded.pending_scan,runs.pending_scan)""",
                                 (worker, run_id, job, task_id, clean(known.get("title") or run.get("title")),
                                  clean(run.get("customer") or known.get("customer")), kind,
-                                 stamp(run.get("started")), stamp(known.get("finished") or run.get("finished")),
-                                 clean(known.get("state") or run.get("state"), 80), now,
+                                 stamp(run.get("started")), finished,
+                                 clean(end_state, 80), now,
                                  max(0, int(run.get("evidence_errors", 0))), run.get("pending_scan")))
                 current = self.db.execute('SELECT ' + fields + ' FROM runs WHERE worker=? AND run_id=?', (worker, run_id)).fetchone()
                 if prior is None:

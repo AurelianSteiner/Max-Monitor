@@ -476,6 +476,109 @@ class LedgerTests(unittest.TestCase):
         row = self.ledger.db.execute("SELECT customer,state,finished FROM runs").fetchone()
         self.assertEqual(tuple(row), ("shop.example", "completed", NOW + 600))
 
+    def test_worker_run_keeps_its_own_end_and_state_over_a_later_queue_completion(self):
+        # Fehleraudit 26.10.2026: the order completed 9 h after the run ended, and a
+        # blocked upload run must never become 'completed' through its order.
+        data = fleet(NOW, 10)
+        data["queue"] = {"tasks": [{"id": "clickup:upload:a", "workflow": "upload", "attemptId": "run-a",
+                                    "status": "completed", "completedAt": NOW + 600 + 9 * 3600}]}
+        self.ledger.fleet(data, NOW)
+        p = payload(False)
+        p["runs"][0].update(state="blockiert")
+        self.ledger.ingest(p, NOW + 700)
+        self.assertEqual(tuple(self.ledger.db.execute("SELECT state,finished FROM runs").fetchone()), ("blockiert", NOW + 600))
+        # A run without its own end still takes the queue's completion.
+        p["runs"][0].update(finished=None, state="running")
+        self.ledger.db.execute("DELETE FROM runs")
+        self.ledger.ingest(p, NOW + 700)
+        self.assertEqual(tuple(self.ledger.db.execute("SELECT state,finished FROM runs").fetchone()),
+                         ("completed", NOW + 600 + 9 * 3600))
+
+    def test_queue_end_already_recorded_is_corrected_by_the_next_worker_report(self):
+        data = fleet(NOW, 10)
+        data["queue"] = {"tasks": [{"attemptId": "run-a", "status": "completed", "completedAt": NOW + 30000}]}
+        self.ledger.fleet(data, NOW)
+        self.ledger.db.execute("INSERT INTO runs(worker,run_id,job,task_id,kind,started,finished,state,last_seen) VALUES(?,?,?,?,?,?,?,?,?)",
+                               ("mac-1", "run-a", "newsletter:task-a@1", "task-a@1", "newsletter", NOW, NOW + 30000, "completed", NOW))
+        self.ledger.ingest(payload(False), NOW + 700)
+        self.assertEqual(tuple(self.ledger.db.execute("SELECT state,finished FROM runs").fetchone()), ("fertig", NOW + 600))
+
+    def test_language_version_moves_with_its_turns_from_newsletter_to_translation(self):
+        self.ledger.reset(NOW - 1)
+        first = payload()
+        first["runs"].append({**first["runs"][0], "run_id": "run-other", "task_id": "task-b@1"})
+        self.ledger.ingest(first, NOW + 600)
+        self.ledger.db.execute("INSERT INTO compact_jobs VALUES('newsletter:task-a@1',?,?)", (NOW + 600, b"x"))
+        self.ledger.db.execute("INSERT INTO tool_usage(id,job,name) VALUES('tool-a','newsletter:task-a@1','Read')")
+        again = payload(False)
+        again["runs"][0]["kind"] = "translation"
+        self.ledger.ingest(again, NOW + 700)
+        db = self.ledger.db
+        self.assertEqual(tuple(db.execute("SELECT job,kind FROM runs WHERE run_id='run-a'").fetchone()),
+                         ("translation:task-a@1", "translation"))
+        self.assertEqual({r[0] for r in db.execute("SELECT job FROM events WHERE run_id='run-a'")}, {"translation:task-a@1"})
+        self.assertEqual(db.execute("SELECT job FROM tool_usage").fetchone()[0], "translation:task-a@1")
+        self.assertIsNone(db.execute("SELECT 1 FROM compact_jobs WHERE job='newsletter:task-a@1'").fetchone())
+        # Other newsletter runs keep their kind; a later report never turns it back.
+        self.assertEqual(db.execute("SELECT kind FROM runs WHERE run_id='run-other'").fetchone()[0], "newsletter")
+        self.ledger.ingest(payload(False), NOW + 800)
+        self.assertEqual(db.execute("SELECT kind FROM runs WHERE run_id='run-a'").fetchone()[0], "translation")
+
+    def test_language_version_compacted_as_newsletter_is_not_reimported_twice(self):
+        self.ledger.reset(NOW - 1)
+        self.ledger.db.execute("INSERT INTO compact_jobs VALUES('newsletter:task-a@1',?,?)", (NOW + 600, b"x"))
+        again = payload(False)
+        again["runs"][0]["kind"] = "translation"
+        self.ledger.ingest(again, NOW + 3 * 86400)
+        self.assertEqual(self.ledger.db.execute("SELECT COUNT(*) FROM runs").fetchone()[0], 0)
+
+    def sales_phase(self, task, worker="mac-1", run=None, started=NOW, state="running", last=None):
+        run = run or task.replace(":", "-") + "-abcd"
+        self.ledger.db.execute("INSERT INTO runs(worker,run_id,job,task_id,kind,started,state,last_seen) VALUES(?,?,?,?,?,?,?,?)",
+                               (worker, run, "sales:" + task, task, "sales", started, state, NOW))
+        if last is not None:
+            self.ledger.db.execute("INSERT INTO events(id,event_type,job,worker,run_id,at) VALUES(?,?,?,?,?,?)",
+                                   ("m-" + run, "message", "sales:" + task, worker, run, last))
+        return run
+
+    def test_sales_phases_close_with_blocked_aborted_or_elsewhere_completed_hub_jobs(self):
+        # Fehleraudit 26.10.2026: 16 ended Sales builds stayed 'running' for days.
+        blocked = self.sales_phase("sales:1.1", last=NOW + 900)
+        aborted = self.sales_phase("sales:2.2", last=NOW + 1200)
+        elsewhere = self.sales_phase("sales:3.3", worker="gelb", last=NOW + 600)
+        undated = self.sales_phase("sales:4.4", started=None, state="unverified")
+        live = self.sales_phase("sales:5.5", last=NOW + 3000)
+        fresh = self.sales_phase("sales:6.6", last=NOW + 3000)
+        late = self.sales_phase("sales:7.7", started=NOW + 1200, last=NOW + 1500)
+        data = fleet(NOW + 3600, 10)
+        data["queue"] = {"tasks": [
+            {"id": "sales:1.1", "workflow": "sales", "status": "blocked", "workerId": "mac-1"},
+            {"id": "sales:3.3", "workflow": "sales", "status": "completed", "workerId": "pink", "completedAt": NOW + 3000},
+            {"id": "sales:4.4", "workflow": "sales", "status": "completed", "workerId": "mac-1"},
+            {"id": "sales:5.5", "workflow": "sales", "status": "running", "workerId": "mac-1"},
+            {"id": "sales:7.7", "workflow": "sales", "status": "completed", "completedAt": NOW + 1000}]}
+        self.ledger.fleet(data, NOW + 3600)
+        rows = {r["run_id"]: (r["state"], r["finished"]) for r in self.ledger.db.execute("SELECT run_id,state,finished FROM runs")}
+        self.assertEqual(rows[blocked], ("blockiert", NOW + 900))
+        self.assertEqual(rows[aborted], ("abgebrochen", NOW + 1200))
+        self.assertEqual(rows[elsewhere], ("completed", NOW + 3000))
+        self.assertEqual(rows[undated], ("completed", None))
+        self.assertEqual(rows[live], ("running", None))
+        # Not listed yet and active within 30 minutes: may be a just reserved job.
+        self.assertEqual(rows[fresh], ("running", None))
+        # Started after the job's completion: closed only once silent.
+        self.assertEqual(rows[late], ("completed", NOW + 1500))
+        # An unverified report of the gone receipt keeps the closed state.
+        p = payload(False)
+        p["runs"][0].update(run_id=aborted, task_id="sales:2.2", kind="sales", state="unverified", finished=None)
+        self.ledger.ingest(p, NOW + 3700)
+        self.assertEqual(self.ledger.db.execute("SELECT state FROM runs WHERE run_id=?", (aborted,)).fetchone()[0], "abgebrochen")
+
+    def test_sales_phases_stay_open_without_a_sales_listing(self):
+        run = self.sales_phase("sales:2.2", last=NOW)
+        self.ledger.fleet(fleet(NOW + 7200, 10), NOW + 7200)
+        self.assertEqual(self.ledger.db.execute("SELECT state FROM runs WHERE run_id=?", (run,)).fetchone()[0], "running")
+
 
     def test_scheduler_preserves_measurement_age_and_shares_one_account_budget(self):
         self.ledger.fleet(fleet(NOW, 23, worker='mac-a'), NOW)
@@ -813,6 +916,26 @@ class WorkerTests(unittest.TestCase):
         for task, kind in [("korrektur-cu-123", "correction"), ("a-klaviyo", "upload"),
                            ("a-translation-en", "translation"), ("sales:123.45", "sales")]:
             self.assertEqual(worker_module.workflow(task), kind)
+
+    def test_language_version_task_is_a_translation_like_the_worker_run_kind(self):
+        # Fehleraudit 26.10.2026: "FR | …" tasks have plain ClickUp IDs; only runs.fassung names them.
+        task, path = "12451cu94ev@1793007523112", "/runs/20261026T122226Z-4bb7-12451cu94ev@1793007523112"
+        self.assertEqual(worker_module.workflow(task, path, json.dumps({"sprache": "FR", "de_task_id": "x"})), "translation")
+        self.assertEqual(worker_module.workflow(task, path, json.dumps({"sprache": "EN", "bestandsflow": {
+            "schema": "rs-existing-flow-source/v1"}})), "newsletter")
+        for value in (None, "", "{", json.dumps({"de_task_id": "x"})):
+            self.assertEqual(worker_module.workflow(task, path, value), "newsletter")
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            state = home / "worker.sqlite"
+            with sqlite3.connect(state) as db:
+                db.execute("CREATE TABLE runs(run_id,task_id,task_name,run_dir,state,started_at,finished_at,queued_at,fassung)")
+                for run, fassung in (("run-fr", json.dumps({"sprache": "FR"})), ("run-de", None)):
+                    db.execute("INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?)", (run, task, "FR | Golfbag", str(home / run), "fertig",
+                               ledger_module.iso(NOW), ledger_module.iso(NOW + 60), ledger_module.iso(NOW), fassung))
+            with patch.object(worker_module.Path, "home", return_value=home):
+                rows = worker_module.run_inventory({"paths": {"state_db": str(state), "runs_dir": str(home / "runs")}}, 72, NOW + 100)
+            self.assertEqual({r["run_id"]: r["kind"] for r in rows}, {"run-fr": "translation", "run-de": "newsletter"})
 
     def test_failed_acknowledgement_preserves_cursor_for_retry(self):
         with tempfile.TemporaryDirectory() as directory:
