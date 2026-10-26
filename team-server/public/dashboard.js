@@ -784,13 +784,10 @@
       $(id).textContent = count == null ? "—" : numberFormat.format(count);
       $(id).dataset.tone = countTone(status, count);
     }
-    $("nav-machines").textContent = snapshot ? numberFormat.format(devices.length) : "—";
     const completedToday = snapshot
       ? tasksInPeriod(items, "today").filter(task => matchesStatus(task, "completed")).length : null;
     $("nav-completed-today").textContent = completedToday == null ? "—" : numberFormat.format(completedToday);
     $("nav-completed-today").dataset.tone = countTone("completed", completedToday);
-    $("nav-attention").textContent = numberFormat.format(attention.length);
-    $("nav-attention").hidden = !snapshot || !attention.length;
     $("log-attention-count").textContent = snapshot ? attention.length : "—";
     $("log-attention-count").dataset.tone = snapshot ? attention.length ? "bad" : "good" : "unknown";
     $("machine-count").textContent = devices.length;

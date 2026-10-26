@@ -745,9 +745,8 @@ dialog.wide { max-width: 1060px; }
   .brand-name { display: none; }
   .nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .nav-item { min-height: 44px; height: auto; padding: 0 6px; }
-  .nav-item[data-status="clarification"],
-  .nav-item[data-queue-period="today"],
-  .nav-item[data-view="usage"] { grid-column: span 2; }
+  .nav-item[data-status="clarification"] { grid-column: span 2; }
+  .nav-item[data-queue-period="today"] { grid-column: 1 / -1; }
   .topbar-actions .icon-button { width: 40px; height: 40px; }
   main { padding: 12px 16px 24px; }
   .pipeline-period .tab { min-height: 44px; height: auto; padding: 0 12px; }
