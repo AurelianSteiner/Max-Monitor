@@ -1329,3 +1329,31 @@ test('controller test runs and unattempted blocked tags outside the order status
   // A production reservation can never claim the Sales owner.
   assert.equal(register('86cprod', { owner: 'sales' }).owner, undefined);
 });
+
+// Review 26.10.2026 (p28): the exception is bounded to rows without any attempt.
+// A blocked tag outside the order status that still has its own final attempt,
+// and a language version with its own reservation, keep the technical gap; only
+// a retired language tag without any reservation is history.
+test('blocked rows with their own attempt outside the order status keep the technical reporting gap', () => {
+  const since = '1792850865419';
+  const final = (job, taskId, kind) => parseRegisterClaim({ runId: `20261024T184048Z-${taskId.slice(-4)}`, taskId: job, worker: 'macbook-1',
+    state: 'final', channel: 'C0C6NMMGGJV', ts: '1792850900.000001', heartbeat: now / 1000 - 600,
+    text: `*${kind}*\n<https://app.clickup.com/t/${taskId}|Test>` });
+  const tasks = [taskIn('backlog', '86cback', ['pre gen · blockiert']), taskIn('pre-gen', '86clang', ['en translation · blockiert']),
+    taskIn('pre-gen', '86cgone', ['en translation · blockiert'])];
+  const claims = [final(`86cback@${since}`, '86cback', 'Pre-Gen'), final(`86clang@${since}-uebersetzung-en`, '86clang', 'Translation')];
+  // The translation tasks' own Pre-Gen rows (no reservation, not blocked) are not part of this case.
+  const rows = () => buildQueue(tasks, claims, DEFAULT_WORKFLOWS, { now }).filter(row => row.status === 'blocked')
+    .map(row => { delete row.run; return row; });
+  assert.deepEqual(rows().map(row => [row.id, Boolean(row.attemptId)]), [['clickup:newsletter:86cback', true],
+    ['clickup:translation-en:86cgone', false], ['clickup:translation-en:86clang', true]]);
+  const fresh = applyBlockerGrace(rows(), [], now);
+  assert.deepEqual(fresh.map(row => [row.id, row.status, row.phase]), [
+    ['clickup:newsletter:86cback', 'queued', 'Wartet · Ergebnis wird übernommen'],
+    ['clickup:translation-en:86clang', 'queued', 'Wartet · Ergebnis wird übernommen']]);
+  const previous = fresh.map(row => ({ ...row, blockerRecordedAt: new Date(now - 6 * 60000).toISOString() }));
+  const late = applyBlockerGrace(rows(), previous, now + BLOCKER_GRACE_MS);
+  assert.deepEqual(late.map(row => [row.id, row.status, row.reasonCode, row.responsibleRole]), [
+    ['clickup:newsletter:86cback', 'blocked', 'completion_report_missing', 'Technik'],
+    ['clickup:translation-en:86clang', 'blocked', 'completion_report_missing', 'Technik']]);
+});

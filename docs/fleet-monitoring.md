@@ -263,11 +263,15 @@ ohne Versuch in einem Status, der den Workflow nicht beauftragt (z. B. `backlog`
 Sprachfassung nur über ihre Reservierung), ist kein Auftrag und erscheint nicht als
 Blockade. Ein Sales-Befund, den der Worker selbst typisiert (Sales-`job.json`:
 `blocker_owner`/`blockerOwner` `sales` oder `reason_code`/`reasonCode`
-`sales_shop_unavailable`), ist ein abgeschlossener fachlicher Fall ohne Produktion:
-`sales_shop_unavailable`, Zuständigkeit Sales, `blockerKind` `withdrawn`, Phase
-„Abgeschlossen · keine Produktion möglich“. Lesbare Befunde, beauftragte Aufträge ohne
-Ergebnis und ungetypte Sales-Befunde bleiben unverändert; eine Worker-Reservierung kann
-den Owner `sales` nicht tragen.
+`sales_shop_unavailable`; ein genannter Owner entscheidet, widersprüchliche Angaben
+wie Owner `technik` mit dem Sales-Code bleiben ungetypt), ist ein abgeschlossener
+fachlicher Fall ohne Produktion: `sales_shop_unavailable`, Zuständigkeit Sales,
+`blockerKind` `withdrawn`, Phase „Abgeschlossen · keine Produktion möglich“. Lesbare
+Befunde, Läufe mit eigenem Versuch ohne Ergebnis (auch außerhalb des Startstatus),
+beauftragte Aufträge ohne Ergebnis und ungetypte Sales-Befunde bleiben unverändert;
+eine Worker-Reservierung kann den Owner `sales` nicht tragen. Die Controller-Liste
+liest die Brücke beim Start; neue IDs gelten nach einem Neustart der Brücke bzw. auf
+dem RS Hub nach der Neuinstallation der kopierten Worker-Quelle.
 
 Der Relay übernimmt diese Zuordnung: Eine getypte Zeile mit der Rolle „PM“ wartet als
 „Wartet · PM-Rückfrage“, andere getypte Rollen (Technik, Stammdaten, PM und Design)

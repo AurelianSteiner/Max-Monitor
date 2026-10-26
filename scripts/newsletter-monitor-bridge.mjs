@@ -49,7 +49,9 @@ export const DEFAULT_WORKFLOWS = [
     blocked: ['klaviyo upload · blockiert'], completed: ['klaviyo upload · fertig'],
   } },
   // Legacy language tags describe history, never a new order. Keep actual
-  // reservations and terminal outcomes visible while the worker is status-driven.
+  // reservations and their terminal outcomes visible while the worker is
+  // status-driven; a blocked tag without any reservation is history only
+  // (applyBlockerGrace, Fehleraudit 26.10.2026).
   ...TRANSLATION_LANGUAGES.map(language => ({ id: `translation-${language}`, queueWorkflow: 'translation', titleSuffix: language.toUpperCase(),
     triggerTags: [`${language} translation`, `${language} translations`], claimWorkflow: `translation-${language}`, reservationOnly: true, stateTags: {
       blocked: [`${language} translation · blockiert`], completed: [`${language} translation · fertig`],
@@ -1018,7 +1020,8 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       // Waiting or running without a reservation is an order only in the start
       // status, and never for an order the worker's admit() parks (manual, pop-up,
       // test workspace, cutover). Blocked and completed history and reserved runs
-      // stay; downstream Pre-Gen statuses complete it below.
+      // stay; downstream Pre-Gen statuses complete it below. applyBlockerGrace
+      // later removes a blocked tag without any attempt outside the start status.
       const backed = Boolean(claim) && claim.outcome !== 'completed' && (LIVE_CLAIM_STATES.has(claim.state) || claim.paused === true);
       if (workflow.reservationOnly && ['queued', 'running'].includes(status) && !backed) continue;
       if (starts.length && ['queued', 'running'].includes(status) && !backed
@@ -1621,9 +1624,14 @@ export async function readLocalSales(directory, now = Date.now()) {
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Ungültige Shopadresse');
       const blockedReason = status === 'blocked' ? displayText(job.reason, 500, 'Sales-Lauf ist blockiert') : undefined;
       // Till, 26.10.2026 (Fehleraudit): the worker's own type of a Sales finding.
-      // job.owner is the attempt identity, never a responsibility.
-      const salesOwner = status === 'blocked' && ([job.blocker_owner, job.blockerOwner].includes('sales')
-        || [job.reason_code, job.reasonCode].includes('sales_shop_unavailable'));
+      // job.owner is the attempt identity, never a responsibility. A named owner
+      // decides; contradicting fields (e.g. owner technik with the Sales code)
+      // keep the untyped classification, never a closed case.
+      const present = values => values.filter(value => value !== undefined && value !== null && value !== '');
+      const typedOwners = present([job.blocker_owner, job.blockerOwner]);
+      const typedCodes = present([job.reason_code, job.reasonCode]);
+      const salesOwner = status === 'blocked' && (typedOwners.length ? typedOwners.every(value => value === 'sales')
+        : typedCodes.length > 0 && typedCodes.every(value => value === 'sales_shop_unavailable'));
       // Job state is authoritative. A missing heartbeat must never remove accepted work.
       const awaitingWorker = ['queued', 'running'].includes(status) && now - seen > 30 * 60000;
       const progress = salesProgress(job);

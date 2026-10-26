@@ -222,9 +222,15 @@ test('a blocked Sales job typed by the worker carries the Sales owner into the q
   const shop = { status: 'blocked', reason: 'Shop nicht verfügbar: Betrieb eingestellt.' };
   const directory = await fixture(t, [job({ ...shop, reason_code: 'sales_shop_unavailable' }), job({ ...shop, blocker_owner: 'sales' }),
     job({ ...shop, reasonCode: 'sales_shop_unavailable' }), job(shop), job({ ...shop, reason_code: 'technical_step_failed', blocker_owner: 'technik' }),
-    job({ status: 'running', reason_code: 'sales_shop_unavailable', blocker_owner: 'sales' })]);
-  const rows = await readLocalSales(directory, now);
-  assert.deepEqual(rows.map(row => row.blockerOwner), ['sales', 'sales', 'sales', undefined, undefined, undefined]);
+    job({ status: 'running', reason_code: 'sales_shop_unavailable', blocker_owner: 'sales' }),
+    // A named owner decides; contradicting typed fields never close the case.
+    job({ ...shop, reason_code: 'sales_shop_unavailable', blocker_owner: 'technik' }),
+    job({ ...shop, blocker_owner: 'sales', blockerOwner: 'technik' }),
+    job({ ...shop, reason_code: 'sales_shop_unavailable', reasonCode: 'technical_step_failed' }),
+    job({ ...shop, blocker_owner: 'sales', reason_code: 'technical_step_failed' })]);
+  const rows = (await readLocalSales(directory, now)).sort((a, b) => a.id.localeCompare(b.id));
+  assert.deepEqual(rows.map(row => row.blockerOwner), ['sales', 'sales', 'sales', undefined, undefined, undefined,
+    undefined, undefined, undefined, 'sales']);
   assert.deepEqual(rows.map(row => row.attemptId), rows.map(() => 'e5908a37-6225-4918-adb6-90e8dceba2c7'));
   assert.equal(rows.some(row => row.reasonCode), false, 'the bridge derives the context itself');
 });
