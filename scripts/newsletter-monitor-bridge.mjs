@@ -15,7 +15,7 @@ import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
 import { applyPmOwners, createPmRoutingReader } from './pm-owner.mjs';
 import taskState from './task-state.cjs';
 import issueScope from './worker-issue-scope.cjs';
-import { checkpointBlocker, applyBlockerContexts, blockerContext, setupOwner, BLOCKER_OWNERS } from './blocker-context.mjs';
+import { checkpointBlocker, applyBlockerContexts, blockerContext, setupOwner, questionWithdrawn, BLOCKER_OWNERS } from './blocker-context.mjs';
 import { createStatusAudit, saveStatusAudit } from './status-reconciliation.mjs';
 
 const require = createRequire(import.meta.url);
@@ -326,7 +326,7 @@ function jobIdentity(value) {
 
 // Outcome, link and labels from the claim text the worker renders for both
 // Slack and the RS Hub register (src/slack-notifier.js claimText).
-function claimDetails(kind, state, paused, text, reactions) {
+function claimDetails(kind, state, paused, text, reactions, owner) {
   const link = /<([^|>]+)\|([^>]+)>/.exec(text.split('\n')[1] || '');
   let url;
   try { const candidate = new URL(link?.[1]); if (candidate.protocol === 'https:' && !candidate.username && !candidate.password && candidate.href.length <= 2000) url = candidate.href; } catch { /* Optional task link. */ }
@@ -334,7 +334,7 @@ function claimDetails(kind, state, paused, text, reactions) {
   // Only the terminal label of this exact claim can confirm completion.
   const terminalLine = text.split('\n')[1] || '';
   const doneLabel = ['final', 'released'].includes(state) && /^(?:✅|:white_check_mark:)\s*Fertig:/u.test(terminalLine);
-  return { doneLabel, ...claimOutcome(kind, state, paused, doneLabel, reactions),
+  return { doneLabel, ...claimOutcome(kind, state, paused, doneLabel, reactions, owner),
     mailUrl: [...text.matchAll(/<([^|>]+)(?:\|[^>]+)?>/g)].map(match => mailLink(match[1])).find(Boolean),
     ...(kind === 'correction' ? { figmaUrl: [...text.matchAll(/<([^|>]+)(?:\|[^>]+)?>/g)]
       .map(match => figmaLink(match[1])).find(Boolean) } : {}),
@@ -342,9 +342,15 @@ function claimDetails(kind, state, paused, text, reactions) {
     title: displayText((link?.[2] || text.split('\n')[0].replace(/[*`]/g, '')).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'), 300) };
 }
 
-function claimOutcome(kind, state, paused, doneLabel, reactions) {
+// Fehleraudit 26.10.2026 (KartonPlus 86cb6m4hf): later attempts reuse the order's
+// Slack post and with it its reactions. Like the worker's successfulClaim
+// (src/slack-cleanup.js), a bare ✅ never completes an attempt that shows its own
+// failed end: ❌ or the blocker owner the worker types only for failed runs.
+// Its "✅ Fertig:" label still decides; leftover pause metadata decides nothing.
+function claimOutcome(kind, state, paused, doneLabel, reactions, owner) {
+  const failedEnd = reactions.includes('x') || BLOCKER_OWNERS.has(owner);
   return {
-    outcome: doneLabel || (['final', 'released'].includes(state) && reactions.includes('white_check_mark')) ? 'completed'
+    outcome: doneLabel || (['final', 'released'].includes(state) && reactions.includes('white_check_mark') && !failedEnd) ? 'completed'
       : paused && state === 'final' ? 'queued' : reactions.includes('x') ? 'blocked' : undefined,
     awaitingPm: kind === 'correction' && state === 'final' && reactions.includes('question'),
   };
@@ -375,7 +381,7 @@ export function parseClaim(message) {
     ...(value.paused === true ? { paused: true, ...(value.portable === true ? { portable: true } : {}) } : {}),
     workflow: typeof value.workflow === 'string' ? value.workflow : identity.workflow ?? kind,
     reactions: reactions.filter(name => typeof name === 'string'),
-    ...claimDetails(kind, value.state, value.paused === true, String(message.text ?? ''), reactions) };
+    ...claimDetails(kind, value.state, value.paused === true, String(message.text ?? ''), reactions, value.owner) };
 }
 
 // One reservation of the RS Hub register (AI Newsletter Creation
@@ -411,7 +417,7 @@ export function parseRegisterClaim(doc) {
     ...(typeof doc.channel === 'string' && /^C[A-Z0-9]{5,20}$/.test(doc.channel) ? { channelId: doc.channel } : {}),
     // Fehleraudit 19.10.2026: the worker's typed owner of a finished run; any other value is dropped.
     ...(BLOCKER_OWNERS.has(doc.owner) ? { owner: doc.owner } : {}),
-    ...claimDetails(identity.kind, doc.state, paused, String(doc.text ?? ''), reactions) };
+    ...claimDetails(identity.kind, doc.state, paused, String(doc.text ?? ''), reactions, doc.owner) };
 }
 
 // Same runtime directory as the worker transport's remote script:
@@ -525,7 +531,7 @@ export function mergeHubClaims(slackClaims, hubClaims) {
       completionTimestampKnown: settled && slack.completionTimestampKnown !== false,
       threadTs: slack.ts, threadHeartbeat: slack.heartbeat, channelId: hub.channelId || slack.channelId, reactions,
       url: hub.url || slack.url, title: hub.title || slack.title, company: hub.company ?? slack.company,
-      ...claimOutcome(kind, hub.state, hub.paused === true, hub.doneLabel || (slack.doneLabel && !live), reactions) });
+      ...claimOutcome(kind, hub.state, hub.paused === true, hub.doneLabel || (slack.doneLabel && !live), reactions, hub.owner) });
   }
   return merged;
 }
@@ -1423,7 +1429,9 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
         ? parseBlockedReason(`:warning: blockiert: ${old.blockerReason || old.blockedReason}`) : undefined);
       // Nachkontrolle 21.10.2026: the ❓ of a customer setup gap or missing master
       // data is that blocker's status, never a PM question (blocker-context.mjs setupOwner).
-      const question = !setupOwner(row.blockerOwner, row.blockedReason);
+      // Fehleraudit 26.10.2026: neither is a question the worker withdrew; its earlier
+      // pm_decision_pending of the same attempt is not kept.
+      const question = !setupOwner(row.blockerOwner, row.blockedReason) && !questionWithdrawn(row.blockedReason);
       if (question && (status?.pmQuestion || row.phase === 'PM-Rückfrage offen'
         || (!currentReason && old?.attemptId === row.attemptId && old.phase === 'PM-Rückfrage offen' && row.blockedReason))) row.phase = 'PM-Rückfrage offen';
       else if (row.blockedReason && row.status === 'blocked' && row.workflow === 'correction') row.phase = 'Korrektur blockiert';

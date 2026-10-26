@@ -75,6 +75,12 @@ const PREPARATION_SOURCE = /Aufgabenquelle während der Vorbereitung geändert/i
 const PM_ANSWER_CHANGE = /nach der PM-Antwort geändert(?: \(([^)]*)\))?/i;
 const LINK_FIELD = /^(?:Klaviyo[ -]?Link|Freigabe (?:intern|extern)|Filestage[ -]Link(?: (?:intern|extern))?)$/i;
 const PM_DECISION = /PM[- ]Entscheidung erforderlich|PM entscheidet|im Aufgabentitel/i;
+// Fehleraudit 26.10.2026 (Tomishop Black Week): the worker's fixed prefix of a PM
+// question it withdrew after a source change (pm-question-worker.js
+// withdrawnQuestionRelease, technical-repair.js PM_QUESTION_WITHDRAWN). Nothing is
+// left to answer: the PM commissions again. The worker types its owner 'pm'.
+const QUESTION_WITHDRAWN = /Offene PM-Rückfrage zurückgezogen:/i;
+export const questionWithdrawn = text => QUESTION_WITHDRAWN.test(clean(text, 4000));
 // Checked access or setup in the "Stand:" section never decides the cause.
 const causeOf = reason => reason.split(/(?:^|\s)\**Stand\**\s*:/)[0];
 
@@ -93,6 +99,8 @@ function fallbackContext(reason, state, technical) {
   const cause = causeOf(reason);
   const setupCause = cause.replace(DESIGN_GATE, ' ');
   const change = PM_ANSWER_CHANGE.exec(cause);
+  if (QUESTION_WITHDRAWN.test(cause)) return { reasonCode: 'pm_source_changed', responsibleRole: 'PM', blockerKind: 'waiting_human',
+    nextStep: 'Rückfrage ist zurückgezogen: den Startstatus in ClickUp erneut setzen; der neue Lauf prüft die aktuelle Quelle.' };
   if (SETUP.test(setupCause)) return { ...OWNER_CONTEXT.onboarding };
   if (PREPARATION_SOURCE.test(cause)) return { reasonCode: 'preparation_source_changed', responsibleRole: 'Technik',
     nextStep: 'Geänderte Angaben aus dem Befund mit der gespeicherten Vorbereitung abgleichen; Arbeitsstand erhalten.' };
@@ -162,9 +170,9 @@ export function summary(text) {
   const second = sentenceEnds(value)[1];
   return clip(second ? value.slice(0, second) : value, SUMMARY_MAX);
 }
-// The first point of the worker's "Nächste Schritte:", if it has one.
+// The first point of the worker's "Nächste Schritte:" or "Nächster Schritt:", if it has one.
 function workerNextStep(text) {
-  const steps = /(?:^|\s)\**Nächste Schritte\**:?\s+(.+)$/i.exec(clean(text, 4000))?.[1];
+  const steps = /(?:^|\s)\**Nächste(?: Schritte|r Schritt)\**:?\s+(.+)$/i.exec(clean(text, 4000))?.[1];
   if (!steps) return '';
   const first = steps.replace(/^(?:•|-|\d{1,2}\.)\s*/u, '').split(/\s(?:•|\d{1,2}\.\s)|\s\**Stand\**:\s/u)[0].trim();
   const end = sentenceEnds(first)[0];

@@ -437,6 +437,34 @@ test('a customer setup gap shown with ❓ keeps setup ownership and step without
   assert.deepEqual([journal.phase, journal.reasonCode, journal.responsibleRole], ['Wartet · PM-Rückfrage', 'pm_decision_pending', 'PM']);
 });
 
+// Fehleraudit 26.10.2026: seven Tomishop Black Week orders kept "wartet auf
+// PM-Entscheidung" after the worker withdrew their question (12451cu65b8).
+const WITHDRAWN = 'Offene PM-Rückfrage zurückgezogen: Die Aufgabenquelle wurde geändert (Mail Link). '
+  + 'Nächster Schritt: 🔁 am Beitrag oder den Status „pre-gen“ erneut setzen; der neue Lauf prüft die aktuelle Quelle.';
+test('a withdrawn PM question is shown as a new commission, never as the attempt\'s earlier pending decision', async () => {
+  const jobId = '12451cu65b8@1792698405468', runId = '20261022T194713Z-59e5-12451cu65b8@1792698405468';
+  const fixture = () => {
+    const value = tomishopRun(jobId, runId, 'pm');
+    value.saved.blocker = { ...blockerContext(WITHDRAWN, { state: 'unklar' }), blockerState: 'unklar', blockerSource: 'checkpoint', blockerSourceRunId: runId };
+    return value;
+  };
+  const old = { ...fixture().row, phase: 'PM-Rückfrage offen', blockedReason: WITHDRAWN, blockerReason: WITHDRAWN,
+    reasonCode: 'pm_decision_pending', responsibleRole: 'PM', nextStep: 'Entscheidung im Rückfragen-Thread bzw. in ClickUp treffen; danach setzt der Worker fort.' };
+  delete old.run;
+  const withdrawnNotice = async () => response({ ok: true, messages: [
+    { ts: '1792585580.000100', bot_id: 'worker-bot', reactions: [{ name: 'x' }], metadata: { event_type: 'ai_newsletter_claim',
+      event_payload: { task_id: jobId, run_id: runId, worker: 'macworker-5-schwarz', state: 'final', heartbeat: 1 } } },
+    { ts: '1792585580.000200', bot_id: 'worker-bot', text: `❓ Wartet · PM-Rückfrage\n${WITHDRAWN}`,
+      metadata: { event_type: 'ai_newsletter_notice', event_payload: { notification_id: `${runId}:status` } } }] });
+  for (const fetcher of [async () => { throw Error('temporary outage'); }, withdrawnNotice]) {
+    const row = await tomishopSnapshot(fixture(), { previousTasks: [old], fetcher });
+    assert.deepEqual([row.reasonCode, row.responsibleRole, row.blockerKind], ['pm_source_changed', 'PM', 'waiting_human']);
+    assert.notEqual(row.phase, 'PM-Rückfrage offen');
+    assert.match(row.blockedReason, /Nächster Schritt: 🔁 am Beitrag oder den Status „pre-gen“ erneut setzen/);
+    assert.doesNotMatch(row.blockedReason, /Rückfragen-Thread|setzt der Worker fort/);
+  }
+});
+
 test('a terminal correction marked Fertig in its parent is completed without a reaction', () => {
   const message = { ts: '1791862331.952979', text: '*Korrektur · Happy dogs*\n:white_check_mark: Fertig: <https://app.clickup.com/t/86cb1enj9|Sortimentsvorstellung Trockenfutter>',
     metadata: { event_type: 'ai_korrektur_claim', event_payload: { task_id: 'korrektur-cu-86cb1enj9@1791813435889-extern',

@@ -258,3 +258,25 @@ test('a typed Sales finding is a closed business case; untyped Sales rows keep t
   assert.deepEqual([rows[1].reasonCode, rows[1].responsibleRole, rows[1].blockerKind, rows[1].phase],
     ['blocker_review_required', 'Zuständigkeit ungeklärt', undefined, 'Sales blockiert']);
 });
+
+test('a PM question the worker withdrew is no pending decision but a new commission with the worker step', () => {
+  // Fehleraudit 26.10.2026 (Tomishop Black Week 12451cu65b8): the worker withdrew the
+  // question after a source change and types the owner pm (src/blocker-owner.js).
+  const withdrawn = 'Offene PM-Rückfrage zurückgezogen: Die Aufgabenquelle wurde geändert (Mail Link). '
+    + 'Nächster Schritt: 🔁 am Beitrag oder den Status „pre-gen“ erneut setzen; der neue Lauf prüft die aktuelle Quelle.';
+  const typed = blockerContext(withdrawn, { owner: 'pm' });
+  assert.deepEqual([typed.reasonCode, typed.responsibleRole, typed.blockerKind], ['pm_source_changed', 'PM', 'waiting_human']);
+  assert.equal(blockerContext(withdrawn, { state: 'unklar' }).reasonCode, 'pm_source_changed');
+  const rows = [{ status: 'blocked', workflow: 'newsletter', blockedReason: withdrawn, blockerOwner: 'pm' },
+    { status: 'blocked', workflow: 'newsletter', blockedReason: withdrawn, reasonCode: 'blocker_review_required', blockerOwner: 'pm' }];
+  applyBlockerContexts(rows, [], 1000);
+  for (const row of rows) {
+    assert.equal(row.reasonCode, 'pm_source_changed');
+    assert.equal(row.nextStep, '🔁 am Beitrag oder den Status „pre-gen“ erneut setzen; der neue Lauf prüft die aktuelle Quelle.');
+    assert.match(row.blockedReason, /Nächster Schritt: 🔁 am Beitrag oder den Status „pre-gen“ erneut setzen/);
+  }
+  // A still open question stays a PM decision.
+  const open = [{ status: 'blocked', workflow: 'newsletter', phase: 'PM-Rückfrage offen', blockerReason: 'Welche Module?', blockerOwner: 'pm' }];
+  applyBlockerContexts(open, [], 1000);
+  assert.equal(open[0].reasonCode, 'pm_decision_pending');
+});

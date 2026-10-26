@@ -151,6 +151,29 @@ test('the register decides state and pause; Slack only adds its thread and the c
   assert.equal(mergeHubClaims([posted], null)[0], posted);
 });
 
+test('a blocked upload attempt on a reused Slack post never completes through an earlier ✅ (KartonPlus 86cb6m4hf)', () => {
+  // Fehleraudit 26.10.2026: every attempt of one order shares the order's Slack post
+  // and its reactions. The worker ended this attempt blocked (typed owner, ❌).
+  const job = `86abc@${since}-klaviyo`;
+  const order = task('86abc', 'klaviyo upload', ['klaviyo upload · blockiert'], { statusSince: since });
+  const slackFinal = slackClaim('ai_klaviyo_upload_claim', job, { run_id: '20261016T085900Z-a', state: 'final', heartbeat: now / 1000 - 600 },
+    { ts: '1792130201.000300', text: '*Klaviyo-Upload*\nNeue Aufgabe: <https://app.clickup.com/t/86abc|Paket>', reactions: [{ name: 'white_check_mark' }, { name: 'repeat' }] });
+  const blocked = overrides => mergeHubClaims([slackFinal], [parseRegisterClaim(registerDoc({ taskId: job, state: 'final',
+    text: '*Klaviyo-Upload*\nNeue Aufgabe: <https://app.clickup.com/t/86abc|Paket>', ...overrides }))])[0];
+  for (const overrides of [{ owner: 'technik' }, { owner: 'pm', paused: true }, { reactions: ['x'] }]) {
+    const claim = blocked(overrides);
+    assert.notEqual(claim.outcome, 'completed', JSON.stringify(overrides));
+    const [row] = buildQueue([order], [claim], DEFAULT_WORKFLOWS, { now });
+    assert.notEqual(row.status, 'completed', JSON.stringify(overrides));
+    assert.equal(row.completedAt, undefined);
+  }
+  // The worker's own "✅ Fertig:" label of this attempt still completes it.
+  const done = blocked({ owner: 'technik', text: '*Klaviyo-Upload*\n✅ Fertig: <https://app.clickup.com/t/86abc|Paket>' });
+  assert.equal(done.outcome, 'completed');
+  // A bare ✅ on a claim without any failed end of its own keeps completing (legacy posts).
+  assert.equal(blocked({}).outcome, 'completed');
+});
+
 test('register heartbeats renewed on every worker sync do not re-read progress threads on the shared Slack token', async () => {
   const posted = slackClaim('ai_newsletter_claim', `86abc@${since}`, { run_id: '20261016T085900Z-a' }, { ts: '1792130201.000300' });
   const order = task('86abc', 'pre-gen', ['pre gen · läuft'], { statusSince: since });
