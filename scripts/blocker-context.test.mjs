@@ -233,3 +233,28 @@ test('the PM caption distinguishes an empty, an ambiguous and an unread PM field
   assert.deepEqual(pmFieldState(field([user('1', 'A'), user('2', 'B')])), { read: true, names: ['A', 'B'] });
   assert.deepEqual(currentPm(field([user('1', 'A'), user('2', 'B')])), {});
 });
+
+// Fehleraudit 26.10.2026 (Till): a Sales finding the worker types itself (owner
+// 'sales' or reasonCode sales_shop_unavailable) is a closed business case without
+// production, never an open technical error. Untyped Sales rows stay unassigned.
+test('a typed Sales finding is a closed business case; untyped Sales rows keep their fallback', () => {
+  const sales = blockerContext('Shop nicht öffentlich: Shopify-Passwortseite, kein Sortiment lesbar.', { owner: 'sales' });
+  assert.deepEqual([sales.reasonCode, sales.responsibleRole, sales.blockerKind], ['sales_shop_unavailable', 'Sales', 'withdrawn']);
+  assert.match(sales.nextStep, /Keine Produktion möglich/);
+  // The typed owner wins over technical words of the finding, as for every typed owner.
+  assert.equal(blockerContext('Shop antwortet mit HTTP 404', { owner: 'sales', state: 'technisch_blockiert' }).reasonCode, 'sales_shop_unavailable');
+  const rows = [
+    { id: 'sales:1792846768.952609', workflow: 'sales', status: 'blocked', url: 'https://neona.de/', phase: 'Sales blockiert',
+      blockedReason: 'Shop nicht verfügbar: Startseite liefert 404.', blockerOwner: 'sales' },
+    { id: 'sales:1792290795.824999', workflow: 'sales', status: 'blocked', url: 'https://dein-flaschengarten.de/', phase: 'Sales blockiert',
+      blockedReason: 'Shop nicht verfügbar: Betrieb eingestellt.' },
+  ];
+  applyBlockerContexts(rows, [], 1000);
+  assert.deepEqual([rows[0].reasonCode, rows[0].responsibleRole, rows[0].blockerKind, rows[0].phase],
+    ['sales_shop_unavailable', 'Sales', 'withdrawn', 'Abgeschlossen · keine Produktion möglich']);
+  assert.match(rows[0].blockedReason, /^Gesicherter Befund: Shop nicht verfügbar: Startseite liefert 404\. · Zuständig: Sales · Nächster Schritt: Keine Produktion möglich/);
+  assert.ok(rows[0].blockedReason.endsWith(rows[0].nextStep));
+  // Without the worker's type nothing is relaxed: the fallback stays unassigned and without blockerKind.
+  assert.deepEqual([rows[1].reasonCode, rows[1].responsibleRole, rows[1].blockerKind, rows[1].phase],
+    ['blocker_review_required', 'Zuständigkeit ungeklärt', undefined, 'Sales blockiert']);
+});

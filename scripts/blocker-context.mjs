@@ -44,13 +44,20 @@ const OWNER_CONTEXT = {
   technik: { reasonCode: 'technical_blocker', responsibleRole: 'Technik', blockerKind: 'technical_failure', nextStep: TECHNICAL_STEP },
 };
 OWNER_CONTEXT.automatisch = OWNER_CONTEXT.technik;
+// Till, 26.10.2026 (Fehleraudit): a Sales finding the worker typed itself (shop not
+// available, not public, no shop) closes the Sales order without production; it is
+// no open technical error. Only the Sales job carries it (readLocalSales), never a
+// worker reservation or #ai-fehler copy (BLOCKER_OWNERS).
+export const SALES_CLOSED_PHASE = 'Abgeschlossen · keine Produktion möglich';
+OWNER_CONTEXT.sales = { reasonCode: 'sales_shop_unavailable', responsibleRole: 'Sales', blockerKind: 'withdrawn',
+  nextStep: 'Keine Produktion möglich: Der Shop ist nicht nutzbar; der Sales-Auftrag ist fachlich abgeschlossen, kein technischer Schritt.' };
 // Owner group of each fallback result. A typed owner keeps a more specific
 // result of its own group and replaces any other.
 const GROUP = { customer_setup_incomplete: 'onboarding', master_data_missing: 'stammdaten',
   pm_decision_pending: 'pm', pm_source_changed: 'pm', approved_content_incomplete: 'pm',
   technical_blocker: 'technik', preparation_source_changed: 'technik', source_link_changed: 'technik',
-  product_feed_missing: 'technik', quality_review_failed: 'technik' };
-const OWNER_GROUP = { pm: 'pm', onboarding: 'onboarding', stammdaten: 'stammdaten', technik: 'technik', automatisch: 'technik' };
+  product_feed_missing: 'technik', quality_review_failed: 'technik', sales_shop_unavailable: 'sales' };
+const OWNER_GROUP = { pm: 'pm', onboarding: 'onboarding', stammdaten: 'stammdaten', technik: 'technik', automatisch: 'technik', sales: 'sales' };
 
 // The worker's setup predicate (technical-repair.js MISSING_SETUP, worker.js
 // missingCustomer). A season design gate is a PM decision, never customer setup.
@@ -214,12 +221,15 @@ export function applyBlockerContexts(rows, tasks, now = Date.now()) {
       || (setup && GROUP[row.reasonCode] !== setup)) {
       Object.assign(row, blockerContext(reason, { owner: row.blockerOwner }));
     }
+    if (row.workflow === 'sales' && row.reasonCode === OWNER_CONTEXT.sales.reasonCode) row.phase = SALES_CLOSED_PHASE;
     // A superseded worker handover (Leebmann 19.10.2026) never redirects technical work.
     const step = ['PM', 'PM und Design', STAMMDATEN_ROLE].includes(row.responsibleRole) && workerNextStep(reason);
     if (step) row.nextStep = step;
     // Build the attribution first, then fit the cause at a word boundary into
     // the relay's 500 characters (team-server/fleet.js validateQueue).
-    const tail = ` · Zuständig: ${clean(row.responsibleRole, 60)}${pmCaption(task, pm)} · Nächster Schritt: ${clip(clean(row.nextStep), 160)}`;
+    // A Sales order has no ClickUp task and therefore no PM field.
+    const caption = row.responsibleRole === OWNER_CONTEXT.sales.responsibleRole ? '' : pmCaption(task, pm);
+    const tail = ` · Zuständig: ${clean(row.responsibleRole, 60)}${caption} · Nächster Schritt: ${clip(clean(row.nextStep), 160)}`;
     const cause = clip(summary(row.blockerReason || row.blockedReason), Math.min(SUMMARY_MAX, 500 - HEAD.length - tail.length));
     row.blockedReason = clean(HEAD + cause + tail);
   }

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DEFAULT_WORKFLOWS, buildQueue, parseClaim, collectSnapshot, workerAdmission, loadWorkerAdmission } from './newsletter-monitor-bridge.mjs';
+import { DEFAULT_WORKFLOWS, buildQueue, parseClaim, parseRegisterClaim, collectSnapshot, workerAdmission, loadWorkerAdmission } from './newsletter-monitor-bridge.mjs';
 
 const now = Date.parse('2026-10-16T09:00:00Z');
 const since = '1792130000000';
@@ -142,4 +142,46 @@ test('the snapshot does not date parked orders, still dates cutover candidates, 
   assert.deepEqual(dated, ['86c9ar4dv', 'n']);
   assert.deepEqual(snapshot.tasks.map(row => row.id), ['clickup:newsletter:n']);
   assert.match(snapshot.source.detail, /4 geparkt \(1 Testumgebung, 1 manuell, 1 Pop-up, 1 Altbestand\)/);
+});
+
+// Fehleraudit 26.10.2026 (Till): the worker's own controller list
+// (config/test-workspace.json controllerOnlyTaskIds, exported as registry).
+test('the snapshot shows controller test runs from the worker registry and no unattempted backlog blockade', async t => {
+  const registry = { folderId: TEST_FOLDER.id, listId: '1200840000003026', enabled: true,
+    controllerOnlyTaskIds: ['C1', '', 'bad id', 42] };
+  const root = workerRoot(t, { 'config/test-workspace.json': JSON.stringify(registry), 'src/test-workspace.js': `const registry = require('../config/test-workspace.json');
+function admission(task, kind) {
+  if (String(task?.folder?.id || '') !== registry.folderId) return null;
+  return kind === 'newsletter' && /^Kunde:/m.test(task.description || '') ? null : 'Testauftrag';
+}
+module.exports = { registry, admission };` });
+  const { admission, missing } = loadWorkerAdmission(root);
+  assert.deepEqual(missing, []);
+  assert.deepEqual(['C1', 'C2', 'bad id', '42'].map(admission.controllerTask), [true, false, false, false]);
+  // An older worker registry without the list never treats a task as a controller test.
+  assert.equal(loadWorkerAdmission(workerRoot(t)).admission.controllerTask('C1'), false);
+  assert.equal(workerAdmission().controllerTask('C1'), false);
+  const hubFetch = async target => {
+    const url = new URL(target);
+    if (url.hostname === 'slack.com') return response({ ok: true, messages: [], has_more: false });
+    if (url.pathname.endsWith('/space')) return response({ spaces: [] });
+    if (url.pathname.endsWith('/task')) return response({ tasks: [
+      task('C1', 'pre-gen', ['pre gen · blockiert'], { folder: TEST_FOLDER, description: 'Kunde: Beispiel\nTyp: Newsletter' }),
+      task('B1', 'backlog', ['pre gen · blockiert'])], last_page: true });
+    if (url.pathname.endsWith('/time_in_status')) return response({ current_status: { status: 'pre-gen', since } });
+    if (url.pathname.endsWith('/bulk_time_in_status/task_ids')) return response({ C1: { current_status: { status: 'pre-gen', since } } });
+    throw new Error(`unexpected ${url}`);
+  };
+  const reservationReader = () => [parseRegisterClaim({ runId: '20261016T085000Z-c1', taskId: `C1@${since}`, worker: 'macbook-1',
+    state: 'final', channel: 'C0C6NMMGGJV', text: '*Pre-Gen*\n<https://app.clickup.com/t/C1|Test>', ts: '1792130200.000007', heartbeat: now / 1000 - 600 })];
+  const snapshot = await collectSnapshot({ now, config, hubFetch, admission, reservationReader, fleetReader: async () => [] });
+  assert.equal(snapshot.source.error, undefined);
+  assert.deepEqual(snapshot.tasks.map(row => [row.id, row.status, row.phase, row.reasonCode]),
+    [['clickup:newsletter:C1', 'blocked', 'Testlauf (Controller)', 'controller_test_run']]);
+  // The monitor's own test text is never read back as a worker diagnosis of the same attempt.
+  const later = await collectSnapshot({ now: now + 10 * 60000, config, hubFetch, admission, reservationReader, fleetReader: async () => [],
+    previousTasks: snapshot.tasks });
+  assert.deepEqual(later.tasks.map(row => [row.id, row.status, row.phase, row.reasonCode, row.responsibleRole, row.blockerKind]),
+    [['clickup:newsletter:C1', 'blocked', 'Testlauf (Controller)', 'controller_test_run', 'Controller-Test', 'withdrawn']]);
+  assert.equal(later.tasks[0].blockedReason, snapshot.tasks[0].blockedReason);
 });

@@ -14,6 +14,7 @@ import {
   collectSnapshot, relayEndpoint, publishSnapshot, syncOnce, runSyncLoop,
   parseRunStatus, parseBlockedReason, addRunDetails, readRenders, createRenderPreviews, uploadPreview,
   createClaimReader, readRunStatuses, freshClaimCycle, applyStoredCheckpoints,
+  applyBlockerGrace, BLOCKER_GRACE_MS, workerAdmission,
 } from './newsletter-monitor-bridge.mjs';
 
 const now = Date.parse('2026-10-07T12:00:00Z');
@@ -1282,4 +1283,49 @@ test('completed correction history retains only its own versioned Hub result acr
   assert.equal(row.mailUrl, mailUrl); assert.equal(row.figmaUrl, undefined);
   const unsafe = parseClaim({ ...message, text: message.text.replace('api.ruegamer-steiner.de', 'evil.test') });
   assert.equal(buildQueue([], [unsafe], DEFAULT_WORKFLOWS, { now })[0].mailUrl, undefined);
+});
+
+// Fehleraudit 26.10.2026 (Till): controller-only test runs report their result to
+// the controller, never as ✅/❌/❓ in Slack, and a blocked tag outside the order
+// status without any attempt is no order. Neither is a technical reporting gap;
+// every other blocked row without a result still becomes one.
+test('controller test runs and unattempted blocked tags outside the order status get no technical finding', () => {
+  const since = '1792850865419';
+  const register = (taskId, extra = {}) => parseRegisterClaim({ runId: `20261024T184048Z-${taskId.slice(-4)}`, taskId: `${taskId}@${since}`,
+    worker: 'macbook-1', state: 'final', channel: 'C0C6NMMGGJV', ts: '1792850900.000001', heartbeat: now / 1000 - 600,
+    text: `*Pre-Gen*\n<https://app.clickup.com/t/${taskId}|Test>`, ...extra });
+  const ordered = id => ({ ...taskIn('pre-gen', id, ['pre gen · blockiert']), statusSince: since });
+  const admission = workerAdmission({ controllerTaskIds: ['12451cu916z'] });
+  const rows = () => buildQueue([ordered('12451cu916z'), ordered('86cprod'), taskIn('backlog', '12451cu91km', ['pre gen · blockiert']),
+    taskIn('backlog', '12451cu91kp', ['pre gen · blockiert'])],
+  [register('12451cu916z'), register('86cprod'), register('12451cu91kp', { state: 'released' })], DEFAULT_WORKFLOWS, { now, admission })
+    .map(row => { delete row.run; return row; });
+  const fresh = applyBlockerGrace(rows(), [], now, { admission });
+  // The controller row is a test run at once; the backlog rows (no attempt) are no blockade at all.
+  assert.deepEqual(fresh.map(row => [row.id, row.status, row.phase]), [
+    ['clickup:newsletter:12451cu916z', 'blocked', 'Testlauf (Controller)'],
+    ['clickup:newsletter:86cprod', 'queued', 'Wartet · Ergebnis wird übernommen']]);
+  const previous = fresh.map(row => ({ ...row, blockerRecordedAt: new Date(now - 6 * 60000).toISOString() }));
+  const late = applyBlockerGrace(rows(), previous, now + BLOCKER_GRACE_MS, { admission });
+  const [controller, production] = late;
+  assert.equal(late.length, 2);
+  assert.deepEqual([controller.reasonCode, controller.responsibleRole, controller.blockerKind], ['controller_test_run', 'Controller-Test', 'withdrawn']);
+  assert.deepEqual([production.status, production.reasonCode, production.responsibleRole], ['blocked', 'completion_report_missing', 'Technik']);
+  // The blocker context keeps the test classification and its attribution.
+  applyBlockerContexts(late, [], now);
+  assert.deepEqual([controller.reasonCode, controller.phase], ['controller_test_run', 'Testlauf (Controller)']);
+  assert.match(controller.blockedReason, /^Gesicherter Befund: Testlauf \(Controller\).* · Zuständig: Controller-Test/);
+  // A readable result of a controller run stays exactly as reported, also a technical one.
+  const reported = { ...rows()[0], blockedReason: '⛔ Technisch blockiert: Figma-Import fehlgeschlagen' };
+  assert.equal(applyBlockerGrace([reported], [], now, { admission })[0].phase, 'Blockiert');
+  // An ordered row without an attempt still is a technical reporting gap after the grace period.
+  const unattempted = buildQueue([ordered('86cother')], [register('86cother', { state: 'released' })], DEFAULT_WORKFLOWS, { now, admission });
+  assert.equal(unattempted[0].attemptId, undefined);
+  const [gap] = applyBlockerGrace(unattempted, [{ id: unattempted[0].id, blockerRecordedAt: new Date(now - 6 * 60000).toISOString() }], now, { admission });
+  assert.equal(gap.reasonCode, 'completion_report_missing');
+  // Without the worker's controller list (older source) a controller task keeps the technical gap.
+  const [legacy] = applyBlockerGrace(rows(), previous, now + BLOCKER_GRACE_MS);
+  assert.equal(legacy.reasonCode, 'completion_report_missing');
+  // A production reservation can never claim the Sales owner.
+  assert.equal(register('86cprod', { owner: 'sales' }).owner, undefined);
 });

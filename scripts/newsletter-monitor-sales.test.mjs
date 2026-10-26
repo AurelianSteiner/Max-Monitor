@@ -215,3 +215,16 @@ test('stored quota checkpoints permit a fresh complete queue and retain the atte
   assert.equal(resumed.workerId, 'mac-f121ae17');
   assert.equal(resumed.attemptId, paused.attemptId);
 });
+
+// Fehleraudit 26.10.2026 (Till): the Sales owner arrives only through the Sales
+// job's own typed fields; job.owner stays the attempt identity.
+test('a blocked Sales job typed by the worker carries the Sales owner into the queue', async t => {
+  const shop = { status: 'blocked', reason: 'Shop nicht verfügbar: Betrieb eingestellt.' };
+  const directory = await fixture(t, [job({ ...shop, reason_code: 'sales_shop_unavailable' }), job({ ...shop, blocker_owner: 'sales' }),
+    job({ ...shop, reasonCode: 'sales_shop_unavailable' }), job(shop), job({ ...shop, reason_code: 'technical_step_failed', blocker_owner: 'technik' }),
+    job({ status: 'running', reason_code: 'sales_shop_unavailable', blocker_owner: 'sales' })]);
+  const rows = await readLocalSales(directory, now);
+  assert.deepEqual(rows.map(row => row.blockerOwner), ['sales', 'sales', 'sales', undefined, undefined, undefined]);
+  assert.deepEqual(rows.map(row => row.attemptId), rows.map(() => 'e5908a37-6225-4918-adb6-90e8dceba2c7'));
+  assert.equal(rows.some(row => row.reasonCode), false, 'the bridge derives the context itself');
+});

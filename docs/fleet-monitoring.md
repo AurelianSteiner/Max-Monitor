@@ -253,6 +253,22 @@ mehr meldet); danach meldet sie „Seit <Zeitpunkt> kein lesbares Ergebnis
 … des Laufs gemeldet“ mit Zuständigkeit Technik. Der Zeitpunkt bleibt je Versuch
 fest, damit Befund und Abhak-Version stabil bleiben.
 
+Keine offenen Technikfehler sind (Till, 26.10.2026, Fehleraudit): Läufe von Aufgaben
+aus der Controller-Liste des Workers (`config/test-workspace.json`
+`controllerOnlyTaskIds`, über `src/test-workspace.js` geladen) ohne lesbares Ergebnis;
+sie melden ihr Ergebnis dem Controller statt in Slack und stehen sofort als „Testlauf
+(Controller)“ mit `controller_test_run`, Zuständigkeit Controller-Test und
+`blockerKind` `withdrawn` (kein Produktionsauftrag) in der Queue. Ein Tag „· blockiert“
+ohne Versuch in einem Status, der den Workflow nicht beauftragt (z. B. `backlog`; eine
+Sprachfassung nur über ihre Reservierung), ist kein Auftrag und erscheint nicht als
+Blockade. Ein Sales-Befund, den der Worker selbst typisiert (Sales-`job.json`:
+`blocker_owner`/`blockerOwner` `sales` oder `reason_code`/`reasonCode`
+`sales_shop_unavailable`), ist ein abgeschlossener fachlicher Fall ohne Produktion:
+`sales_shop_unavailable`, Zuständigkeit Sales, `blockerKind` `withdrawn`, Phase
+„Abgeschlossen · keine Produktion möglich“. Lesbare Befunde, beauftragte Aufträge ohne
+Ergebnis und ungetypte Sales-Befunde bleiben unverändert; eine Worker-Reservierung kann
+den Owner `sales` nicht tragen.
+
 Der Relay übernimmt diese Zuordnung: Eine getypte Zeile mit der Rolle „PM“ wartet als
 „Wartet · PM-Rückfrage“, andere getypte Rollen (Technik, Stammdaten, PM und Design)
 bleiben blockiert. Nur ungetypte bzw. ungeklärte Zeilen (`blocker_review_required`,

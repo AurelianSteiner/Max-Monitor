@@ -262,8 +262,12 @@ export const PARK_REASONS = Object.freeze(['Testumgebung', 'manuell', 'Pop-up', 
 // test-workspace.js admission, upload-policy.js manualHold/uploadPolicy,
 // slack-kanaele.js aufgabenArt and the cutover jobs. Without them (an older
 // source installation) only the 'manuell' tag parks an order, as before.
-export function workerAdmission({ manualHold, uploadPolicy, admission, aufgabenArt, cutoverJobs } = {}) {
+export function workerAdmission({ manualHold, uploadPolicy, admission, aufgabenArt, cutoverJobs, controllerTaskIds = [] } = {}) {
+  const controllers = new Set(controllerTaskIds);
   return {
+    // Till, 26.10.2026 (Fehleraudit): a ClickUp task only the worker's package
+    // controller runs (config/test-workspace.json controllerOnlyTaskIds).
+    controllerTask: id => typeof id === 'string' && controllers.has(id),
     // Klaviyo uploads the worker leaves to a person: the tag or a folder from
     // config/manual-uploads.json (Prinz).
     manualUpload: task => uploadPolicy ? Boolean(uploadPolicy(task)?.manual) : hasManualTag(task),
@@ -296,7 +300,9 @@ export function loadWorkerAdmission(root, load = require) {
   };
   take('src/upload-policy.js', module => typeof module?.manualHold === 'function' && typeof module.uploadPolicy === 'function'
     && { manualHold: module.manualHold, uploadPolicy: module.uploadPolicy });
-  take('src/test-workspace.js', module => typeof module?.admission === 'function' && { admission: module.admission });
+  take('src/test-workspace.js', module => typeof module?.admission === 'function' && { admission: module.admission,
+    controllerTaskIds: (Array.isArray(module.registry?.controllerOnlyTaskIds) ? module.registry.controllerOnlyTaskIds : [])
+      .filter(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(id)) });
   take('src/slack-kanaele.js', module => typeof module?.aufgabenArt === 'function' && { aufgabenArt: module.aufgabenArt });
   take('config/workflow-cutover.json', data => Array.isArray(data?.jobs) && data.jobs.every(job => typeof job === 'string')
     && { cutoverJobs: new Set(data.jobs) });
@@ -1372,7 +1378,7 @@ export function createRenderPreviews({ localHub, upload, openDatabase, resize, r
 export async function addRunDetails(rows, { hubFetch, channelId, previews, previousTasks = [], now = Date.now(), statusCache }) {
   const previous = new Map((Array.isArray(previousTasks) ? previousTasks : []).map(row => [row?.id, row]));
   // The monitor's own placeholders are no diagnosis: read the thread again, never reuse them.
-  const unreadable = old => ['blocker_context_missing', 'completion_report_missing'].includes(old?.reasonCode);
+  const unreadable = old => ['blocker_context_missing', 'completion_report_missing', 'controller_test_run'].includes(old?.reasonCode);
   const waiting = row => row.status === 'queued' && /^Wartet · (?:Hub-Übergabe|Fortsetzung in der zentralen Queue|automatische Fortsetzung)$/.test(row.phase || '');
   const running = rows.filter(row => row.run && (row.status === 'running' || (row.status === 'blocked' && row.workflow !== 'correction' && row.phase !== 'Worker meldet sich nicht mehr')
     || ((row.status === 'blocked' || waiting(row)) && row.workflow === 'correction'
@@ -1614,6 +1620,10 @@ export async function readLocalSales(directory, now = Date.now()) {
       const url = new URL(job.url);
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Ungültige Shopadresse');
       const blockedReason = status === 'blocked' ? displayText(job.reason, 500, 'Sales-Lauf ist blockiert') : undefined;
+      // Till, 26.10.2026 (Fehleraudit): the worker's own type of a Sales finding.
+      // job.owner is the attempt identity, never a responsibility.
+      const salesOwner = status === 'blocked' && ([job.blocker_owner, job.blockerOwner].includes('sales')
+        || [job.reason_code, job.reasonCode].includes('sales_shop_unavailable'));
       // Job state is authoritative. A missing heartbeat must never remove accepted work.
       const awaitingWorker = ['queued', 'running'].includes(status) && now - seen > 30 * 60000;
       const progress = salesProgress(job);
@@ -1621,7 +1631,7 @@ export async function readLocalSales(directory, now = Date.now()) {
         sourceStatus: job.status, workerId: job.worker, attemptId: displayText(job.owner, 200),
         phase: paused ? 'Pausiert · wartet außerhalb der Worker-Plätze' : awaitingWorker ? 'Worker-Meldung ausstehend' : phases[job.status],
         progress: progress.progress, step: paused || awaitingWorker ? undefined : progress.step,
-        ...(blockedReason ? { blockedReason } : {}), ...(status === 'completed' ? { ...(Number.isFinite(finishedTime) ? { completedAt: new Date(finishedTime).toISOString(), completionSource: 'sales' } : {}) } : {}),
+        ...(blockedReason ? { blockedReason } : {}), ...(salesOwner ? { blockerOwner: 'sales' } : {}), ...(status === 'completed' ? { ...(Number.isFinite(finishedTime) ? { completedAt: new Date(finishedTime).toISOString(), completionSource: 'sales' } : {}) } : {}),
         updatedAt: new Date(seen).toISOString() });
     } catch {
       throw new Error(`Sales-Job ${name} konnte nicht vollständig gelesen werden; bisheriger Queue-Stand bleibt erhalten.`);
@@ -1718,11 +1728,34 @@ export const BLOCKER_GRACE_MS = 5 * 60000;
 // the finished run (fleet.js currentQueue), instead of "Worker-Abgleich ausstehend".
 export const BLOCKER_GRACE_PHASE = 'Wartet · Ergebnis wird übernommen';
 const BERLIN_MINUTE = new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-export function applyBlockerGrace(rows, previousTasks = [], now = Date.now()) {
+// Till, 26.10.2026 (Fehleraudit): a controller-only run reports its result to the
+// package controller, never as ✅/❌/❓ in Slack. Its gap is no production error.
+export const CONTROLLER_TEST_PHASE = 'Testlauf (Controller)';
+const CONTROLLER_TEST_REASON = 'Testlauf (Controller): Das Ergebnis meldet der Controller, nicht Slack.';
+const CONTROLLER_TEST = { phase: CONTROLLER_TEST_PHASE, blockedReason: CONTROLLER_TEST_REASON, blockerReason: CONTROLLER_TEST_REASON,
+  reasonCode: 'controller_test_run', responsibleRole: 'Controller-Test', blockerKind: 'withdrawn',
+  nextStep: 'Ergebnis im Protokoll des Controllers prüfen; kein Produktionsauftrag.' };
+// ClickUp task of a queue row: clickup:<workflow>:<id> or a correction job ID.
+function rowTaskId(row) {
+  const id = String(row.id ?? '');
+  return /^clickup:[^:]+:([A-Za-z0-9_-]+)$/.exec(id)?.[1] ?? CORRECTION_JOB.exec(id.replace(/^correction:/, ''))?.[1]
+    ?? /^https:\/\/app\.clickup\.com\/t\/([A-Za-z0-9_-]+)$/.exec(row.url ?? '')?.[1];
+}
+export function applyBlockerGrace(rows, previousTasks = [], now = Date.now(), { workflows = DEFAULT_WORKFLOWS, admission = workerAdmission() } = {}) {
   const previous = new Map((Array.isArray(previousTasks) ? previousTasks : []).map(row => [row?.id, row]));
+  // As in buildQueue: a status-driven workflow is commissioned by its start status,
+  // a reservation-only one never by a tag; a tag-driven legacy workflow by its tag.
+  const commissions = new Map(workflows.map(workflow => [workflow.id, workflow.startStatuses?.length
+    ? status => workflow.startStatuses.some(start => normalizeStatus(start) === status) : () => !workflow.reservationOnly]));
+  const history = new Set();
   for (const row of rows) {
     if (row.status !== 'blocked' || row.workflow === 'sales' || row.blockedReason || row.reasonCode
       || ['Worker meldet sich nicht mehr', 'PM-Rückfrage offen'].includes(row.phase)) continue;
+    // A blocked tag without any attempt outside the status that commissions its
+    // workflow (e.g. backlog) is no order, like a waiting or running tag there.
+    const commissioned = commissions.get(/^clickup:([^:]+):/.exec(row.id ?? '')?.[1]);
+    if (!row.attemptId && commissioned && !commissioned(normalizeStatus(row.sourceStatus))) { history.add(row); continue; }
+    if (admission.controllerTask?.(rowTaskId(row))) { Object.assign(row, CONTROLLER_TEST); continue; }
     const old = previous.get(row.id);
     const recorded = old && (old.attemptId ?? null) === (row.attemptId ?? null) ? Date.parse(old.blockerRecordedAt) : NaN;
     const since = Number.isFinite(recorded) && recorded <= now ? recorded : now;
@@ -1733,6 +1766,7 @@ export function applyBlockerGrace(rows, previousTasks = [], now = Date.now()) {
     Object.assign(row, { blockedReason: reason, blockerReason: reason, reasonCode: 'completion_report_missing', responsibleRole: 'Technik',
       nextStep: 'Endzustand und Slack-Thread des Laufs auf dem Mac prüfen (runs/<run_id>/ergebnis.json); Arbeitsstand erhalten.' });
   }
+  if (history.size) rows.splice(0, rows.length, ...rows.filter(row => !history.has(row)));
   return rows;
 }
 
@@ -1871,7 +1905,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   // still belongs to the exact source attempt after the producer Mac is cleared.
   applyPmQuestions(queue, questionResult.value, bindings, { now });
   queue.push(...salesResult.value);
-  applyBlockerGrace(queue, previousTasks, now);
+  applyBlockerGrace(queue, previousTasks, now, { workflows, admission });
   applyBlockerContexts(queue, tasks, now);
   await applyPmOwners(queue, tasks, { questions: questionResult.value, routing: pmRouting, now });
   for (let index = 0; index < queue.length; index++) queue[index] = taskState.reconcileTask(queue[index]);
