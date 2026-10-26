@@ -559,6 +559,12 @@ class LedgerTests(unittest.TestCase):
             {"id": "sales:7.7", "workflow": "sales", "status": "completed", "completedAt": NOW + 1000}]}
         self.ledger.fleet(data, NOW + 3600)
         rows = {r["run_id"]: (r["state"], r["finished"]) for r in self.ledger.db.execute("SELECT run_id,state,finished FROM runs")}
+        # The Hub's tracking copy (Worker production-tracking.js ingestRuns) takes a
+        # ledger row only when its last_seen rose; the Mac never reports these phases
+        # again. Every closed phase is therefore a new observation, open ones are not.
+        seen = dict(self.ledger.db.execute("SELECT run_id,last_seen FROM runs").fetchall())
+        self.assertEqual({run for run, at in seen.items() if at > NOW}, {blocked, aborted, elsewhere, undated, late})
+        self.assertEqual({seen[run] for run in (blocked, aborted, elsewhere, undated, late)}, {NOW + 3600})
         self.assertEqual(rows[blocked], ("blockiert", NOW + 900))
         self.assertEqual(rows[aborted], ("abgebrochen", NOW + 1200))
         self.assertEqual(rows[elsewhere], ("completed", NOW + 3000))
@@ -577,7 +583,7 @@ class LedgerTests(unittest.TestCase):
     def test_sales_phases_stay_open_without_a_sales_listing(self):
         run = self.sales_phase("sales:2.2", last=NOW)
         self.ledger.fleet(fleet(NOW + 7200, 10), NOW + 7200)
-        self.assertEqual(self.ledger.db.execute("SELECT state FROM runs WHERE run_id=?", (run,)).fetchone()[0], "running")
+        self.assertEqual(tuple(self.ledger.db.execute("SELECT state,last_seen FROM runs WHERE run_id=?", (run,)).fetchone()), ("running", NOW))
 
 
     def test_scheduler_preserves_measurement_age_and_shares_one_account_budget(self):

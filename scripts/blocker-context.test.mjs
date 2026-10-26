@@ -280,3 +280,29 @@ test('a PM question the worker withdrew is no pending decision but a new commiss
   applyBlockerContexts(open, [], 1000);
   assert.equal(open[0].reasonCode, 'pm_decision_pending');
 });
+
+test('only the worker\'s own "Nächster Schritt:" names a PM step; quoted withdrawals and this bridge\'s rendering decide nothing', () => {
+  // The worker's Slack format (src/fehler.js formatSlackDetail) turns a closing
+  // „Sobald …“ of a PM blocker into "Nächster Schritt: Sobald …".
+  const pm = [{ status: 'blocked', workflow: 'newsletter', blockerOwner: 'pm',
+    blockedReason: 'PM-Entscheidung erforderlich: Welche Module gehören in die Mail? Nächster Schritt: Sobald die Module in ClickUp stehen, kann der Lauf neu gestartet werden.' }];
+  applyBlockerContexts(pm, [], 1000);
+  assert.equal(pm[0].reasonCode, 'pm_decision_pending');
+  assert.equal(pm[0].nextStep, 'Sobald die Module in ClickUp stehen, kann der Lauf neu gestartet werden.');
+  // A row read back without its blockerReason carries only this bridge's own
+  // rendering: its tail is no worker step, the code's own step applies again.
+  const rendered = [
+    { status: 'blocked', workflow: 'newsletter',
+      blockedReason: 'Gesicherter Befund: Die Modulauswahl fehlt, PM entscheidet. · Zuständig: PM (PM nicht zugeordnet) · Nächster Schritt: Alter Schritt eines früheren Stands.' },
+    { status: 'blocked', workflow: 'newsletter',
+      blockedReason: 'Gesicherter Befund: Offene PM-Rückfrage zurückgezogen: Die Aufgabenquelle wurde geändert (Mail Link). · Zuständig: PM (PM nicht zugeordnet) · Nächster Schritt: Entscheidung im Rückfragen-Thread bzw. in ClickUp treffen; danach setzt der Worker fort.' }];
+  applyBlockerContexts(rendered, [], 1000);
+  assert.deepEqual(rendered.map(row => [row.reasonCode, row.nextStep]), [
+    ['pm_decision_pending', 'Entscheidung im Rückfragen-Thread bzw. in ClickUp treffen; danach setzt der Worker fort.'],
+    ['pm_source_changed', 'Rückfrage ist zurückgezogen: den Startstatus in ClickUp erneut setzen; der neue Lauf prüft die aktuelle Quelle.']]);
+  // The withdrawal counts only at the start of the cause, like the worker's
+  // technical-repair.js PM_QUESTION_WITHDRAWN; a quoted earlier attempt does not.
+  const quoted = blockerContext('Technischer Fehler beim Fortsetzen: Vorlauf meldete „Offene PM-Rückfrage zurückgezogen: Die Aufgabenquelle wurde geändert.“',
+    { state: 'technisch_blockiert' });
+  assert.equal(quoted.reasonCode, 'technical_blocker');
+});

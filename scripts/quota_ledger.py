@@ -389,9 +389,13 @@ class Ledger:
                 state, end = "abgebrochen", last
             else:
                 continue
-            reconciled += self.db.execute("""UPDATE runs SET state=?,finished=COALESCE(?,finished)
+            # The close is a new observation of the row: the Hub's tracking copy
+            # (Worker src/production-tracking.js ingestRuns) only takes rows whose
+            # last_seen rose, and a phase gone from the Mac's inventory is never
+            # reported again.
+            reconciled += self.db.execute("""UPDATE runs SET state=?,finished=COALESCE(?,finished),last_seen=?
                 WHERE worker=? AND run_id=? AND state IN ('running','queued','unverified')""",
-                (state, end, row["worker"], row["run_id"])).rowcount
+                (state, end, now, row["worker"], row["run_id"])).rowcount
         if reconciled:
             self.averages_changed('task_changed')
         self.meta("last_fleet_sample", iso(now))

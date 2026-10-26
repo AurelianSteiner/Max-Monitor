@@ -11,13 +11,21 @@ eine Sales-Phase auch, wenn der Hub-Job blockiert ist (`blockiert`), nicht mehr
 gelistet wird (abgebrochen, `abgebrochen`) oder ohne lesbaren Abschlusszeitpunkt
 bzw. auf einem anderen Mac fertig wurde. Endzeit ist der Abschluss des Jobs, sonst
 der letzte erfasste Schritt der Phase. Später begonnene oder nicht gelistete
-Phasen bleiben offen, bis sie 30 Minuten still sind.
+Phasen bleiben offen, bis sie 30 Minuten still sind. Das Schließen gilt als neue
+Meldung der Zeile (`last_seen`), damit die Hub-Identitäten (Worker
+`src/production-tracking.js`) es übernehmen, auch wenn der Mac die Phase nicht mehr
+meldet. Eine Phase eines früheren Versuchs auf einem anderen Mac schließt mit dem
+Auftrag als `completed`: `job.json` `worker` benennt den ausführenden Mac nicht
+verlässlich.
 
 Worker-Läufe (alle Arten außer Sales) behalten Ende und Zustand aus der
 Worker-Datenbank. Der Queue-Abschluss des Auftrags gilt nur, solange der Worker
 noch kein Ende meldet. Sprachfassungen als eigene ClickUp-Aufgabe zählen wie beim
 Worker (`runs.fassung`, `src/jobs.js runKind`) als Übersetzung; bereits als
 Newsletter erfasste Läufe wechseln mit ihren Ereignissen in den Übersetzungsauftrag.
+Beides wirkt nur auf Läufe im 72-Stunden-Fenster des Beobachters, deren Auftrag nicht
+schon mit einem mehr als 48 Stunden zurückliegenden Abschluss verdichtet ist; ältere
+Werte in `compact_jobs` und in der Hub-Kopie `tracking_runs` bleiben unverändert.
 
 Für historische Lücken arbeitet `sales_usage_backfill.py` ausschließlich auf einer
 SQLite-Sicherung. Geprüfte Roharchive aller parallelen Aufgaben werden dort

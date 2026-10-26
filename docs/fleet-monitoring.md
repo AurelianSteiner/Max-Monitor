@@ -202,7 +202,10 @@ Korrekturen erscheinen unabhängig vom alten Pre-Gen-Abschluss. Jede Aufgabe in
 Reservierung derselben Runde (auch je Datei) ersetzt diese Zeile, ältere Runden
 verdecken eine neue nie. Die aktuellen
 Reservierungen werden etwa alle drei Minuten neu gelesen: ❌ am finalen Claim bedeutet
-blockiert, ✅ abgeschlossen. Die eigene Bot-Antwort liefert den Blockiergrund. Er
+blockiert, ✅ abgeschlossen. Alle Versuche eines Auftrags nutzen denselben Slack-Beitrag
+samt Reaktionen; ein bloßes ✅ schließt daher keinen Versuch ab, der ein eigenes ❌
+oder einen getypten Blocker-Owner trägt, nur das Label „✅ Fertig:“ des Claims
+(Fehleraudit 26.10.2026). Die eigene Bot-Antwort liefert den Blockiergrund. Er
 bleibt samt zuständigem Mac sichtbar, auch wenn dieser bereits andere Aufgaben
 bearbeitet. Ein neuer Versuch ersetzt die alte Blockierung; freigegebene oder
 zurückgezogene Versuche werden nicht als offene Korrektur gezählt. Die Queue
@@ -228,7 +231,13 @@ Hub/ClickUp)“, „PM-Entscheidung erforderlich“, „PM entscheidet“ und An
 Aufgabentitel → „PM“. Eine während der Vorbereitung geänderte Aufgabenquelle ist
 Technik (Till, 19.10.2026); eine Änderung nach der PM-Antwort ist PM-Arbeit, außer es
 änderten sich nur Klaviyo- oder Filestage-Linkfelder. Eine offene PM-Rückfrage ist
-immer PM. Für PM, Kunden-Setup und Stammdaten setzt die Brücke zusätzlich
+immer PM. Eine vom Worker zurückgezogene Rückfrage (Grund beginnt mit „Offene
+PM-Rückfrage zurückgezogen:“) ist keine offene Entscheidung, sondern
+`pm_source_changed` (PM, neu beauftragen); ein früheres `pm_decision_pending`
+desselben Versuchs bleibt nicht stehen (Fehleraudit 26.10.2026). Bei PM, Kunden-Setup
+und Stammdaten gilt der erste Punkt von „Nächste Schritte:“ bzw. „Nächster Schritt:“
+aus dem Worker-Grund als nächster Schritt, nie der Schritt aus der eigenen Anzeige der
+Brücke. Für PM, Kunden-Setup und Stammdaten setzt die Brücke zusätzlich
 `blockerKind` `waiting_human`, damit das Hub-Register diese Wartezeiten nicht als
 technische Fehler zählt; ein getypter Owner `technik`/`automatisch` setzt
 `technical_failure`. Der technische Rückfall ohne Owner bleibt ohne `blockerKind`, damit

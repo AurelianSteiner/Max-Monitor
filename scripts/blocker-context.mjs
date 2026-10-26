@@ -79,7 +79,9 @@ const PM_DECISION = /PM[- ]Entscheidung erforderlich|PM entscheidet|im Aufgabent
 // question it withdrew after a source change (pm-question-worker.js
 // withdrawnQuestionRelease, technical-repair.js PM_QUESTION_WITHDRAWN). Nothing is
 // left to answer: the PM commissions again. The worker types its owner 'pm'.
-const QUESTION_WITHDRAWN = /Offene PM-Rückfrage zurückgezogen:/i;
+// Like the worker, only at the start of the cause, also of this bridge's own
+// rendering (HEAD); a text quoting an earlier attempt's withdrawal stays as it is.
+const QUESTION_WITHDRAWN = /^(?:Gesicherter Befund:\s*)?Offene PM-Rückfrage zurückgezogen:/i;
 export const questionWithdrawn = text => QUESTION_WITHDRAWN.test(clean(text, 4000));
 // Checked access or setup in the "Stand:" section never decides the cause.
 const causeOf = reason => reason.split(/(?:^|\s)\**Stand\**\s*:/)[0];
@@ -171,8 +173,12 @@ export function summary(text) {
   return clip(second ? value.slice(0, second) : value, SUMMARY_MAX);
 }
 // The first point of the worker's "Nächste Schritte:" or "Nächster Schritt:", if it has one.
+// This bridge's own rendering (HEAD … · Zuständig: … · Nächster Schritt: …) is no
+// worker step: a row read back without its blockerReason never keeps its old step.
 function workerNextStep(text) {
-  const steps = /(?:^|\s)\**Nächste(?: Schritte|r Schritt)\**:?\s+(.+)$/i.exec(clean(text, 4000))?.[1];
+  const value = clean(text, 4000);
+  const own = value.startsWith(HEAD) ? value.split(' · Zuständig: ')[0] : value;
+  const steps = /(?:^|\s)\**Nächste(?: Schritte|r Schritt)\**:?\s+(.+)$/i.exec(own)?.[1];
   if (!steps) return '';
   const first = steps.replace(/^(?:•|-|\d{1,2}\.)\s*/u, '').split(/\s(?:•|\d{1,2}\.\s)|\s\**Stand\**:\s/u)[0].trim();
   const end = sentenceEnds(first)[0];
