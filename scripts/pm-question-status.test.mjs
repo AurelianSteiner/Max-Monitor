@@ -30,6 +30,12 @@ test('all production kinds show their actual unanswered questions, including upl
   }
 });
 
+test('an explicitly requeued checkpoint still exposes its own unanswered PM question', () => {
+  const current=row('upload',{status:'queued',workerId:undefined,phase:'Wartet · Fortsetzung im RS Hub gesichert',run:undefined});
+  applyPmQuestions([current],{sets:[set()]},new Map([[current.id,{id:'run1',taskId:'t1',workerId:'mac1'}]]));
+  assert.equal(current.phase,'Wartet · PM-Rückfrage');assert.equal(current.reasonCode,'pm_decision_pending');
+});
+
 test('another run, worker, stage, task, language, test or retired question cannot change the queue', () => {
   for (const overrides of [{ runId:'old' }, { workerId:'other' }, { taskId:'other' },
     { stage:'newsletter' }, { mode:'test' }, { questions:[{id:'Q3',status:'replaced'}] }]) {

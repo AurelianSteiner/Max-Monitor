@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import { DatabaseSync } from 'node:sqlite';
-import { readStoredCheckpoints, applyStoredCheckpoints } from './newsletter-monitor-bridge.mjs';
+import { readStoredCheckpoints, applyStoredCheckpoints, parseRegisterClaim } from './newsletter-monitor-bridge.mjs';
 
 const row = extra => ({ id:'correction:korrektur-cu-task@1-intern', workflow:'correction', status:'blocked', workerId:'mac-a',
   blockedReason:'Saved technical blocker', phase:'Korrektur blockiert', run:{id:'run-a',taskId:'task'}, ...extra });
@@ -47,6 +47,27 @@ test('automatic retries keep the verified technical failure visible for every wo
   // A legacy descriptor also cannot erase the current attempt's known error.
   const legacy=row();applyStoredCheckpoints([legacy],[saved({ready_at:1})]);
   assert.equal(legacy.status,'blocked');assert.equal(legacy.blockedReason,'Saved technical blocker');
+});
+
+test('an explicitly requeued exact failed attempt waits while automatic and stale retries stay blocked', () => {
+  const when=Date.parse('2026-10-27T14:13:01Z');
+  const entry=saved({task_id:'task@1-klaviyo',ready_at:when,blocker:{blockerState:'blockiert',blockerRecordedAt:new Date(when).toISOString()}});
+  const claim={hub:true,runId:'run-a',jobId:'task@1-klaviyo',workerId:'mac-a',state:'final',paused:true,portable:true,ts:String(when/1000),resumeRequestedAt:when+1000};
+  const make=()=>row({workflow:'upload',run:{id:'run-a',jobId:'task@1-klaviyo',taskId:'task'}});
+  const accepted=make();applyStoredCheckpoints([accepted],[entry],undefined,[claim]);
+  assert.equal(accepted.status,'queued');assert.equal(accepted.phase,'Wartet · Fortsetzung im RS Hub gesichert');assert.equal(accepted.blockedReason,undefined);
+  for(const change of [{hub:false},{resumeRequestedAt:when-1},{runId:'other'},{jobId:'task@2-klaviyo'},{workerId:'other'},{portable:false}]){
+    const value=make();applyStoredCheckpoints([value],[entry],undefined,[{...claim,...change}]);assert.equal(value.status,'blocked');
+  }
+  const held=make();applyStoredCheckpoints([held],[{...entry,ready_at:8640000000000000}],undefined,[claim]);assert.equal(held.status,'blocked');
+});
+
+test('only the Hub-verified human signal of this owner and thread authorizes the display transition', () => {
+  const doc={runId:'run-a',taskId:'task@1-klaviyo',worker:'mac-a',state:'final',heartbeat:1793100000,ts:'1793100000.001',slackTs:'1793100000.002',paused:true,portable:true};
+  const signal={reaction:'repeat',by:'mac-a',user:'U12345',slackTs:doc.slackTs,at:1793100100};
+  assert.equal(parseRegisterClaim({...doc,humanSignals:[signal]}).resumeRequestedAt,1793100100000);
+  for(const change of [{by:'mac-b'},{user:'B12345'},{slackTs:'1793100000.003'},{reaction:'x'}])
+    assert.equal(parseRegisterClaim({...doc,humanSignals:[{...signal,...change}]}).resumeRequestedAt,0);
 });
 
 test('the retry inventory reads verified run state even when its retry time is finite', async t => {

@@ -413,6 +413,11 @@ export function parseRegisterClaim(doc) {
     threadHeartbeat: null,
     ...(paused ? { paused: true, ...(doc.portable === true ? { portable: true } : {}) } : {}),
     workflow: identity.workflow ?? identity.kind, reactions, hub: true,
+    ...(Array.isArray(doc.humanSignals) ? { resumeRequestedAt: Math.max(0, ...doc.humanSignals
+      .filter(s => s && ['repeat', 'arrows_counterclockwise'].includes(s.reaction) && s.by === doc.worker
+        && /^\d+\.\d+$/.test(doc.slackTs || '') && s.slackTs === doc.slackTs
+        && /^U[A-Z0-9]+$/.test(s.user || '') && Number.isFinite(Number(s.at)))
+      .map(s => Number(s.at) * 1000)) } : {}),
     ...(isImport ? { candidateHash: doc.candidateHash, writeScope: doc.writeScope } : {}),
     ...(typeof doc.channel === 'string' && /^C[A-Z0-9]{5,20}$/.test(doc.channel) ? { channelId: doc.channel } : {}),
     // Fehleraudit 19.10.2026: the worker's typed owner of a finished run; any other value is dropped.
@@ -1698,7 +1703,7 @@ export async function readStoredCheckpoints(localHub) {
   finally { db.close(); }
 }
 
-export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.filter(row => row.run).map(row => [row.id, row.run]))) {
+export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.filter(row => row.run).map(row => [row.id, row.run])), claims = []) {
   // A retry time schedules work; it never resolves the saved failure. Only a
   // newer active attempt, successful result or bound PM answer can replace it.
   const failed = entry => entry.ready_at === 8640000000000000
@@ -1714,11 +1719,16 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
         && failed(entry) && /^\d{8}T\d{6}Z-/.test(entry.run_id) && /^\d{8}T\d{6}Z-/.test(run.id)
         && entry.run_id.slice(0,16) > run.id.slice(0,16))));
     if (!entry) continue;
+    const explicit = claims.find(claim => claim.hub === true && claim.runId === entry.run_id
+      && claim.jobId === entry.task_id && claim.workerId === entry.producer && claim.state === 'final'
+      && claim.paused === true && claim.portable === true && claim.resumeRequestedAt > 0
+      && claim.resumeRequestedAt >= (Date.parse(entry.blocker?.blockerRecordedAt) || Number(claim.ts) * 1000)
+      && Number.isFinite(entry.ready_at) && entry.ready_at < 8640000000000000);
     row.workerId = undefined;
     // The claim's typed owner describes its own run only.
     if (entry.run_id !== run.id) delete row.blockerOwner;
     row.attemptId = entry.run_id;
-    if (failed(entry) || (['blocked', 'failed'].includes(row.status) && !entry.blocker?.blockerState)) {
+    if (!explicit && (failed(entry) || (['blocked', 'failed'].includes(row.status) && !entry.blocker?.blockerState))) {
       // Fehleraudit 19.10.2026 (Smileypack d857): a stored run without text never
       // replaces a readable reason of the same commission.
       const readable = displayText(row.blockedReason || row.blockerReason, 500);
@@ -1730,6 +1740,7 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
     } else {
       row.status = 'queued';
       row.phase = 'Wartet · Fortsetzung im RS Hub gesichert';
+      for (const field of ['blockedReason', 'errorUrl', 'blockerReason', 'reasonCode', 'responsibleRole', 'blockerKind', 'nextStep', 'blockerOwner']) delete row[field];
     }
   }
   return rows;
@@ -1914,9 +1925,9 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   // Keep a confirmed date after its source thread leaves the history window.
   // Any currently visible attempt prevents borrowing an older success.
   retainCompletionDates(queue, previousTasks, claims);
-  const bindings = new Map(queue.filter(row => row.run).map(row => [row.id, row.run]));
+  const bindings = new Map(queue.filter(row => row.run).map(row => [row.id, { ...row.run, workerId: row.workerId }]));
   await addRunDetails(queue, { hubFetch, channelId: config.slack.channel_id, previews, previousTasks, now, statusCache });
-  if (checkpointResult.status === 'fulfilled') applyStoredCheckpoints(queue, checkpointResult.value, bindings);
+  if (checkpointResult.status === 'fulfilled') applyStoredCheckpoints(queue, checkpointResult.value, bindings, claims);
   // A stored terminal upload may first become blocked here. Its open question
   // still belongs to the exact source attempt after the producer Mac is cleared.
   applyPmQuestions(queue, questionResult.value, bindings, { now });
