@@ -1797,10 +1797,62 @@ export function applyBlockerGrace(rows, previousTasks = [], now = Date.now(), { 
   return rows;
 }
 
-// errorPayloads (optional Map): filled with ts -> metadata of every top-level copy
-// in #ai-fehler, only after a complete read of that channel; the error-copy
-// cleanup decides from it which copies stay before reading any thread.
-export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, previews, previousTasks, salesReader, questionReader, pmRouting, checkpointReader, reservationReader, figmaImportReader, maxTasksOf, claimReader = listClaims, statusCache, epochRefusals = new Map(), warn = () => {}, admission = workerAdmission(), errorPayloads, now = Date.now() }) {
+export function readRunKinds(file, openDatabase = file => new (require('node:sqlite').DatabaseSync)(file, { readOnly: true })) {
+  const db = openDatabase(file);
+  try {
+    return db.prepare("SELECT worker, run_id, task_id, kind FROM runs WHERE kind IN ('newsletter', 'translation')").all();
+  } finally { db.close(); }
+}
+
+// Historical worker databases are retained on the Macs, while the quota ledger
+// has a shorter hot window. A one-time, exact-run backfill can supply older
+// evidence; a current ledger entry wins if the worker later corrects its kind.
+export async function readRunKindEvidence({ ledgerFile, historyFile, warn = () => {} }) {
+  let history = [], current = [];
+  try {
+    const value = JSON.parse(await fs.readFile(historyFile, 'utf8'));
+    if (value.schema !== 1 || !Array.isArray(value.runs) || value.runs.length > 5000
+      || value.runs.some(run => !run || run.kind !== 'translation' || !['worker', 'run_id', 'task_id'].every(key => typeof run[key] === 'string' && run[key].length > 0 && run[key].length <= 200)))
+      throw new Error('invalid history');
+    history = value.runs;
+  } catch (error) { if (error.code !== 'ENOENT') warn('Historische Übersetzungsbelege nicht lesbar.'); }
+  try { current = readRunKinds(ledgerFile); }
+  catch { warn('Worker-Laufarten nicht lesbar; belegte Zuordnungen bleiben für denselben Lauf erhalten.'); }
+  const key = run => `${run.worker}\0${run.run_id}\0${String(run.task_id).replace(/@\d+$/, '')}`;
+  const currentKeys = new Set(current.map(key));
+  return [...history.filter(run => !currentKeys.has(key(run))), ...current];
+}
+
+// A language version can use the ordinary newsletter reservation and ClickUp ID.
+// The quota observer reports the worker's runKind (from runs.fassung); the exact
+// attempt, worker and task must all match. Keep the queue ID for controls and
+// completion history. Never infer a translation from a title or a stale attempt.
+export function classifyCompletedLanguageRuns(rows, evidence = [], previousTasks = []) {
+  const records = new Map();
+  for (const run of evidence) {
+    if (!run?.worker || !run.run_id || !run.task_id || !['newsletter', 'translation'].includes(run.kind)) continue;
+    const key = `${run.worker}\0${run.run_id}\0${String(run.task_id).replace(/@\d+$/, '')}`;
+    const old = records.get(key);
+    records.set(key, old && old !== run.kind ? 'conflict' : run.kind);
+  }
+  const previous = new Map(previousTasks.map(row => [row.id, row]));
+  for (const row of rows) {
+    const taskId = /^clickup:newsletter:([A-Za-z0-9_-]+)$/.exec(row.id || '')?.[1];
+    if (!taskId || row.workflow !== 'newsletter' || row.status !== 'completed' || !row.workerId || !row.attemptId) continue;
+    const kind = records.get(`${row.workerId}\0${row.attemptId}\0${taskId}`);
+    const old = previous.get(row.id);
+    const retained = !kind && old?.workflow === 'translation' && old.workflowEvidence === 'worker-run-kind'
+      && old.attemptId === row.attemptId && old.workerId === row.workerId && old.status === 'completed';
+    if (kind === 'translation' || retained) {
+      row.workflow = 'translation';
+      row.workflowEvidence = 'worker-run-kind';
+    }
+  }
+  return rows;
+}
+
+// errorPayloads (optional Map) records complete #ai-fehler source reads for cleanup.
+export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WORKFLOWS, fleetReader = readHubFleet, fleetDirectory, previews, previousTasks, salesReader, questionReader, pmRouting, checkpointReader, reservationReader, figmaImportReader, runKindReader, maxTasksOf, claimReader = listClaims, statusCache, epochRefusals = new Map(), warn = () => {}, admission = workerAdmission(), errorPayloads, now = Date.now() }) {
   validateWorkflows(workflows);
   const issues = new Map();
   const onMessage = message => {
@@ -1936,6 +1988,12 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   applyBlockerContexts(queue, tasks, now);
   await applyPmOwners(queue, tasks, { questions: questionResult.value, routing: pmRouting, now });
   for (let index = 0; index < queue.length; index++) queue[index] = taskState.reconcileTask(queue[index]);
+  let runKinds = [];
+  if (runKindReader) {
+    try { runKinds = await runKindReader(); }
+    catch { warn('Worker-Laufarten nicht lesbar; belegte Zuordnungen bleiben für denselben Lauf erhalten.'); }
+  }
+  classifyCompletedLanguageRuns(queue, runKinds, previousTasks);
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
   const manualUploadIds = new Set(tasks.filter(task => admission.manualUpload(task)).map(task => task.id));
   const blockedErrors = errorChannel ? buildBlockedErrors(errorMessages, errorChannel, queue, { manualUploadIds }) : undefined;
@@ -2110,6 +2168,9 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
           warn: message => console.error(`${new Date().toISOString()} ${displayText(message, 300)}`),
           previews, previousTasks: cached?.tasks, ...(typeof maxTasksPerMac === 'function' ? { maxTasksOf: maxTasksPerMac } : {}),
           ...(options.localHub ? { fleetReader: readLocalHubFleet,
+            runKindReader: () => readRunKindEvidence({ ledgerFile: '/var/lib/max-monitor-quota/ledger.sqlite',
+              historyFile: path.join(path.dirname(options.cacheFile), 'translation-run-evidence.json'),
+              warn: message => console.error(`${new Date().toISOString()} ${message}`) }),
             reservationReader: time => readHubReservations(hubRuntimeDirectory(options.localHub), { now: time, lookbackDays: Number(config.claims?.lookback_days) || 60 }),
             figmaImportReader: time => readHubFigmaImports(hubRuntimeDirectory(options.localHub), { now: time, lookbackDays: Number(config.claims?.lookback_days) || 60 }),
             salesReader: time => readLocalSales(path.join(options.localHub, 'sales-newsletter'), time),
