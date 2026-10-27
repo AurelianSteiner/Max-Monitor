@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
-import { blockerContext, checkpointBlocker, currentPm, pmFieldState, applyBlockerContexts, summary, clip, PM_FIELD_ID, STAMMDATEN_ROLE } from './blocker-context.mjs';
+import { blockerContext, checkpointBlocker, currentPm, pmFieldState, applyBlockerContexts, summary, clip, questionWithdrawn, PM_FIELD_ID, STAMMDATEN_ROLE } from './blocker-context.mjs';
 import state from './task-state.cjs';
 
 function checkpoint(change = {}) {
@@ -305,4 +305,38 @@ test('only the worker\'s own "Nächster Schritt:" names a PM step; quoted withdr
   const quoted = blockerContext('Technischer Fehler beim Fortsetzen: Vorlauf meldete „Offene PM-Rückfrage zurückgezogen: Die Aufgabenquelle wurde geändert.“',
     { state: 'technisch_blockiert' });
   assert.equal(quoted.reasonCode, 'technical_blocker');
+});
+
+test('the worker\'s prefix of a withdrawn PM question is a fixed contract', () => {
+  // Contract with the worker: src/pm-question-worker.js withdrawnQuestionRelease writes
+  // every such detail with exactly this prefix, src/technical-repair.js
+  // PM_QUESTION_WITHDRAWN keeps it out of automatic repair. Changing it needs both repos.
+  const PREFIX = 'Offene PM-Rückfrage zurückgezogen: ';
+  // The template's variants: own or default cause; 🔁 only while the run can resume;
+  // the trigger status, else the generic start status.
+  const details = [
+    ['Die Aufgabenquelle wurde geändert (Mail Link).', '🔁 am Beitrag oder den Status „pre-gen“ erneut setzen'],
+    ['Die Aufgabenquelle wurde geändert.', 'den Status „klaviyo upload“ erneut setzen'],
+    ['Die Aufgabenquelle wurde geändert.', 'den Startstatus erneut setzen'],
+  ].map(([cause, again]) => `${PREFIX}${cause} Nächster Schritt: ${again}; der neue Lauf prüft die aktuelle Quelle.`);
+  for (const detail of details) {
+    // The bridge (newsletter-monitor-bridge.mjs) reads this predicate: no open question.
+    assert.equal(questionWithdrawn(detail), true, detail);
+    assert.equal(questionWithdrawn(`Gesicherter Befund: ${detail}`), true, detail);
+    const rows = [{ status: 'blocked', workflow: 'newsletter', blockedReason: detail, blockerOwner: 'pm' },
+      { status: 'blocked', workflow: 'newsletter', blockedReason: detail }];
+    applyBlockerContexts(rows, [], 1000);
+    for (const row of rows) {
+      assert.deepEqual([row.reasonCode, row.responsibleRole, row.blockerKind], ['pm_source_changed', 'PM', 'waiting_human'], detail);
+      assert.equal(row.nextStep, detail.split('Nächster Schritt: ')[1]);
+    }
+  }
+  // Only this exact prefix at the start of the cause counts.
+  for (const other of ['Offene PM-Rückfrage: Welche Module gehören in die Mail?',
+    'PM-Rückfrage zurückgezogen: Die Aufgabenquelle wurde geändert.',
+    'Offene PM-Rückfrage zurückgenommen: Die Aufgabenquelle wurde geändert.',
+    'Technischer Fehler beim Fortsetzen: Offene PM-Rückfrage zurückgezogen: Die Aufgabenquelle wurde geändert.']) {
+    assert.equal(questionWithdrawn(other), false, other);
+    assert.notEqual(blockerContext(other, { state: 'unklar' }).reasonCode, 'pm_source_changed', other);
+  }
 });
