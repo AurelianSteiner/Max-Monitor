@@ -27,26 +27,26 @@ test('PM questions stay waiting, runnable work waits centrally, and unrelated at
   const done=row({status:'completed'});applyStoredCheckpoints([done],[saved()]);assert.equal(done.status,'completed');
 });
 
-test('scheduled technical retries wait in the central queue for every workflow', () => {
+test('automatic retries keep the verified technical failure visible for every workflow', () => {
   for (const workflow of ['newsletter', 'upload', 'translation', 'correction']) {
     for (const ready_at of [1, Date.now() + 1800000]) {
-      for (const phase of ['Wartet · automatische Fortsetzung']) {
+      for (const phase of ['Wartet · automatische Fortsetzung', 'Wartet · PM-Rückfrage']) {
         const value = row({ workflow, status:'queued', phase, run:{id:'run-a',jobId:'task@1',taskId:'task'} });
         const entry = saved({task_id:'task@1',ready_at,blocker:{blockerState:'technisch_blockiert',
           blockerKind:'technical_failure',blockerReason:'Exact FileStage association failed',reasonCode:'technical_blocker'}});
         applyStoredCheckpoints([value],[entry]);
-        assert.equal(value.status,'queued');
-        assert.equal(value.blockedReason,undefined);
-        assert.match(value.phase,/^Wartet/);
+        assert.equal(value.status,'blocked');
+        assert.equal(value.blockerReason,'Exact FileStage association failed');
+        assert.match(value.phase,/^Blockiert/);
         assert.equal(value.workerId,undefined);
         assert.equal(entry.ready_at,ready_at);
         assert.equal(entry.owner,null);
       }
     }
   }
-  // A finite legacy descriptor is also a queued continuation.
+  // A legacy descriptor also cannot erase the current attempt's known error.
   const legacy=row();applyStoredCheckpoints([legacy],[saved({ready_at:1})]);
-  assert.equal(legacy.status,'queued');assert.equal(legacy.blockedReason,undefined);
+  assert.equal(legacy.status,'blocked');assert.equal(legacy.blockedReason,'Saved technical blocker');
 });
 
 test('the retry inventory reads verified run state even when its retry time is finite', async t => {
@@ -65,7 +65,7 @@ test('the retry inventory reads verified run state even when its retry time is f
     assert.equal(entry.blocker.blockerState,entry.run_id.slice(4));
     const value=row({status:'queued',run:{id:entry.run_id,jobId:entry.task_id}});
     applyStoredCheckpoints([value],[entry]);
-    assert.equal(value.status,'queued');
+    assert.equal(value.status,entry.blocker.blockerState==='paused'?'queued':'blocked');
   }
 });
 
@@ -76,7 +76,7 @@ test('a new running attempt and completed work supersede the previous failed ret
     applyStoredCheckpoints([value],[entry]);assert.equal(value.status,status);assert.equal(value.workerId,'mac-a');
   }
   const delayed=row({status:'queued',run:{id:'20261023T100000Z-job',jobId:'task@1'}});
-  applyStoredCheckpoints([delayed],[entry]);assert.equal(delayed.status,'queued');assert.equal(delayed.attemptId,entry.run_id);
+  applyStoredCheckpoints([delayed],[entry]);assert.equal(delayed.status,'blocked');assert.equal(delayed.attemptId,entry.run_id);
 });
 test('status-bound newsletter, upload and translation jobs match their exact attempt and full job identity', () => {
   for(const jobId of ['abc@1792080437073','abc@1792080437073-klaviyo','abc@1792080437073-uebersetzung-en']){

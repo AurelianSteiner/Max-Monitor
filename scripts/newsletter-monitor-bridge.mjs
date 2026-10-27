@@ -1699,12 +1699,10 @@ export async function readStoredCheckpoints(localHub) {
 }
 
 export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.filter(row => row.run).map(row => [row.id, row.run]))) {
-  // A finite checkpoint is an actual continuation in the central queue. Its
-  // former failure remains in the source history, not as its current status.
-  // Storage holds, unreadable checkpoints and open questions remain blockers.
+  // A retry time schedules work; it never resolves the saved failure. Only a
+  // newer active attempt, successful result or bound PM answer can replace it.
   const failed = entry => entry.ready_at === 8640000000000000
-    || entry.blocker?.blockerState === 'unklar'
-    || entry.blocker?.blockerKind === 'waiting_human'
+    || ['blockiert', 'technisch_blockiert', 'zeitlimit', 'unklar'].includes(entry.blocker?.blockerState)
     || entry.blocker?.reasonCode === 'blocker_context_unreadable';
   for (const row of rows) {
     if (row.status === 'completed') continue;
@@ -1713,14 +1711,14 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
     const entry = entries.find(entry => !entry.owner
       && (entry.task_id === (run.jobId || run.taskId) || (row.workflow === 'correction' && row.id === `correction:${entry.task_id}`))
       && (entry.run_id === run.id || (['blocked','failed','queued'].includes(row.status)
-        && /^\d{8}T\d{6}Z-/.test(entry.run_id) && /^\d{8}T\d{6}Z-/.test(run.id)
+        && failed(entry) && /^\d{8}T\d{6}Z-/.test(entry.run_id) && /^\d{8}T\d{6}Z-/.test(run.id)
         && entry.run_id.slice(0,16) > run.id.slice(0,16))));
     if (!entry) continue;
     row.workerId = undefined;
     // The claim's typed owner describes its own run only.
     if (entry.run_id !== run.id) delete row.blockerOwner;
     row.attemptId = entry.run_id;
-    if (failed(entry) || !Number.isFinite(entry.ready_at)) {
+    if (failed(entry) || (['blocked', 'failed'].includes(row.status) && !entry.blocker?.blockerState)) {
       // Fehleraudit 19.10.2026 (Smileypack d857): a stored run without text never
       // replaces a readable reason of the same commission.
       const readable = displayText(row.blockedReason || row.blockerReason, 500);
@@ -1732,7 +1730,6 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
     } else {
       row.status = 'queued';
       row.phase = 'Wartet · Fortsetzung im RS Hub gesichert';
-      for (const field of ['blockedReason', 'errorUrl', 'blockerReason', 'reasonCode', 'responsibleRole', 'blockerKind', 'nextStep', 'blockerOwner']) delete row[field];
     }
   }
   return rows;
@@ -1917,7 +1914,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   // Keep a confirmed date after its source thread leaves the history window.
   // Any currently visible attempt prevents borrowing an older success.
   retainCompletionDates(queue, previousTasks, claims);
-  const bindings = new Map(queue.filter(row => row.run).map(row => [row.id, { ...row.run, workerId: row.workerId }]));
+  const bindings = new Map(queue.filter(row => row.run).map(row => [row.id, row.run]));
   await addRunDetails(queue, { hubFetch, channelId: config.slack.channel_id, previews, previousTasks, now, statusCache });
   if (checkpointResult.status === 'fulfilled') applyStoredCheckpoints(queue, checkpointResult.value, bindings);
   // A stored terminal upload may first become blocked here. Its open question
