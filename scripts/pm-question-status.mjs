@@ -44,7 +44,8 @@ export function readPmQuestions(file, openDatabase = file => new (require('node:
 export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}, bindings = new Map(), { now = Date.now() } = {}) {
   for (const row of rows) {
     const run = row.run || bindings.get(row.id);
-    if (!['blocked', 'failed'].includes(row.status) || !run || (row.attemptId && row.attemptId !== run.id)) continue;
+    const storedContinuation = row.status === 'queued' && row.phase === 'Wartet · Fortsetzung im RS Hub gesichert';
+    if ((!['blocked', 'failed'].includes(row.status) && !storedContinuation) || !run || (row.attemptId && row.attemptId !== run.id)) continue;
     const stage = row.workflow === 'upload' ? 'klaviyo' : row.workflow === 'correction' ? 'korrektur' : row.workflow;
     const matches = sets.filter(set => set.mode === 'production' && !set.archivedAt && set.stage === stage
       && set.questions.some(q => ['open', 'waiting', 'accepted'].includes(q.status) || q.status === 'replaced' && set.sourceChange?.reason)

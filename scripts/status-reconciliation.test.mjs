@@ -41,15 +41,15 @@ test('latest terminal attempt retires old active owners while actual retries kee
   assert.equal(retry.completionSource, undefined);
 });
 
-test('a portable pause and retry schedule never conceal the technical source blocker', () => {
+test('a matching portable continuation is queued while an unrelated checkpoint is ignored', () => {
   const paused = claim(100, 'running', { paused: true, portable: true });
   const [row] = buildQueue([task(paused.taskId, 'pre-gen', ['pre gen · blockiert'])], [paused], DEFAULT_WORKFLOWS, { now });
   assert.equal(row.status, 'blocked');
   applyStoredCheckpoints([row], [{ task_id: paused.jobId, run_id: 'foreign', ready_at: now }]);
   assert.equal(row.status, 'blocked');
   applyStoredCheckpoints([row], [{ task_id: paused.jobId, run_id: paused.runId, ready_at: now }]);
-  assert.equal(row.status, 'blocked');
-  assert.equal(row.phase, 'Blockiert · Fortschritt im RS Hub gesichert');
+  assert.equal(row.status, 'queued');
+  assert.equal(row.phase, 'Wartet · Fortsetzung im RS Hub gesichert');
 });
 
 test('retry reservation and pause telemetry cannot replace a known technical failure', () => {
