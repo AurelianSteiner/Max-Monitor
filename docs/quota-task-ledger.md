@@ -11,7 +11,12 @@ eine Sales-Phase auch, wenn der Hub-Job blockiert ist (`blockiert`), nicht mehr
 gelistet wird (abgebrochen, `abgebrochen`) oder ohne lesbaren Abschlusszeitpunkt
 bzw. auf einem anderen Mac fertig wurde. Endzeit ist der Abschluss des Jobs, sonst
 der letzte erfasste Schritt der Phase. Später begonnene oder nicht gelistete
-Phasen bleiben offen, bis sie 30 Minuten still sind. Das Schließen gilt als neue
+Phasen bleiben offen, bis sie 30 Minuten still sind. Das gilt auch für eine Phase
+eines blockierten Jobs, die nicht `unverified` ist: `sales-cli resume` baut im
+selben Laufordner weiter, während der Hub-Job bis zum Ende `blocked` bleibt.
+Sales-Ordner, die die Queue gar nicht listet (nur `existing-delivery.json` oder kein
+`job.json`), schließen nach 30 Minuten Stille ebenfalls als `abgebrochen`; eine dort
+bereits gelieferte Phase zählt damit weder als Erfolg noch als Fehlschlag. Das Schließen gilt als neue
 Meldung der Zeile (`last_seen`), damit die Hub-Identitäten (Worker
 `src/production-tracking.js`) es übernehmen, auch wenn der Mac die Phase nicht mehr
 meldet. Eine Phase eines früheren Versuchs auf einem anderen Mac schließt mit dem
@@ -23,6 +28,10 @@ Worker-Datenbank. Der Queue-Abschluss des Auftrags gilt nur, solange der Worker
 noch kein Ende meldet. Sprachfassungen als eigene ClickUp-Aufgabe zählen wie beim
 Worker (`runs.fassung`, `src/jobs.js runKind`) als Übersetzung; bereits als
 Newsletter erfasste Läufe wechseln mit ihren Ereignissen in den Übersetzungsauftrag.
+Sobald kein Lauf mehr unter dem Newsletter-Auftrag liegt, wechselt auch dessen
+verdichteter Eintrag (`compact_jobs`) mit älteren Versuchen; ein neuer Versuch gilt
+dann wie bei jedem Auftrag als `reopened_after_retention`. Hat der Übersetzungsauftrag
+schon einen eigenen, später abgeschlossenen Eintrag, bleibt dieser.
 Beides wirkt nur auf Läufe im 72-Stunden-Fenster des Beobachters, deren Auftrag nicht
 schon mit einem mehr als 48 Stunden zurückliegenden Abschluss verdichtet ist; ältere
 Werte in `compact_jobs` und in der Hub-Kopie `tracking_runs` bleiben unverändert.

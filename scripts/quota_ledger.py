@@ -359,13 +359,14 @@ class Ledger:
         # A Sales phase ends with its Hub job, including subagent streams that
         # disappeared from inventory with the active receipt (Fehleraudit
         # 26.10.2026): completed (also without a readable completion date or on
-        # another Mac), blocked, or aborted (readLocalSales lists no aborted job).
+        # another Mac), blocked (once the phase is silent or unverified), or
+        # aborted (readLocalSales lists no aborted job).
         # The end is the job's completion, else the phase's own last recorded turn.
         # Without any Sales row the listing is unknown and nothing is closed.
         sales = {clean(task.get("id")): task for task in (data.get("queue") or {}).get("tasks", [])
                  if task.get("workflow") == "sales" and task.get("id")}
         reconciled = 0
-        open_phases = self.db.execute("""SELECT worker,run_id,task_id,started,
+        open_phases = self.db.execute("""SELECT worker,run_id,task_id,started,state,
             (SELECT MAX(at) FROM events WHERE events.worker=runs.worker AND events.run_id=runs.run_id) AS last
             FROM runs WHERE kind='sales' AND state IN ('running','queued','unverified')""").fetchall() if sales else []
         for row in open_phases:
@@ -383,7 +384,9 @@ class Ledger:
                     state, end = "completed", last
                 else:
                     continue
-            elif status == "blocked":
+            elif status == "blocked" and (silent or row["state"] == "unverified"):
+                # `sales-cli resume` builds on in the same runDir while the Hub job
+                # stays 'blocked': an active phase is no blocked one.
                 state, end = "blockiert", last
             elif status == "aborted" and silent:
                 state, end = "abgebrochen", last
@@ -538,14 +541,29 @@ class Ledger:
                     # Language versions ran as 'newsletter' before the collector read
                     # runs.fassung: move this run with its turns to its own job.
                     legacy = "newsletter:" + task_id
-                    if self.db.execute("SELECT 1 FROM runs WHERE worker=? AND run_id=? AND job=?",
-                                       (worker, run_id, legacy)).fetchone():
+                    held = self.db.execute("SELECT 1 FROM runs WHERE worker=? AND run_id=? AND job=?",
+                                           (worker, run_id, legacy)).fetchone()
+                    if held:
                         self.db.execute("UPDATE runs SET job=?,kind=? WHERE worker=? AND run_id=?", (job, kind, worker, run_id))
                         self.db.execute("UPDATE events SET job=? WHERE worker=? AND run_id=?", (job, worker, run_id))
-                        if not self.db.execute("SELECT 1 FROM runs WHERE job=? LIMIT 1", (legacy,)).fetchone():
-                            self.db.execute("UPDATE tool_usage SET job=? WHERE job=?", (job, legacy))
-                            self.db.execute("DELETE FROM compact_jobs WHERE job=?", (legacy,))
                         reasons.add('task_changed')
+                    # Its compacted record moves too, also once no run of it is held any
+                    # more: it holds attempts older than the 48 h report, which neither a
+                    # later pass can rebuild nor a re-sent pruned run may count again. A
+                    # record of the translation job that ended later stays: completion
+                    # owns the whole task.
+                    archived = self.db.execute("SELECT finished,payload FROM compact_jobs WHERE job=?", (legacy,)).fetchall()
+                    if (held or archived) and not self.db.execute("SELECT 1 FROM runs WHERE job=? LIMIT 1", (legacy,)).fetchone():
+                        self.db.execute("UPDATE tool_usage SET job=? WHERE job=?", (job, legacy))
+                        for row in archived:
+                            entry = {**json.loads(zlib.decompress(row["payload"])), "job": job, "kind": kind}
+                            self.db.execute("""INSERT INTO compact_jobs VALUES(?,?,?) ON CONFLICT(job) DO UPDATE SET
+                              finished=excluded.finished,payload=excluded.payload WHERE excluded.finished>compact_jobs.finished""",
+                                            (job, row["finished"], zlib.compress(json.dumps(
+                                                entry, separators=(",", ":"), ensure_ascii=False).encode(), 9)))
+                        self.db.execute("DELETE FROM compact_jobs WHERE job=?", (legacy,))
+                        if archived:
+                            reasons.add('task_changed')
                 compact = self.db.execute("SELECT finished FROM compact_jobs WHERE job=?", (job,)).fetchone()
                 if compact is None and kind == "translation":
                     # Already compacted under its former kind: never count it twice.

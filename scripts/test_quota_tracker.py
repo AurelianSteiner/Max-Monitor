@@ -508,7 +508,8 @@ class LedgerTests(unittest.TestCase):
         first = payload()
         first["runs"].append({**first["runs"][0], "run_id": "run-other", "task_id": "task-b@1"})
         self.ledger.ingest(first, NOW + 600)
-        self.ledger.db.execute("INSERT INTO compact_jobs VALUES('newsletter:task-a@1',?,?)", (NOW + 600, b"x"))
+        archived = zlib.compress(json.dumps({"job": "newsletter:task-a@1", "kind": "newsletter", "attempts": 2}).encode())
+        self.ledger.db.execute("INSERT INTO compact_jobs VALUES('newsletter:task-a@1',?,?)", (NOW + 600, archived))
         self.ledger.db.execute("INSERT INTO tool_usage(id,job,name) VALUES('tool-a','newsletter:task-a@1','Read')")
         again = payload(False)
         again["runs"][0]["kind"] = "translation"
@@ -519,17 +520,88 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual({r[0] for r in db.execute("SELECT job FROM events WHERE run_id='run-a'")}, {"translation:task-a@1"})
         self.assertEqual(db.execute("SELECT job FROM tool_usage").fetchone()[0], "translation:task-a@1")
         self.assertIsNone(db.execute("SELECT 1 FROM compact_jobs WHERE job='newsletter:task-a@1'").fetchone())
+        moved = db.execute("SELECT finished,payload FROM compact_jobs WHERE job='translation:task-a@1'").fetchone()
+        self.assertEqual((moved["finished"], json.loads(zlib.decompress(moved["payload"]))),
+                         (NOW + 600, {"job": "translation:task-a@1", "kind": "translation", "attempts": 2}))
         # Other newsletter runs keep their kind; a later report never turns it back.
         self.assertEqual(db.execute("SELECT kind FROM runs WHERE run_id='run-other'").fetchone()[0], "newsletter")
         self.ledger.ingest(payload(False), NOW + 800)
         self.assertEqual(db.execute("SELECT kind FROM runs WHERE run_id='run-a'").fetchone()[0], "translation")
 
+    def test_language_version_keeps_its_compacted_attempt_older_than_48_hours(self):
+        # The first attempt was compacted as newsletter and pruned after 48 h; the
+        # next one, 49 h later, moves to the translation job. The compacted record
+        # moves with it: the re-sent pruned attempt is not imported again, and the
+        # later attempt alone never counts as a complete new measurement.
+        self.ledger.reset(NOW - 1)
+        self.ledger.ingest(payload(), NOW + 600)
+        self.ledger.dashboard(NOW + 700)
+        later = NOW + 49 * 3600
+        self.ledger.dashboard(later)
+        db = self.ledger.db
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM runs").fetchone()[0], 0)
+        second = payload(False)
+        second["events"] = []
+        second["runs"][0].update(run_id="run-b", started=later, finished=None, state="running")
+        self.ledger.ingest(second, later)
+        resent = {**second, "runs": [{**second["runs"][0], "kind": "translation"},
+                                     {**payload()["runs"][0], "kind": "translation"}]}
+        self.ledger.ingest(resent, later + 60)
+        self.assertEqual({r[0] for r in db.execute("SELECT run_id FROM runs")}, {"run-b"})
+        self.assertIsNone(db.execute("SELECT 1 FROM compact_jobs WHERE job='newsletter:task-a@1'").fetchone())
+        moved = db.execute("SELECT finished,payload FROM compact_jobs WHERE job='translation:task-a@1'").fetchone()
+        entry = json.loads(zlib.decompress(moved["payload"]))
+        self.assertEqual((moved["finished"], entry["job"], entry["kind"], entry["started"], entry["attempts"]),
+                         (NOW + 600, "translation:task-a@1", "translation", ledger_module.iso(NOW), 1))
+        resent["runs"][0].update(finished=later + 3600, state="fertig")
+        self.ledger.ingest(resent, later + 3600)
+        jobs = {j["job"]: j for j in self.ledger.dashboard(later + 3700)["recent_jobs"]}
+        self.assertEqual(jobs["translation:task-a@1"]["check"], "reopened_after_retention")
+        self.assertNotIn("newsletter:task-a@1", jobs)
+
     def test_language_version_compacted_as_newsletter_is_not_reimported_twice(self):
         self.ledger.reset(NOW - 1)
-        self.ledger.db.execute("INSERT INTO compact_jobs VALUES('newsletter:task-a@1',?,?)", (NOW + 600, b"x"))
+        archived = zlib.compress(json.dumps({"job": "newsletter:task-a@1", "kind": "newsletter"}).encode())
+        self.ledger.db.execute("INSERT INTO compact_jobs VALUES('newsletter:task-a@1',?,?)", (NOW + 600, archived))
         again = payload(False)
         again["runs"][0]["kind"] = "translation"
         self.ledger.ingest(again, NOW + 3 * 86400)
+        self.assertEqual(self.ledger.db.execute("SELECT COUNT(*) FROM runs").fetchone()[0], 0)
+        self.assertEqual([r[0] for r in self.ledger.db.execute("SELECT job FROM compact_jobs")], ["translation:task-a@1"])
+
+    def test_first_translation_report_takes_over_the_compacted_newsletter_record(self):
+        # The Mac's collector already reads runs.fassung; the task's earlier attempt
+        # only survives as a compacted newsletter record. The new attempt reopens
+        # that record instead of starting a second, partial translation job.
+        self.ledger.reset(NOW - 1)
+        self.ledger.ingest(payload(), NOW + 600)
+        self.ledger.dashboard(NOW + 700)
+        later = NOW + 49 * 3600
+        self.ledger.dashboard(later)
+        db = self.ledger.db
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM runs").fetchone()[0], 0)
+        second = payload(False)
+        second["events"] = []
+        second["runs"][0].update(run_id="run-b", kind="translation", started=later, finished=later + 3600, state="fertig")
+        self.ledger.ingest(second, later + 3600)
+        self.assertEqual([r[0] for r in db.execute("SELECT job FROM compact_jobs")], ["translation:task-a@1"])
+        jobs = {j["job"]: j for j in self.ledger.dashboard(later + 3700)["recent_jobs"]}
+        self.assertEqual(jobs["translation:task-a@1"]["check"], "reopened_after_retention")
+        self.assertNotIn("newsletter:task-a@1", jobs)
+
+    def test_compacted_translation_record_that_ended_later_is_kept(self):
+        self.ledger.reset(NOW - 1)
+        record = lambda job, kind, attempts: zlib.compress(json.dumps({"job": job, "kind": kind, "attempts": attempts}).encode())
+        self.ledger.db.execute("INSERT INTO compact_jobs VALUES('newsletter:task-a@1',?,?)",
+                               (NOW + 600, record("newsletter:task-a@1", "newsletter", 1)))
+        self.ledger.db.execute("INSERT INTO compact_jobs VALUES('translation:task-a@1',?,?)",
+                               (NOW + 7200, record("translation:task-a@1", "translation", 2)))
+        again = payload(False)
+        again["runs"][0]["kind"] = "translation"
+        self.ledger.ingest(again, NOW + 3 * 86400)
+        rows = self.ledger.db.execute("SELECT job,finished,payload FROM compact_jobs").fetchall()
+        self.assertEqual([(r["job"], r["finished"], json.loads(zlib.decompress(r["payload"]))["attempts"]) for r in rows],
+                         [("translation:task-a@1", NOW + 7200, 2)])
         self.assertEqual(self.ledger.db.execute("SELECT COUNT(*) FROM runs").fetchone()[0], 0)
 
     def sales_phase(self, task, worker="mac-1", run=None, started=NOW, state="running", last=None):
@@ -584,6 +656,26 @@ class LedgerTests(unittest.TestCase):
         run = self.sales_phase("sales:2.2", last=NOW)
         self.ledger.fleet(fleet(NOW + 7200, 10), NOW + 7200)
         self.assertEqual(tuple(self.ledger.db.execute("SELECT state,last_seen FROM runs WHERE run_id=?", (run,)).fetchone()), ("running", NOW))
+
+    def test_resumed_sales_phase_of_a_blocked_job_stays_running(self):
+        # `sales-cli resume` builds on in the same runDir while the Hub job stays
+        # 'blocked': only a silent or unverified phase of a blocked job is closed.
+        active = self.sales_phase("sales:1.1", last=NOW + 3000)
+        phantom = self.sales_phase("sales:1.1", run="sales-1.1-old", last=NOW)
+        unverified = self.sales_phase("sales:2.2", state="unverified", last=NOW + 3000)
+        data = fleet(NOW + 3600, 10)
+        data["queue"] = {"tasks": [
+            {"id": "sales:1.1", "workflow": "sales", "status": "blocked", "workerId": "mac-1"},
+            {"id": "sales:2.2", "workflow": "sales", "status": "blocked", "workerId": "mac-1"}]}
+        self.ledger.fleet(data, NOW + 3600)
+        rows = lambda: {r["run_id"]: (r["state"], r["finished"], r["last_seen"])
+                        for r in self.ledger.db.execute("SELECT run_id,state,finished,last_seen FROM runs")}
+        self.assertEqual(rows()[active], ("running", None, NOW))
+        self.assertEqual(rows()[phantom], ("blockiert", NOW, NOW + 3600))
+        self.assertEqual(rows()[unverified], ("blockiert", NOW + 3000, NOW + 3600))
+        # Once the resumed phase is silent for 30 minutes, the blocked job closes it.
+        self.ledger.fleet(data, NOW + 4800)
+        self.assertEqual(rows()[active], ("blockiert", NOW + 3000, NOW + 4800))
 
 
     def test_scheduler_preserves_measurement_age_and_shares_one_account_budget(self):
