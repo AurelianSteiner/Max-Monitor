@@ -463,13 +463,20 @@ button.stage-count:active { transform: translateY(1px); }
 .content-section { min-width: 0; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 4px 0 12px; }
 .section-heading h2 { font-size: 15px; }
+#queue-section > .section-heading h2 { flex-shrink: 0; }
 .queue-type-breakdown {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
-  gap: 12px 24px; margin: 0 0 20px; font-variant-numeric: tabular-nums;
+  display: flex; align-items: center; gap: 4px; min-width: 0; margin: 0 0 0 auto;
+  overflow-x: auto; font-variant-numeric: tabular-nums;
 }
-.queue-type-breakdown dt { color: var(--muted); font-size: 12px; line-height: 1.4; }
-.queue-type-breakdown dd { margin: 4px 0 0; font-size: 18px; font-weight: 600; line-height: 1.2; }
-.queue-type-breakdown dd[data-empty="true"] { color: var(--muted); font-weight: 400; }
+.queue-type-breakdown > .workflow-name {
+  display: inline-flex; align-items: baseline; flex-shrink: 0; gap: 4px;
+  padding: 1px 5px; font-size: 10px; line-height: 16px;
+}
+.queue-type-breakdown dt { font-weight: 400; }
+.queue-type-breakdown dd { margin: 0; font-weight: 600; }
+.queue-type-breakdown .workflow-name[data-workflow="technical-repair"] {
+  background: color-mix(in srgb, var(--good) 10%, var(--surface)); color: var(--good);
+}
 h2:focus { outline: none; }
 .interval { font-family: var(--mono); font-size: 11px; color: var(--muted); text-align: right; }
 
@@ -732,6 +739,9 @@ dialog.wide { max-width: 1060px; }
   .search input { width: 200px; }
 }
 @media (max-width: 760px) {
+  #queue-section > .section-heading { flex-wrap: wrap; gap: 4px 12px; }
+  .queue-type-breakdown { order: 3; flex-basis: 100%; margin: 0; }
+  #queue-updated { margin-left: auto; }
   .pipeline-head .panel-meta { flex-basis: 100%; margin-left: 0; }
   .pipeline-table thead th:first-child { width: 76px; }
   .pipeline-table thead th.open-total, .pipeline-table thead th.done-total { width: 42px; }

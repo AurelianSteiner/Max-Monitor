@@ -1779,7 +1779,7 @@
     $("queue-count").textContent = snapshot ? numberFormat.format(visible.length) : "—";
     $("queue-count").dataset.tone = countTone(statusFilter, snapshot ? visible.length : null);
     $("queue-type-breakdown").replaceChildren(...taskTypeCounts(visible).map(({ key, label, count }) => {
-      const entry = node("div");
+      const entry = node("div", "workflow-name");
       entry.dataset.workflow = key;
       const value = node("dd", "", snapshot ? numberFormat.format(count) : "—");
       value.dataset.empty = String(snapshot !== null && count === 0);

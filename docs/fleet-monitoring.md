@@ -65,12 +65,13 @@ nur der Tag `manuell`. Ein Klick auf einen
 Balken öffnet die Queue mit genau diesem Status- und Workflow-Filter. Das Dashboard ist
 bewusst immer hell, auch im macOS-Dunkelmodus.
 
-Die Aufgabenlisten zeigen unter der Statusüberschrift dauerhaft die Anzahl von
+Die Aufgabenlisten zeigen in der bestehenden Kopfzeile kompakte farbige Angaben zu
 **Uploads, Pre-Gens, Korrekturen, Sales und Fixes**. Fixes sind technische
 Reparaturaufträge (`technical-repair`). Die fünf Arten bleiben auch bei null sichtbar;
 weitere vorhandene Arten wie Übersetzungen erscheinen zusätzlich. Die Aufschlüsselung
 folgt denselben Such-, Workflow-, Mac- und Zeitraumfiltern wie die Gesamtzahl und
-zählt alle passenden Aufgaben vor der Aufteilung auf Seiten. „Heute erledigt“ nutzt
+zählt alle passenden Aufgaben vor der Aufteilung auf Seiten. Auf schmalen Displays
+stehen die Angaben in einer einzelnen kompakten Zeile unter dem Titel. „Heute erledigt“ nutzt
 weiterhin belegte Abschlusszeitpunkte mit Tagesgrenze Europe/Berlin.
 
 Im **Queue-Log → Braucht Aufmerksamkeit** stehen die aktuell betroffenen Macs und
