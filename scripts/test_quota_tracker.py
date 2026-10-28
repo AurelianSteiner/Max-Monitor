@@ -82,6 +82,37 @@ def pool_report(worker, device, account_2_five, at=NOW, weekly_reset=RESET):
                              {'kind': 'weekly', 'percent': 30, 'reset': iso(weekly_reset)}]}]}}
 
 
+LOGIN_FIVE, SECOND_FIVE = NOW + 3600, NOW + 7200
+
+
+def pool_login_fleet(at=NOW):
+    """A two-account Mac whose primary slot is its bound app login."""
+    iso = ledger_module.iso
+    report = {'workerId': 'mac-g', 'deviceId': 'device-g', 'sampledAt': iso(at), 'receivedAt': iso(at),
+              'claudeAccounts': {'selectedAccountId': 'account-2', 'accounts': [
+                  {'id': 'primary', 'name': 'Claude 1', 'status': 'ready', 'updatedAt': iso(at),
+                   'windows': [{'kind': 'session', 'percent': 10, 'reset': iso(LOGIN_FIVE)},
+                               {'kind': 'weekly', 'percent': 30, 'reset': iso(RESET)}]},
+                  {'id': 'account-2', 'name': 'Claude 2', 'status': 'ready', 'updatedAt': iso(at),
+                   'windows': [{'kind': 'session', 'percent': 20, 'reset': iso(SECOND_FIVE)},
+                               {'kind': 'weekly', 'percent': 40, 'reset': iso(RESET + 3600)}]}]}}
+    return {'machines': [bound_machine('mac-g', 'valentin@example.com', LOGIN_FIVE, five=10, at=at, device='device-g')],
+            'workerReports': [report]}
+
+
+def pool_run(name, five_reset, weekly_reset, first):
+    """A finished newsletter run whose stream rises by 4 (5h) and 1 (week) points."""
+    quota = [{'id': 'quota-%s-%d' % (name, i), 'event_type': 'quota', 'run_id': name, 'at': NOW + 60 + 600 * i,
+              'time_quality': 'timestamp', 'windows': {'five_hour': {'percent': first + 4 * i, 'reset': five_reset},
+                                                       'seven_day': {'percent': 30 + i, 'reset': weekly_reset}}}
+             for i in range(2)]
+    message = {'id': 'message-' + name, 'event_type': 'message', 'run_id': name, 'at': NOW + 300,
+               'time_quality': 'timestamp', 'input_tokens': 10, 'output_tokens': 100}
+    return {'schema': 1, 'worker': 'mac-g', 'events': quota + [message], 'runs': [
+        {'run_id': name, 'task_id': name + '@1', 'title': 'T', 'customer': 'C', 'kind': 'newsletter',
+         'started': NOW, 'finished': NOW + 900, 'state': 'fertig'}]}
+
+
 def stream(worker, five_reset, run, at=NOW + 60, five=94, weekly_reset=RESET):
     windows = {'seven_day': {'percent': 30, 'reset': weekly_reset}}
     if five_reset is not None:
@@ -833,8 +864,11 @@ class LedgerTests(unittest.TestCase):
                 self.ledger.ingest(stream('mac-l', lila, 'run-l'), NOW + 120)
                 self.ledger.ingest(stream('mac-s', schwarz, 'run-s', five=100), NOW + 120)
                 self.ledger.materialize()
-                self.assertEqual(self.stream_samples(), [('aurelian@rss.example', 'mac-s', 'five_hour', 100),
-                                                         ('aurelian@rss.example', 'mac-s', 'seven_day', 30)])
+                # 28.10.2026: Lila's stream keeps its own slot series, never Schwarz's account.
+                lila_slot = [(ledger_module.pool_account('mac-l', 'device-l', 'account-2'), 'mac-l', 'five_hour', 94),
+                             (ledger_module.pool_account('mac-l', 'device-l', 'account-2'), 'mac-l', 'seven_day', 30)]
+                self.assertEqual(self.stream_samples(), sorted((lila_slot if registered else []) + [
+                    ('aurelian@rss.example', 'mac-s', 'five_hour', 100), ('aurelian@rss.example', 'mac-s', 'seven_day', 30)]))
                 q = self.ledger.scheduling([], NOW + 120)['workers']['mac-s']
                 self.assertEqual(q['windows']['five_hour']['used'], 100)
         self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM pool_resets').fetchone()[0], 0)
@@ -850,8 +884,29 @@ class LedgerTests(unittest.TestCase):
         # Weekly reset alone: Schwarz's account and Lila's slot both match.
         self.assertIsNone(self.ledger.resolve(RESET, None, 'mac-s', NOW + 60))
         self.assertEqual(self.ledger.resolve(RESET, NOW + 3600, 'mac-s', NOW + 60), 'aurelian@rss.example')
-        self.assertIsNone(self.ledger.resolve(RESET, lila, 'mac-l', NOW + 60), 'a pool slot is never an account')
-        self.assertIsNone(self.ledger.resolve(RESET + 7200, None, 'mac-l', NOW + 60))
+        slot = lambda name: ledger_module.pool_account('mac-l', 'device-l', name)
+        self.assertEqual(self.ledger.resolve(RESET, lila, 'mac-l', NOW + 60), slot('account-2'),
+                         'its own slot series, never another Mac\'s account')
+        self.assertEqual(self.ledger.resolve(RESET, None, 'mac-l', NOW + 60), slot('account-2'))
+        self.assertEqual(self.ledger.resolve(RESET + 7200, None, 'mac-l', NOW + 60), slot('primary'))
+        self.assertIsNone(self.ledger.resolve(RESET + 7200, None, 'mac-s', NOW + 60), 'another Mac\'s slot is never returned')
+
+    def test_pool_mac_measures_its_login_slot_as_the_login_and_its_second_slot_on_its_own(self):
+        """28.10.2026: 81 Pre-Gen measurements stayed open on Macs with two accounts."""
+        self.ledger.reset(NOW - 1)
+        self.ledger.fleet(pool_login_fleet(), NOW)
+        self.ledger.ingest(pool_run('run-login', LOGIN_FIVE, RESET, 10), NOW + 1000)
+        self.ledger.ingest(pool_run('run-second', SECOND_FIVE, RESET + 3600, 20), NOW + 1000)
+        summary = self.ledger.dashboard(NOW + 1000)
+        second = ledger_module.pool_account('mac-g', 'device-g', 'account-2')
+        jobs = {j['job']: j for j in summary['recent_jobs']}
+        self.assertEqual({k: (j['check'], j['accounts'], j['five_hour_pp'], j['weekly_pp']) for k, j in jobs.items()},
+                         {'newsletter:run-login@1': ('complete', ['valentin@example.com'], 4, 1),
+                          'newsletter:run-second@1': ('complete', [second], 4, 1)})
+        newsletter = next(r for r in summary['by_kind'] if r['key'] == 'newsletter')
+        self.assertEqual((newsletter['five_hour_pp']['n'], newsletter['pending']), (2, 0))
+        # The pseudonymous slot counts in the task kind, not as a selectable account.
+        self.assertEqual([r['key'] for r in summary['by_account_kind']], ['valentin@example.com|newsletter'])
 
     def test_same_weekly_reset_with_different_5h_resets_on_different_workers_never_merges(self):
         first, second = NOW + 3600, NOW + 7200

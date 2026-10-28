@@ -1,5 +1,41 @@
 # Verbrauch & Aufwand
 
+## Macs mit zwei Accounts messen (Till, 28.10.2026)
+
+Seit dem 22.10.2026 kennt das Ledger die Reset-Zeiten beider Pool-Slots jedes
+Macs mit zwei Claude-Accounts. Gleiche Reset-Zeiten galten danach immer als
+mehrdeutig, und ein Pool-Slot wurde nie zugeordnet. Damit blieb jeder Lauf auf
+Grün, Blau, Orange, Lila und Schwarz ohne Kontingentzuordnung und als „Messung
+offen“ stehen (28.10.2026: 81 von 109 Pre-Gen, 63 von 102 Korrekturen). Gemessen
+wurden nur noch Rot, Türkis, Gelb und Pink.
+
+Gleiche Reset-Zeiten beweisen keine Identität: Lilas zweiter Account teilt Wochen-
+und 5h-Reset von Schwarz auf die Sekunde, bei völlig anderen Prozentwerten. Ein Mac
+mit Account-Pool entscheidet deshalb zuerst unter seinen eigenen Slots. Genau ein
+eigener Slot muss passen. Teilt das gebundene App-Login des Macs dessen Fingerabdruck,
+ist der Slot dieses Login (geprüft: Primär-Slot und App-Login zeigen zur selben
+Zeit dieselben Prozentwerte). Sonst bleibt der Slot eine eigene pseudonyme
+Messreihe, nie eine Anbieter-Identität. Der Slot eines anderen Macs wird weiterhin
+nie zurückgegeben. Pseudonyme Slots zählen in der Aufgabenart, aber nicht als
+auswählbarer Account; die Planung je Account bleibt unverändert.
+
+Bereits verdichtete offene Messungen zieht `usage_backfill.py` nach. Es arbeitet
+wie der Sales-Nachzug ausschließlich auf einer SQLite-Kopie mit allen geprüften
+Roharchiven, rechnet alle Aufgabenarten mit dem aktuellen Ledger neu und übernimmt
+nur Einträge, die dort vollständig und live noch offen sind. Live seit `prepare`
+neu berechnete Einträge, geänderte Abschlussidentität oder weniger Token bleiben
+unverändert und werden im Ergebnis mit Grund genannt. Ersetzte Einträge bleiben
+als `usage_backfill_previous` im Archiv. Es gibt keine neuen Claude-Aufrufe.
+
+```sh
+python3 /opt/max-monitor-quota/usage_backfill.py prepare \
+  --directory /var/lib/max-monitor-quota/backfills/usage-YYYYMMDD
+python3 /opt/max-monitor-quota/usage_backfill.py finish --dry-run \
+  --directory /var/lib/max-monitor-quota/backfills/usage-YYYYMMDD
+python3 /opt/max-monitor-quota/usage_backfill.py finish \
+  --directory /var/lib/max-monitor-quota/backfills/usage-YYYYMMDD
+```
+
 ## Sales-Abschluss und Nachziehen vorhandener Messdaten
 
 Der Mac-Beobachter liest die exakte Claude-Sitzung und den ersten Zeitstempel aus

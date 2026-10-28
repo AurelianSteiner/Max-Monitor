@@ -74,6 +74,9 @@ def pool_account(worker, device, slot):
     return identifier(['worker_pool_slot', worker, device, slot])[:24]
 
 
+POOL_SLOT = re.compile(r'[0-9a-f]{24}')
+
+
 def pool_observation(report, worker, device):
     """Keep pool scheduling evidence separate from proven provider identities.
 
@@ -701,15 +704,16 @@ class Ledger:
 
     def reset_universe(self):
         """Every observed reset fingerprint by account, pool slots included."""
-        universe = {'seven_day': defaultdict(set), 'five_hour': defaultdict(set), 'pool': set(), 'bound': defaultdict(set)}
+        # 'pool' maps each slot to the one worker it belongs to.
+        universe = {'seven_day': defaultdict(set), 'five_hour': defaultdict(set), 'pool': {}, 'bound': defaultdict(set)}
         for row in self.db.execute("""SELECT DISTINCT account,window,reset FROM samples
                 WHERE source IN ('fleet','probe') AND reset IS NOT NULL"""):
             universe[row['window']][row['account']].add(row['reset'])
         for row in self.db.execute('SELECT account,reset FROM account_resets'):
             universe['seven_day'][row['account']].add(row['reset'])
-        for row in self.db.execute('SELECT account,window,reset FROM pool_resets'):
+        for row in self.db.execute('SELECT account,window,reset,worker FROM pool_resets'):
             universe[row['window']][row['account']].add(row['reset'])
-            universe['pool'].add(row['account'])
+            universe['pool'][row['account']] = row['worker']
         for row in self.db.execute('SELECT DISTINCT worker,account FROM bindings'):
             universe['bound'][row['worker']].add(row['account'])
         return universe
@@ -717,13 +721,18 @@ class Ledger:
     def resolve(self, weekly_reset, five_reset=None, worker=None, at=None, universe=None):
         """Historical account identity is an explicitly inferred reset fingerprint.
 
-        A unique matching current or preceding weekly cycle is required among
-        all accounts and every Mac's pool slots, so a collision stays ambiguous.
-        An account whose own observed 5h window at that time has another reset
-        is no match. The result must be an account the stream's worker was ever
-        bound to, unless its 5h reset matches as well (cross-confirmed). Pool
-        slots are never returned. Never substitute the account currently
-        logged into the worker after a handoff.
+        A matching current or preceding weekly cycle is required. An account
+        whose own observed 5h window at that time has another reset is no match.
+        A Mac with an account pool first decides among its own slots: equal
+        resets elsewhere prove nothing (28.10.2026: Lila's second account shares
+        Schwarz's weekly and 5h reset to the second, at other percentages).
+        Exactly one own slot must match. If the Mac's bound app login shares
+        that slot's fingerprint, the slot is that login; otherwise the slot is
+        its own pseudonymous series, never a provider identity. Without an own
+        slot a unique match among all accounts and every Mac's slots is
+        required, bound to the stream's worker or cross-confirmed by its 5h
+        reset; another Mac's slot is never returned. Never substitute the
+        account currently logged into the worker after a handoff.
         """
         if not number(weekly_reset):
             return None
@@ -738,6 +747,12 @@ class Ledger:
                     confirmed.add(account)
                 elif number(at) and any(r - 5 * 3600 <= at < r for r in resets):
                     matches.discard(account)
+        own = {slot for slot in matches if universe['pool'].get(slot) == worker}
+        if own:
+            if len(own) != 1:
+                return None
+            login = {account for account in matches - set(universe['pool']) if account in universe['bound'].get(worker, ())}
+            return next(iter(login)) if len(login) == 1 else next(iter(own))
         if len(matches) != 1:
             return None
         account = next(iter(matches))
@@ -969,17 +984,22 @@ class Ledger:
         return {"schema": SCHEMA, "accounts": [{"account": a, "tasks_per_week": None} for a in selected],
                 "tasks_per_week": None, "reason": "quota_allocation_not_calibrated", "mix": mix}
 
-    def dashboard(self, now=None, replay_sales=False):
-        """Rolling five-day averages over retained compressed task records."""
+    def dashboard(self, now=None, replay_sales=False, replay_kinds=()):
+        """Rolling five-day averages over retained compressed task records.
+
+        A replay (isolated backfill ledger only) recomputes the named kinds
+        over all restored evidence and keeps every raw row.
+        """
         now = time.time() if now is None else now
         since = self.setting("tracking_since", now)
-        report = self.report(max(1, (now - since) / 3600 + 1) if replay_sales
+        replay = set(replay_kinds) | ({'sales'} if replay_sales else set())
+        report = self.report(max(1, (now - since) / 3600 + 1) if replay
                              else min(48, max(1, (now - since) / 3600 + 1)), now)
         archived = {r["job"]: json.loads(zlib.decompress(r["payload"])) for r in self.db.execute("SELECT * FROM compact_jobs")}
         jobs = dict(archived)
         terminal = {"fertig", "completed", "failed", "abgebrochen", "zeitlimit", "blockiert", "technisch_blockiert", "abgebrochen_neustart"}
         for j in report["jobs"]:
-            if (not replay_sales or j['kind'] != 'sales') and j["job"] in archived and stamp(j["started"]) is not None and stamp(j["started"]) < now - 48 * 3600:
+            if j['kind'] not in replay and j["job"] in archived and stamp(j["started"]) is not None and stamp(j["started"]) < now - 48 * 3600:
                 continue  # Never replace a full archived result with a partial window.
             closed = bool(j["finished"]) and not j["in_progress"] and bool(terminal.intersection(j["states"]))
             carryover = not j["started"] or stamp(j["started"]) < since
@@ -1044,7 +1064,9 @@ class Ledger:
         for j in jobs.values():
             by_kind[j["kind"]].append(j)
             by_customer[j["customer"] + "|" + j["kind"]].append(j)
-            if len(j["accounts"]) == 1:
+            # A pseudonymous pool slot is no account to select: it counts in
+            # the task kind only.
+            if len(j["accounts"]) == 1 and not POOL_SLOT.fullmatch(j["accounts"][0]):
                 by_account[j["accounts"][0] + "|" + j["kind"]].append(j)
         settings = [{"worker": r["worker"], "at": iso(r["at"]), "values": json.loads(r["settings"])}
                     for r in self.db.execute("SELECT * FROM worker_settings ORDER BY worker")]
@@ -1059,7 +1081,7 @@ class Ledger:
         cutoff = now - 48 * 3600
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            old_jobs = [] if replay_sales else [r[0] for r in self.db.execute("SELECT job FROM compact_jobs WHERE finished<?", (cutoff,))
+            old_jobs = [] if replay else [r[0] for r in self.db.execute("SELECT job FROM compact_jobs WHERE finished<?", (cutoff,))
                         if jobs[r[0]]["closed"]]
             archived_rows = {"events": [], "runs": [], "usage_features": [], "tool_usage": []}
             for job in old_jobs:
@@ -1068,7 +1090,7 @@ class Ledger:
                 archived_rows['usage_features'].extend(dict(r) for r in self.db.execute(
                     'SELECT * FROM usage_features WHERE event_id IN (SELECT id FROM events WHERE job=?)', (job,)))
                 archived_rows['tool_usage'].extend(dict(r) for r in self.db.execute('SELECT * FROM tool_usage WHERE job=?', (job,)))
-            archived_rows["samples"] = [] if replay_sales else [dict(r) for r in self.db.execute("SELECT * FROM samples WHERE at<?", (cutoff - 1800,))]
+            archived_rows["samples"] = [] if replay else [dict(r) for r in self.db.execute("SELECT * FROM samples WHERE at<?", (cutoff - 1800,))]
             archived_rows["account_resets"] = [dict(r) for r in self.db.execute('SELECT * FROM account_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))]
             archived_rows["pool_resets"] = [dict(r) for r in self.db.execute('SELECT * FROM pool_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))]
             self.archive_rows(archived_rows, now)
@@ -1077,7 +1099,7 @@ class Ledger:
                 self.db.execute('DELETE FROM tool_usage WHERE job=?', (job,))
                 self.db.execute("DELETE FROM events WHERE job=?", (job,))
                 self.db.execute("DELETE FROM runs WHERE job=?", (job,))
-            if not replay_sales:
+            if not replay:
                 self.db.execute("DELETE FROM samples WHERE at<?", (cutoff - 1800,))
             self.db.execute('DELETE FROM account_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))
             self.db.execute('DELETE FROM pool_resets WHERE seen<? AND reset<?', (now - 14 * 86400, now - WEEK))
