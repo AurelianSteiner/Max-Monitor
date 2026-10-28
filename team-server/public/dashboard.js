@@ -1749,6 +1749,19 @@
       }
     }
   }
+  function taskTypeCounts(items) {
+    const labels = new Map([
+      ["upload", "Uploads"], ["newsletter", "Pre-Gens"], ["correction", "Korrekturen"],
+      ["sales", "Sales"], ["technical-repair", "Fixes"],
+    ]);
+    const counts = new Map([...labels.keys()].map(key => [key, 0]));
+    for (const task of items) {
+      const key = ["pre-gen", "pregen"].includes(task.workflow) ? "newsletter" : task.workflow || "unknown";
+      if (!labels.has(key)) labels.set(key, workflowNames[key] || (key === "unknown" ? "Ohne Aufgabenart" : key));
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return [...labels].map(([key, label]) => ({ key, label, count: counts.get(key) || 0 }));
+  }
   function renderQueue(items) {
     const scoped = filtered(items, { ignoreStatus: true });
     const statusCounts = { open: scoped.filter(isOpen).length, all: scoped.length };
@@ -1765,6 +1778,14 @@
     const visible = filtered(items);
     $("queue-count").textContent = snapshot ? numberFormat.format(visible.length) : "—";
     $("queue-count").dataset.tone = countTone(statusFilter, snapshot ? visible.length : null);
+    $("queue-type-breakdown").replaceChildren(...taskTypeCounts(visible).map(({ key, label, count }) => {
+      const entry = node("div");
+      entry.dataset.workflow = key;
+      const value = node("dd", "", snapshot ? numberFormat.format(count) : "—");
+      value.dataset.empty = String(snapshot !== null && count === 0);
+      entry.append(node("dt", "", label), value);
+      return entry;
+    }));
     const body = $("queue-body");
     body.replaceChildren();
     queuePage = Math.min(

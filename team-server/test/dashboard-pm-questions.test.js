@@ -13,7 +13,7 @@ function element(id) {
   if (!elements.has(id)) elements.set(id, { dataset: {}, replaceChildren() {} });
   return elements.get(id);
 }
-const context = { document: { getElementById: element }, window: {}, location: { pathname: '/fleet', search: '' }, URLSearchParams, Intl };
+const context = { document: { getElementById: element, createElement: () => ({ dataset: {}, append() {} }) }, window: {}, location: { pathname: '/fleet', search: '' }, URLSearchParams, Intl };
 vm.runInNewContext(source.replace(marker,
   '  globalThis.pmUnderTest = { stageOf, matchesStatus, tasks, completionLabel, renderQueue,\n'
   + '    setState(items, options = {}) {\n'
