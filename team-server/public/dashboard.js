@@ -767,6 +767,7 @@
   }
 
   function render({ preserveScroll = false } = {}) {
+    const accountFocus = document.activeElement?.matches('.account-lock input') ? document.activeElement.name : null;
     renderedDay = productionDay(Date.now());
     // WebKit can clamp the page offset while live regions are replaced.
     // Capture at render time so scrolling during the request stays intact.
@@ -867,6 +868,8 @@
     renderEvents(attention);
     refreshOpenTask();
     refreshMachineWork(devices);
+    if (accountFocus) [...document.querySelectorAll('.account-lock input')]
+      .find(el => el.name === accountFocus && !el.disabled && el.getClientRects().length)?.focus({ preventScroll: true });
     if (scrollPosition) window.scrollTo({ ...scrollPosition, behavior: "instant" });
   }
   function openQueue(status, workflowValue = "", period = "all") {
@@ -1384,6 +1387,8 @@
     label.addEventListener('keydown', event => event.stopPropagation());
     input.addEventListener('change', async () => {
       const disabled = input.checked, connection = credentials, hadFocus = document.activeElement === input;
+      const fromDetails = Boolean(input.closest('#detail-dialog'));
+      let feedback, failed = false;
       accountLocksPending.add(key); input.disabled = true;
       input.setAttribute('aria-busy', 'true');
       try {
@@ -1392,15 +1397,21 @@
         if (credentials !== connection) return;
         for (const target of snapshot?.machines || []) if (target.workerId === machine.workerId)
           target.claudeAccountControl = { ...target.claudeAccountControl, ...result };
-        showNotice(disabled ? `${item.name} ist für neue Aufgaben gesperrt. Laufende Aufgaben werden beendet.` : `${item.name} ist wieder für neue Aufgaben freigegeben. Die Kontingentprüfung gilt weiter.`);
+        feedback = disabled ? `${item.name} ist für neue Aufgaben gesperrt. Laufende Aufgaben werden beendet.` : `${item.name} ist wieder für neue Aufgaben freigegeben. Die Kontingentprüfung gilt weiter.`;
       } catch (error) {
         if (credentials !== connection) return;
-        input.checked = !disabled; showNotice(error.message);
+        input.checked = !disabled; feedback = error.message; failed = true;
       } finally {
         accountLocksPending.delete(key);
         input.disabled = false; input.removeAttribute('aria-busy');
         if (credentials === connection) {
           render(); await refresh();
+          $('account-control-status').textContent = feedback || '';
+          $('account-control-status').hidden = !feedback;
+          if (fromDetails && $('detail-dialog').open) {
+            $('detail-action-error').textContent = failed ? feedback : '';
+            $('detail-action-error').hidden = !failed;
+          }
           if (hadFocus) [...document.querySelectorAll('input[type="checkbox"]')]
             .find(el => el.name === input.name && el.getClientRects().length)?.focus({ preventScroll: true });
         }
