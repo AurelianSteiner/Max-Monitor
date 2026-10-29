@@ -6,7 +6,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { maintenance, main as hubMain } from './worker-admin-hub.mjs';
-import { parseArguments, sourceDeviceId } from './worker-admin.mjs';
+import { parseArguments, sourceDeviceId, connectWithTicket } from './worker-admin.mjs';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 const id = 'f23406d4-5b18-433c-b656-45de7747d648', source = 'macbook-till-main';
 const bytes = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
 const publicKey = 'ssh-ed25519 '+Buffer.concat([Buffer.from([0,0,0,11]),Buffer.from('ssh-ed25519'),Buffer.from([0,0,0,32]),bytes]).toString('base64');
@@ -99,4 +101,21 @@ test('stdio bridge emits only public output and enforces its input budget', asyn
     assert.ok(!output.includes(member.token));assert.ok(!output.includes('owner-private'));
     await assert.rejects(hubMain(['--stdin'],{...f,input:Readable.from(['x'.repeat(4097)]),output:writer}));
   } finally {if(previous===undefined)delete process.env.MAX_MONITOR_REMOTE_CLIENT_POLICY_FILE;else process.env.MAX_MONITOR_REMOTE_CLIENT_POLICY_FILE=previous;}
+});
+test('binary stdin is opt-in and public tickets use a separate descriptor without changing source authorization', async () => {
+ const options=parseArguments(['exec','macbook-1','--stdin','--','cat']);assert.equal(options.forwardStdin,true);
+ assert.equal(parseArguments(['exec','macbook-1','--','cat']).forwardStdin,false);
+ for(const args of [['check','macbook-1','--stdin'],['shell','macbook-1','--stdin'],['exec','macbook-1','--stdin','--stdin','--','cat']])assert.throws(()=>parseArguments(args));
+ for(const forwardStdin of [false,true]){
+  let spec,control='';const result={schema:1,teamId:'DEMO1234',certificate:'public-certificate'};
+  const spawnImpl=(file,args,opts)=>{
+   spec={file,args,opts};const child=new EventEmitter(),pipe=new PassThrough();
+   pipe.on('data',x=>{control+=x;});pipe.on('finish',()=>queueMicrotask(()=>child.emit('close',0)));
+   child.stdin=forwardStdin?null:pipe;child.stdio=forwardStdin?[null,null,null,pipe]:[pipe,null,null];return child;
+  };
+  assert.equal(await connectWithTicket({...options,forwardStdin},result,'/existing/source-key',{spawnImpl}),0);
+  assert.deepEqual(JSON.parse(control),result);assert.ok(spec.args.includes('/existing/source-key'));
+  assert.deepEqual(spec.opts.stdio,forwardStdin?['inherit','inherit','inherit','pipe']:['pipe','inherit','inherit']);
+  assert.equal(spec.args.includes('--ticket-fd'),forwardStdin);assert.equal(spec.args.includes('--ticket-stdin'),!forwardStdin);
+ }
 });

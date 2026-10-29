@@ -7,6 +7,7 @@ from unittest.mock import patch
 import io
 import sys
 import json
+import os
 
 spec = importlib.util.spec_from_file_location('member_remote', Path(__file__).with_name('member-remote.py'))
 client = importlib.util.module_from_spec(spec)
@@ -107,6 +108,24 @@ class MemberRemoteTest(unittest.TestCase):
              patch.object(client.subprocess, 'run') as run:
             with self.assertRaises(ValueError): client.main()
             run.assert_not_called()
+
+    def test_separate_ticket_descriptor_never_consumes_binary_stdin(self):
+        identity=Path(self.directory.name)/'key'
+        control,writer=os.pipe()
+        os.write(writer,json.dumps(self.ticket).encode());os.close(writer)
+        payload=b'\x00\xff\xfe'+bytes(range(256))*64
+        incoming=io.TextIOWrapper(io.BytesIO(payload),encoding='ascii')
+        observed=[]
+        def call(args,**kwargs):
+            observed.append(incoming.buffer.read())
+            with self.assertRaises(OSError):os.fstat(control)
+            return 0
+        with patch.object(sys,'argv',['member-remote.py','connect','macbook-1','--ticket-fd',str(control),'--identity-file',str(identity),'--','cat']), \
+             patch.object(sys,'stdin',incoming),patch.object(client.subprocess,'call',side_effect=call), \
+             patch.object(client,'ticket_request') as request,patch.object(client.getpass,'getpass') as prompt:
+            self.assertEqual(client.main(),0)
+            request.assert_not_called();prompt.assert_not_called()
+        self.assertEqual(observed,[payload])
 
 
 if __name__ == '__main__':

@@ -30,21 +30,35 @@ export function parseArguments(argv) {
   if (!['list', 'check', 'diagnose', 'exec', 'shell'].includes(operation)) throw Error('Unbekannter Wartungsbefehl.');
   const workerId = operation === 'list' ? null : args.shift();
   if (workerId !== null && !WORKER_ID.test(workerId || '')) throw Error('Exakte Worker-ID fehlt. Zuerst list ausführen.');
-  let root, command;
+  let root, command, forwardStdin = false;
   while (args.length) {
     const flag = args.shift();
     if (flag === '--worker-root' && args[0]) root = path.resolve(args.shift());
+    else if (flag === '--stdin' && operation === 'exec' && !forwardStdin) forwardStdin = true;
     else if (flag === '--' && operation === 'exec' && args.length === 1 && args[0] && !args[0].includes('\0')) command = args.shift();
     else throw Error('Ungültige Option. exec braucht nach -- genau einen zitierten Fernbefehl.');
   }
   if (operation === 'exec' && !command) throw Error('Fernbefehl fehlt.');
-  return { operation, workerId, root, command };
+  return { operation, workerId, root, command, forwardStdin };
+}
+
+export function connectWithTicket(options, result, identity, { spawnImpl = spawn } = {}) {
+  const args = [path.join(directory, 'member-remote.py'), options.operation === 'check' ? 'check' : 'connect', options.workerId,
+    '--team-id', result.teamId, '--identity-file', identity,
+    ...(options.forwardStdin ? ['--ticket-fd', '3'] : ['--ticket-stdin']), ...(options.command ? ['--', options.command] : [])];
+  return new Promise((resolve, reject) => {
+    const child = spawnImpl('/usr/bin/python3', args, { stdio: options.forwardStdin ? ['inherit', 'inherit', 'inherit', 'pipe'] : ['pipe', 'inherit', 'inherit'] });
+    child.once('error', () => reject(Error('Max-Monitor-SSH-Client konnte nicht gestartet werden.')));
+    child.once('close', code => resolve(code ?? 1));
+    const control = options.forwardStdin ? child.stdio[3] : child.stdin;
+    control.on('error', () => {}); control.end(JSON.stringify(result) + '\n');
+  });
 }
 
 export async function main(argv = process.argv.slice(2)) {
   const options = parseArguments(argv);
   if (options.operation === 'help') {
-    console.log('Max Monitor Worker-Wartung: list | check <worker-id> | diagnose <worker-id> | exec <worker-id> -- "Fernbefehl" | shell <worker-id>');
+    console.log('Max Monitor Worker-Wartung: list | check <worker-id> | diagnose <worker-id> | exec <worker-id> [--stdin] -- "Fernbefehl" | shell <worker-id>');
     return 0;
   }
   const root = options.root || process.env.MAX_MONITOR_WORKER_ROOT || await discoverRoot();
@@ -65,14 +79,7 @@ export async function main(argv = process.argv.slice(2)) {
     const source = await fs.readFile(path.join(directory, 'worker-diagnose.py'), 'utf8');
     command = "python3 - <<'MAX_MONITOR_WORKER_DIAG'\n" + source + '\nMAX_MONITOR_WORKER_DIAG';
   }
-  const args = [path.join(directory, 'member-remote.py'), options.operation === 'check' ? 'check' : 'connect', options.workerId,
-    '--team-id', result.teamId, '--identity-file', identity, '--ticket-stdin', ...(command ? ['--', command] : [])];
-  return await new Promise((resolve, reject) => {
-    const child = spawn('/usr/bin/python3', args, { stdio: ['pipe', 'inherit', 'inherit'] });
-    child.once('error', () => reject(Error('Max-Monitor-SSH-Client konnte nicht gestartet werden.')));
-    child.once('close', code => resolve(code ?? 1));
-    child.stdin.on('error', () => {}); child.stdin.end(JSON.stringify(result) + '\n');
-  });
+  return connectWithTicket({ ...options, command }, result, identity);
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {

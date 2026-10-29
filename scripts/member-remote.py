@@ -97,6 +97,7 @@ def main():
     credentials = parser.add_mutually_exclusive_group()
     credentials.add_argument("--token-stdin", action="store_true", help="Geschützten Zugangscode aus stdin lesen")
     credentials.add_argument("--ticket-stdin", action="store_true", help="Öffentliches, bereits signiertes Max-Monitor-Ticket aus stdin lesen")
+    credentials.add_argument("--ticket-fd", type=int, help="Öffentliches Ticket über getrennten Kontroll-Dateideskriptor lesen; stdin bleibt unverändert")
     parser.add_argument("--identity-file", help="Auf diesem Quell-Mac freigegebener privater Ed25519-Schlüssel")
     args, command = parser.parse_known_args()
     if command and command[0] == "--":
@@ -107,7 +108,15 @@ def main():
         raise ValueError("Ungültige Mac- oder Team-Kennung")
     supplied_ticket = None
     token = None
-    if args.ticket_stdin:
+    if args.ticket_fd is not None:
+        if not 3 <= args.ticket_fd <= 255:
+            raise ValueError("Ungültiger Ticket-Dateideskriptor")
+        with os.fdopen(args.ticket_fd, 'rb') as control:
+            raw = control.read(65537)
+        if len(raw) > 65536:
+            raise ValueError("SSH-Ticket zu groß")
+        supplied_ticket = validate_ticket(json.loads(raw), args.team_id, args.worker_id)
+    elif args.ticket_stdin:
         raw = sys.stdin.readline(65538)
         if len(raw.encode()) > 65536:
             raise ValueError("SSH-Ticket zu groß")
