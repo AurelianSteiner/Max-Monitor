@@ -9,5 +9,6 @@
   "macbook-air-von-nachteule-cdb5c505": {"name": "Türkis", "color": "#238A91", "textColor": "#FFFFFF"},
   "pink": {"name": "Pink", "color": "#FF69B4", "textColor": "#252214"},
   "macbook-von-till-main-2": {"name": "MacBook von Till", "personal": true},
+  "design-mac": {"name": "Silber", "color": "#C0C0C0", "textColor": "#252214", "workerKind": "codex-repair"},
   "hausdraches-macbook-air-f1e2b4ad": {"name": "Koralle", "color": "#F27D72", "textColor": "#252214", "workerKind": "codex-repair"}
 }
