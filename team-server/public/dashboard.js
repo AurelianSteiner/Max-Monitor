@@ -1376,7 +1376,7 @@
   function accountLockControl(machine, item, name, compact = true) {
     if (isCodexRepair(machine) || !machine.workerId || !snapshot?.capabilities?.canManageClaudeAccounts) return name;
     const label = node('label', `account-lock${compact ? ' compact' : ''}`);
-    label.title = `${item.name}: Für neue Aufgaben sperren. Laufende Aufgaben werden beendet. Ein weiterer aktiver Account wird nur mit freiem Kontingent genutzt.`;
+    label.title = `${item.name}: Für neue Aufgaben sperren. Laufende Aufgaben laufen zu Ende. Ein weiterer aktiver Account wird nur mit freiem Kontingent genutzt.`;
     const input = node('input');
     input.type = 'checkbox'; input.name = `lock-${machine.workerId}-${item.id}`;
     input.checked = item.disabled === true;
@@ -1397,7 +1397,7 @@
         if (credentials !== connection) return;
         for (const target of snapshot?.machines || []) if (target.workerId === machine.workerId)
           target.claudeAccountControl = { ...target.claudeAccountControl, ...result };
-        feedback = disabled ? `${item.name} ist für neue Aufgaben gesperrt. Laufende Aufgaben werden beendet.` : `${item.name} ist wieder für neue Aufgaben freigegeben. Die Kontingentprüfung gilt weiter.`;
+        feedback = disabled ? `${item.name} ist für neue Aufgaben gesperrt. Laufende Aufgaben laufen zu Ende.` : `${item.name} ist wieder für neue Aufgaben freigegeben. Die Kontingentprüfung gilt weiter.`;
       } catch (error) {
         if (credentials !== connection) return;
         input.checked = !disabled; feedback = error.message; failed = true;
@@ -1439,7 +1439,7 @@
       };
       const session = limit("session"), weekly = limit("weekly");
       const availability = accountAvailability(session, weekly, stale, account.status, account.blockedUntil);
-      if (disabled) Object.assign(availability, { available: false, availability: "Für neue Aufgaben gesperrt · Laufende Aufgaben werden beendet" });
+      if (disabled) Object.assign(availability, { available: false, availability: "Für neue Aufgaben gesperrt · Laufende Aufgaben laufen zu Ende" });
       return { id: account.id, name: identity.name, disabled, next, stale, note: disabled ? "Gesperrt" : note || blocked, ...availability,
         tone: account.status === "error" && !stale ? "bad" : blocked ? "warn" : "unknown",
         title: [identity.email || identity.name, availability.availability, next ? "Nächster Start" : "", note, blocked].filter(Boolean).join("\n"),
@@ -1452,7 +1452,7 @@
     const session = machineLimit(machine, account, "session"), weekly = machineLimit(machine, account, "weekly");
     const availability = accountAvailability(session, weekly, stale, machine.codexAccount?.status, undefined, isCodexRepair(machine));
     const disabled = !isCodexRepair(machine) && machine.claudeAccountControl?.disabledAccountIds.includes('primary') === true;
-    if (disabled) Object.assign(availability, { available: false, availability: "Für neue Aufgaben gesperrt · Laufende Aufgaben werden beendet" });
+    if (disabled) Object.assign(availability, { available: false, availability: "Für neue Aufgaben gesperrt · Laufende Aufgaben laufen zu Ende" });
     return [{ id: 'primary', disabled, name: isCodexRepair(machine) ? `Codex · ${identity.email ? identity.name : account.name || "Account"}` : identity.name, next: false, stale, note: disabled ? "Gesperrt" : "", ...availability,
       title: [`${machineProviderLabel(machine)}-Account: ${identity.email || account.name || "E-Mail nicht gemeldet"}`,
         availability.availability, machine.usageError || "",
