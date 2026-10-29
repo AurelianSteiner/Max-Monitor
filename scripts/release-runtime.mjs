@@ -33,7 +33,11 @@ export function newsletterSourcePayload(workerRoot) {
   if (git('status', '--porcelain')) throw Error('--newsletter-root requires a clean worker checkout.');
   const revision = git('rev-parse', 'HEAD');
   if (git('ls-remote', 'origin', 'refs/heads/main').split(/\s/)[0] !== revision) throw Error('--newsletter-root must be the published worker main.');
-  const entries = workerSourceFiles(workerRoot).map(({ relative, content }) => [`newsletter-source/${relative}`, content]);
+  const tracked = new Set(git('ls-files', '-z').split('\0'));
+  const entries = workerSourceFiles(workerRoot).map(({ relative, content }) => {
+    if (!tracked.has(relative)) throw Error(`--newsletter-root: ${relative} is not part of the published worker main.`);
+    return [`newsletter-source/${relative}`, content];
+  });
   const channels = monitorChannels(workerRoot);
   if (channels) entries.push(['newsletter-source/config/monitor-channels.json', Buffer.from(channels)]);
   const files = Object.fromEntries(entries.map(([rel, data]) => [rel, { base64: Buffer.from(data).toString('base64'),

@@ -58,9 +58,12 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(rules, (self.root / 'newsletter-source/config/manual-uploads.json').read_bytes())
         self.assertIn('newsletter-source/src/upload-policy.js', result['sourceFiles'])
         for value in ['newsletter-source/config/worker.local.json', 'newsletter-source/src/../config.js',
-                      'newsletter-source/node_modules/x.js', 'newsletter-source/src/a/b.js', 'newsletter-source/config/x.js']:
+                      'newsletter-source/node_modules/x.js', 'newsletter-source/state/worker.sqlite', 'newsletter-source/src/.env',
+                      'newsletter-source/src/key.pem', 'newsletter-source/runs/x/ergebnis.json']:
             self.assertFalse(runtime.safe_path(value), value)
-        self.assertTrue(runtime.safe_path('newsletter-source/src/hub-transport.js'))
+        for value in ['newsletter-source/src/hub-transport.js', 'newsletter-source/src/vendor/newsletter-studio/newsletter-background.js',
+                      'newsletter-source/ops/package-pilot/pm.cjs', 'newsletter-source/contracts/mail-package.schema.json']:
+            self.assertTrue(runtime.safe_path(value), value)
         self.payload['newsletterSource']['revision'] = 'main'
         with self.assertRaisesRegex(ValueError, 'newsletter source'):
             self.install(dry_run=True)

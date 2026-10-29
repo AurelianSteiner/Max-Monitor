@@ -58,3 +58,11 @@ test('an unpublished or dirty worker checkout cannot renew the rules', t => {
   git(worker, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-am', 'local only');
   assert.throws(() => newsletterSourcePayload(worker), /published worker main/);
 });
+
+test('a required file outside the published worker commit stops the release', t => {
+  const worker = publishedWorker(t);
+  fs.writeFileSync(path.join(worker, 'src/upload-policy.js'), "module.exports = require('../config/worker.local.json');");
+  git(worker, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-am', 'reads the Mac config');
+  git(worker, 'push', '-q', 'origin', 'main');
+  assert.throws(() => newsletterSourcePayload(worker), /config\/worker\.local\.json is not part of the published worker main/);
+});

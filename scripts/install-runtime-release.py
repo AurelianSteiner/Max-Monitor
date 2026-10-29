@@ -20,14 +20,19 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
 
 
-# The worker's admission rules the queue bridge loads (--worker-root). Dotless names
-# keep its config/worker.local.json out.
-NEWSLETTER_SOURCE = re.compile(r'newsletter-source/(?:src/[A-Za-z0-9_-]+\.js|config/[A-Za-z0-9_-]+\.json)')
+# The worker's admission rules the queue bridge loads (--worker-root): the require
+# closure of its entry points, never the Mac's config/worker.local.json.
+NEWSLETTER_SOURCE = re.compile(r'newsletter-source/(?:src|config|contracts|ops)(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)+\.(?:js|cjs|mjs|json)')
+
+
+def newsletter_path(value):
+    return isinstance(value, str) and bool(NEWSLETTER_SOURCE.fullmatch(value)) and '..' not in value\
+        and value != 'newsletter-source/config/worker.local.json'
 
 
 def safe_path(value):
     return isinstance(value, str) and bool(value == 'Config/runtime-release-files.json' or re.fullmatch(r'(?:(?:team-server|scripts)/[A-Za-z0-9_.-]+|team-server/public/[A-Za-z0-9_-]+\.(?:html|css|js))', value)
-        or NEWSLETTER_SOURCE.fullmatch(value)) and '..' not in value
+        or newsletter_path(value)) and '..' not in value
 
 
 def install(payload, root=Path('/opt/max-monitor'), backup_root=Path('/var/backups/max-monitor'),
@@ -44,7 +49,7 @@ def install(payload, root=Path('/opt/max-monitor'), backup_root=Path('/var/backu
         # aged unnoticed; a release now carries them from one published worker revision.
         listed = newsletter.get('files') if isinstance(newsletter, dict) else None
         if not isinstance(listed, list) or not listed or not re.fullmatch(r'[a-f0-9]{40}', str(newsletter.get('revision', '')))\
-                or not all(isinstance(p, str) and NEWSLETTER_SOURCE.fullmatch(p) for p in listed):
+                or not all(newsletter_path(p) for p in listed):
             raise ValueError('Invalid newsletter source')
         expected |= set(listed)
     if set(files) != expected or not files or not all(safe_path(p) for p in set(files) | set(baseline)):
