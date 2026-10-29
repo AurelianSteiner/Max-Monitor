@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DEFAULT_WORKFLOWS, buildQueue, parseClaim, parseRegisterClaim, collectSnapshot, workerAdmission, loadWorkerAdmission } from './newsletter-monitor-bridge.mjs';
+import { DEFAULT_WORKFLOWS, buildQueue, parseClaim, parseRegisterClaim, collectSnapshot, workerAdmission, loadWorkerAdmission, manualUploadTaskIds } from './newsletter-monitor-bridge.mjs';
 
 const now = Date.parse('2026-10-16T09:00:00Z');
 const since = '1792130000000';
@@ -184,4 +184,21 @@ module.exports = { registry, admission };` });
   assert.deepEqual(later.tasks.map(row => [row.id, row.status, row.phase, row.reasonCode, row.responsibleRole, row.blockerKind]),
     [['clickup:newsletter:C1', 'blocked', 'Testlauf (Controller)', 'controller_test_run', 'Controller-Test', 'withdrawn']]);
   assert.equal(later.tasks[0].blockedReason, snapshot.tasks[0].blockedReason);
+});
+
+// Prinz 12451cu4101 (29.10.2026): the worker restored automatic Prinz uploads, while the
+// Hub's copied worker source still listed the folder as manual. The monitor hid the
+// blocked upload and its error copy. A reservation proves the worker admitted the upload;
+// only the PM's 'manuell' tag still hides it then.
+test('a reserved upload stays visible although a stale folder rule calls it manual', t => {
+  const { admission } = loadWorkerAdmission(workerRoot(t));
+  const prinz = (id, tags) => task(id, 'klaviyo upload', tags, { statusSince: since, folder: PRINZ });
+  const failed = id => parseRegisterClaim({ taskId: `${id}@${since}-klaviyo`, runId: `run-${id}`, worker: 'macbook-2', state: 'final',
+    ts: '1792130100.000100', heartbeat: now / 1000 - 30, reactions: ['x'], owner: 'technik',
+    text: `*Klaviyo Upload · Prinz Neu*\nNeue Aufgabe: <https://app.clickup.com/t/${id}|Christbaumkugeln>` });
+  const rows = buildQueue([prinz('U1', ['klaviyo upload · blockiert']), prinz('U2', ['klaviyo upload · blockiert', 'manuell']),
+    prinz('U3', ['klaviyo upload · blockiert'])], [failed('U1'), failed('U2')], DEFAULT_WORKFLOWS, { now, admission });
+  assert.deepEqual(rows.map(row => [row.id, row.status]), [['clickup:upload:U1', 'blocked']]);
+  assert.deepEqual([...manualUploadTaskIds([prinz('U1', []), prinz('U2', ['manuell']), prinz('U3', [])], [failed('U1'), failed('U2')], admission)],
+    ['U2', 'U3']);
 });

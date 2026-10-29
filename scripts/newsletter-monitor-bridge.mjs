@@ -271,8 +271,15 @@ export function workerAdmission({ manualHold, uploadPolicy, admission, aufgabenA
     // controller runs (config/test-workspace.json controllerOnlyTaskIds).
     controllerTask: id => typeof id === 'string' && controllers.has(id),
     // Klaviyo uploads the worker leaves to a person: the tag or a folder from
-    // config/manual-uploads.json (Prinz).
-    manualUpload: task => uploadPolicy ? Boolean(uploadPolicy(task)?.manual) : hasManualTag(task),
+    // config/manual-uploads.json. The copied folder list can be older than the
+    // fleet's (Prinz 12451cu4101, 29.10.2026: restored automatic uploads stayed
+    // hidden). A reservation proves the worker admitted the upload; only the
+    // PM's 'manuell' tag hides it then.
+    manualUpload: (task, { reserved = false } = {}) => {
+      if (!uploadPolicy) return hasManualTag(task);
+      const policy = uploadPolicy(task);
+      return Boolean(policy?.manual && (!reserved || policy.tagged));
+    },
     // The reason the worker would not reserve this order of kind newsletter,
     // klaviyo or korrektur, or null. Without an epoch only the reasons that need
     // none are checked; the worker never dates those orders either.
@@ -733,6 +740,13 @@ function metadataReason(value) {
 // several orders (task_ids) gives one row per order, each with the same Slack
 // link. Removing the error in Slack removes its rows on the next complete scan.
 // Never synthesize completion.
+// Uploads whose error copies stay hidden: manual by the worker's rule and, unless
+// tagged 'manuell', never reserved by a Mac (workerAdmission manualUpload).
+export function manualUploadTaskIds(tasks, claims, admission) {
+  const reserved = new Set(claims.filter(claim => claim.workflow === 'klaviyo' && claim.state !== 'withdrawn').map(claim => claim.taskId));
+  return new Set(tasks.filter(task => admission.manualUpload(task, { reserved: reserved.has(task.id) })).map(task => task.id));
+}
+
 export function buildBlockedErrors(messages, channelId, tasks = [], { manualUploadIds = new Set() } = {}) {
   const rows = new Map();
   // Fehleraudit 19.10.2026: a copy names its own owner (worker `owner`, else its
@@ -1003,7 +1017,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       // A successful tag is history, not proof that this new status epoch finished.
       if (ordered && task.statusSince && status === 'completed' && !finished
         && task.status?.type !== 'closed') status = 'queued';
-      if ((workflow.claimWorkflow ?? workflow.id) === 'klaviyo' && admission.manualUpload(task) && status !== 'completed') continue;
+      if ((workflow.claimWorkflow ?? workflow.id) === 'klaviyo' && admission.manualUpload(task, { reserved: matches.length > 0 }) && status !== 'completed') continue;
       // A closed source is no longer an open production order. Its generic
       // closing time does not prove when this individual workflow finished.
       if (task.status?.type === 'closed') status = 'completed';
@@ -2027,7 +2041,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   }
   classifyCompletedLanguageRuns(queue, runKinds, previousTasks);
   if (queue.length > 5000) throw new Error('Queue enthält mehr als 5000 Einträge; bisheriger Snapshot bleibt erhalten.');
-  const manualUploadIds = new Set(tasks.filter(task => admission.manualUpload(task)).map(task => task.id));
+  const manualUploadIds = manualUploadTaskIds(tasks, claims, admission);
   const blockedErrors = errorChannel ? buildBlockedErrors(errorMessages, errorChannel, queue, { manualUploadIds }) : undefined;
   const unavailableDetail = unavailable.size ? ` · ${unavailable.size} nicht mehr verfügbare Korrekturquelle${unavailable.size === 1 ? '' : 'n'}` : '';
   return { tasks: queue, ...(blockedErrors === undefined ? {} : { blockedErrors }), workerIssues, ...(observedWorkers === undefined ? {} : { observedWorkers }), source: {
