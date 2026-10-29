@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
-import { blockerContext, checkpointBlocker, currentPm, pmFieldState, applyBlockerContexts, summary, clip, questionWithdrawn, PM_FIELD_ID, STAMMDATEN_ROLE } from './blocker-context.mjs';
+import { blockerContext, checkpointBlocker, currentPm, pmFieldState, applyBlockerContexts, summary, clip, questionWithdrawn, PM_FIELD_ID, STAMMDATEN_ROLE, CORRECTION_STEP } from './blocker-context.mjs';
 import state from './task-state.cjs';
 
 function checkpoint(change = {}) {
@@ -373,4 +373,33 @@ test('LKW-Teile24: an inactive Hub customer and a design basis nobody approved a
   // The audience of a winback mail is no customer setup.
   const winback = 'Der Winback-Flow für inaktive Kunden hat in Klaviyo keinen Trigger; der Kunde ist seit 180 Tagen inaktiv.';
   assert.equal(blockerContext(winback, { state: 'technisch_blockiert' }).responsibleRole, 'Technik');
+});
+
+// Fehleraudit 29.10.2026 (Budoland 12451cu46dj): the PM answered the price question of a
+// Hub-mail upload with another value; the upload cannot change approved content and names the
+// correction order. The next step is that correction, not another decision in the thread.
+test('a PM blocker naming the FileStage correction order shows it as next step', () => {
+  const cause = 'Abnahme offen: Produktkarte „Zahnschutz X-Men Beast“: Mail 22,99 €*, PM-Entscheidung 20,95 € (Shoppreis Variante Beast/Senior). Draft unverändert; Änderung über Filestage-Kommentar und revision intern.';
+  const rows = [
+    { status: 'blocked', workflow: 'upload', blockerOwner: 'pm', blockedReason: cause },
+    // Read back with only this bridge's own rendering of an earlier cycle.
+    { status: 'blocked', workflow: 'upload', reasonCode: 'pm_decision_pending', responsibleRole: 'PM',
+      blockedReason: `Gesicherter Befund: ${cause} · Zuständig: PM (PM: Hannes & Luca) · Nächster Schritt: Entscheidung im Rückfragen-Thread bzw. in ClickUp treffen; danach setzt der Worker fort.` },
+    // Newer worker runs name the step themselves.
+    { status: 'blocked', workflow: 'upload', blockerOwner: 'pm',
+      blockedReason: 'Abnahme offen: Produktkarte Beast: Mail 22,99 €*, PM-Entscheidung 20,95 €. Nächster Schritt: Änderung als Kommentar in der FileStage-Review dieser Mail eintragen und `revision intern` setzen; danach aktualisiert `klaviyo upload` den bestehenden Draft.' },
+    // An open PM decision without a correction order keeps the decision step.
+    { status: 'blocked', workflow: 'upload', blockerOwner: 'pm', blockedReason: 'PM-Entscheidung erforderlich: Mailpreis 22,99 € oder Shoppreis 20,95 €?' },
+    // A technical blocker that only mentions the status stays technical.
+    { status: 'blocked', workflow: 'upload', blockerOwner: 'technik', blockedReason: 'Upload abgebrochen, FileStage-Review nicht lesbar; revision intern läuft.' },
+  ];
+  applyBlockerContexts(rows, [], 1000);
+  assert.equal(rows[0].responsibleRole, 'PM');
+  assert.equal(rows[0].nextStep, CORRECTION_STEP);
+  assert.match(rows[0].blockedReason, /· Zuständig: PM \(PM nicht zugeordnet\) · Nächster Schritt: Änderung als Kommentar in der FileStage-Review eintragen und `revision intern` setzen/);
+  assert.equal(rows[1].nextStep, CORRECTION_STEP);
+  assert.equal(rows[2].nextStep, 'Änderung als Kommentar in der FileStage-Review dieser Mail eintragen und `revision intern` setzen; danach aktualisiert `klaviyo upload` den bestehenden Draft.');
+  assert.equal(rows[3].nextStep, 'Entscheidung im Rückfragen-Thread bzw. in ClickUp treffen; danach setzt der Worker fort.');
+  assert.equal(rows[4].responsibleRole, 'Technik');
+  assert.notEqual(rows[4].nextStep, CORRECTION_STEP);
 });

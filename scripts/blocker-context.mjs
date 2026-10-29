@@ -192,6 +192,18 @@ function workerNextStep(text) {
   return clip(end ? first.slice(0, end) : first, 160);
 }
 
+// Fehleraudit 29.10.2026 (Budoland 12451cu46dj): a Hub-mail upload whose PM answer asks for
+// another value cannot change approved content; its cause names the correction order
+// (FileStage comment and `revision intern`). The decision is made, so the next step is that
+// correction, never „Entscheidung im Rückfragen-Thread treffen“. Newer worker runs name it as
+// „Nächster Schritt:“ themselves (workerNextStep); this covers the stored causes before them.
+export const CORRECTION_STEP = 'Änderung als Kommentar in der FileStage-Review eintragen und `revision intern` setzen; danach aktualisiert `klaviyo upload` den bestehenden Draft.';
+const CORRECTION_ORDER = /File[Ss]tage[- ]?(?:Kommentar|Review)[^.;]{0,80}\brevision intern\b|\brevision intern\b[^.;]{0,80}File[Ss]tage/;
+function correctionStep(text) {
+  const value = clean(text, 4000);
+  return CORRECTION_ORDER.test(causeOf(value.startsWith(HEAD) ? value.split(' · Zuständig: ')[0] : value)) ? CORRECTION_STEP : '';
+}
+
 export function checkpointBlocker(entry) {
   const cacheKey = [entry.digest, entry.run_id, entry.task_id, entry.producer].join(':');
   try {
@@ -244,7 +256,7 @@ export function applyBlockerContexts(rows, tasks, now = Date.now()) {
     }
     if (row.workflow === 'sales' && row.reasonCode === OWNER_CONTEXT.sales.reasonCode) row.phase = SALES_CLOSED_PHASE;
     // A superseded worker handover (Leebmann 19.10.2026) never redirects technical work.
-    const step = ['PM', 'PM und Design', STAMMDATEN_ROLE].includes(row.responsibleRole) && workerNextStep(reason);
+    const step = ['PM', 'PM und Design', STAMMDATEN_ROLE].includes(row.responsibleRole) && (workerNextStep(reason) || row.responsibleRole === 'PM' && correctionStep(reason));
     if (step) row.nextStep = step;
     // Build the attribution first, then fit the cause at a word boundary into
     // the relay's 500 characters (team-server/fleet.js validateQueue).
