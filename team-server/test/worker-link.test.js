@@ -54,6 +54,13 @@ test('a worker-reported device link names the Mac and its work without changing 
   assert.equal(linked.workerStatus, 'online', 'Hub worker heartbeat merges into the app row');
   assert.equal(linked.workerVersion, 'V1.74');
   assert.equal((await fleet()).machines.filter(machine => machine.workerId === 'macbook-2').length, 1);
+  const lockRoute = '/workers/macbook-2/claude-accounts/control';
+  const lock = {deviceId: device, accountId: 'primary', disabled: true};
+  assert.equal((await call(lockRoute, 'PATCH', lock)).status, 200, 'legacy native UUID can lock its account without re-enrollment');
+  assert.deepEqual((await call(`/workers/macbook-2/control?deviceId=${device}`)).body.disabledClaudeAccountIds, ['primary']);
+  assert.deepEqual((await byDevice(device)).claudeAccountControl.disabledAccountIds, ['primary']);
+  assert.equal((await call(lockRoute, 'PATCH', {...lock, deviceId: '610be10e-8a00-4e00-b000-000000000099'})).status, 409);
+  assert.equal((await call(lockRoute, 'PATCH', {...lock, disabled: false})).status, 200);
   // Workers check about every 40 seconds; an unchanged link must not rewrite state or wake every dashboard.
   const file = path.join(directory, 'LINK1234', 'fleet.json');
   const stamp = fs.statSync(file).mtimeMs; const bytes = fs.readFileSync(file, 'utf8');

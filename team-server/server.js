@@ -430,8 +430,8 @@ function visibleFleet(teamId, who) {
     machines: machines.map(machine => ({ ...machine,
       ...(machine.workerId && machine.provider !== 'codex' ? {
         claudeAccountControl: { ...claudeAccountControl.control(teamDir(teamId), machine.workerId,
-          registeredDeviceId(machine.workerId, identities, snapshot.machines)),
-          deviceId: registeredDeviceId(machine.workerId, identities, snapshot.machines) },
+          registeredDeviceId(machine.workerId, identities, snapshot.machines) || machine.deviceId),
+          deviceId: registeredDeviceId(machine.workerId, identities, snapshot.machines) || machine.deviceId },
       } : {}),
     })),
     events: snapshot.events.filter((entry) => entry.type.startsWith("machine_")
@@ -576,7 +576,10 @@ const server = http.createServer((req, res) => {
       try {
         const body = JSON.parse(raw), machines = fleet.snapshot(teamId).machines;
         const members = [ownerIdentity(teamId, true), ...readMembers(teamId, true)];
-        const deviceId = registeredDeviceId(workerId, members, machines);
+        // Legacy apps are bound by their own random UUID on every worker check.
+        // controlForWorker validates that native identity; display links alone
+        // still cannot grant permission or invent an app.
+        const deviceId = registeredDeviceId(workerId, members, machines) || body.deviceId;
         const permission = controlForWorker(workerId, members, machines, body.deviceId);
         if (!deviceId || body.deviceId !== deviceId || !['enabled', 'disabled'].includes(permission.reason))
           return send(res, 409, { error: 'Mac-Zuordnung geändert. Aktualisiere die Ansicht.' });
@@ -648,7 +651,7 @@ const server = http.createServer((req, res) => {
       // after it, so its accepted tasks show on the right Mac. Never fails admission.
       if (deviceId) try { fleet.linkWorker(teamId, controlMatch[1], deviceId); } catch { /* display only */ }
       return send(res, 200, { ...result, disabledClaudeAccountIds: claudeAccountControl.control(teamDir(teamId),
-        controlMatch[1], registeredDeviceId(controlMatch[1], members, fleet.snapshot(teamId).machines)).disabledAccountIds });
+        controlMatch[1], registeredDeviceId(controlMatch[1], members, fleet.snapshot(teamId).machines) || deviceId).disabledAccountIds });
     } catch { return send(res, 503, { error: "Worker-Freigabe konnte nicht geprüft werden" }); }
   }
 
