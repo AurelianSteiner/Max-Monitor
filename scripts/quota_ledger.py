@@ -1027,16 +1027,27 @@ class Ledger:
 
         Fehleraudit 29.10.2026: a Sales job pauses for days between its phases
         (weekly limit, interrupted Mac; frogcoffee 4 872 min end minus start).
-        Each phase counts from its start to its own last recorded turn; parallel
-        phases and subagent streams of one job count once.
+        Each phase counts from its start through its recorded turns; parallel
+        phases and subagent streams of one job count once. A build resumed in
+        its own run (Mac offline, limit pause) stays one phase: a silence of
+        30 minutes between two of its turns, after which the reconcile closes a
+        phase, is a pause there too (brekky/sportbionier on Blau 24.10.: 9.5 h).
         """
         spans = []
         for worker, run_id, started in phases:
-            first, last = self.db.execute("SELECT MIN(at),MAX(at) FROM events WHERE worker=? AND run_id=?",
-                                          (worker, run_id)).fetchone()
-            begin = min((at for at in (started, first) if at is not None), default=None)
-            if begin is not None and last is not None and last > begin:
-                spans.append((begin, last))
+            times = [row[0] for row in self.db.execute(
+                "SELECT at FROM events WHERE worker=? AND run_id=? AND at IS NOT NULL ORDER BY at", (worker, run_id))]
+            if not times:
+                continue
+            points = sorted(times + ([started] if started is not None else []))
+            begin = points[0]
+            for previous, at in zip(points, points[1:]):
+                if at - previous >= 1800:
+                    if previous > begin:
+                        spans.append((begin, previous))
+                    begin = at
+            if points[-1] > begin:
+                spans.append((begin, points[-1]))
         if not spans:
             return None
         total, covered = 0, None

@@ -778,14 +778,30 @@ class LedgerTests(unittest.TestCase):
         # Fehleraudit 29.10.2026: frogcoffee paused at the weekly limit and counted
         # 4 872 min end minus start; the Sales mean was 127 min against a 78 min median.
         self.ledger.reset(NOW - 1)
-        self.ledger.ingest(self.sales_report("sales-2.2-gelb", "sales:2.2", NOW, "running", (NOW + 60, NOW + 2400), "gelb"), NOW + 2400)
+        turns = lambda start: tuple(start + at for at in (60, 600, 1200, 1800, 2400))
+        self.ledger.ingest(self.sales_report("sales-2.2-gelb", "sales:2.2", NOW, "running", turns(NOW), "gelb"), NOW + 2400)
         resumed = NOW + 2400 + 3 * 86400
-        self.ledger.ingest(self.sales_report("sales-2.2-pink", "sales:2.2", resumed, "running", (resumed + 60, resumed + 2400), "pink"),
+        self.ledger.ingest(self.sales_report("sales-2.2-pink", "sales:2.2", resumed, "running", turns(resumed), "pink"),
                            resumed + 2400)
         data = fleet(resumed + 2500, 10)
         data["queue"] = {"tasks": [{"id": "sales:2.2", "workflow": "sales", "status": "completed", "completedAt": resumed + 2400}]}
         self.ledger.fleet(data, resumed + 2500)
         sales = next(r for r in self.ledger.dashboard(resumed + 2600)["by_kind"] if r["key"] == "sales")
+        self.assertEqual((sales["closed"], sales["duration_seconds"]["mean"]), (1, 4800))
+
+    def test_sales_duration_leaves_out_a_pause_inside_one_phase(self):
+        # Review Fehleraudit 29.10.2026: brekky and sportbionier (24.10.) resumed in
+        # their own run on Blau after the Mac was offline 01:05–10:37Z: one ledger
+        # row, 673/661 min from start to last turn. A silence of 30 minutes, after
+        # which the reconcile closes a phase, is no build time inside one either.
+        self.ledger.reset(NOW - 1)
+        offline = 9 * 3600 + 1800
+        turns = tuple(NOW + at for at in range(300, 2401, 300)) + tuple(NOW + 2400 + offline + at for at in range(0, 2401, 300))
+        self.ledger.ingest(self.sales_report("sales-3.3-blau", "sales:3.3", NOW, "running", turns, "blau"), turns[-1] + 60)
+        data = fleet(turns[-1] + 120, 10)
+        data["queue"] = {"tasks": [{"id": "sales:3.3", "workflow": "sales", "status": "completed", "completedAt": turns[-1]}]}
+        self.ledger.fleet(data, turns[-1] + 120)
+        sales = next(r for r in self.ledger.dashboard(turns[-1] + 180)["by_kind"] if r["key"] == "sales")
         self.assertEqual((sales["closed"], sales["duration_seconds"]["mean"]), (1, 4800))
 
 
