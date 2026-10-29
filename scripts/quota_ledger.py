@@ -369,7 +369,7 @@ class Ledger:
         sales = {clean(task.get("id")): task for task in (data.get("queue") or {}).get("tasks", [])
                  if task.get("workflow") == "sales" and task.get("id")}
         reconciled = 0
-        open_phases = self.db.execute("""SELECT worker,run_id,task_id,started,state,
+        open_phases = self.db.execute("""SELECT worker,run_id,job,task_id,started,state,last_seen,
             (SELECT MAX(at) FROM events WHERE events.worker=runs.worker AND events.run_id=runs.run_id) AS last
             FROM runs WHERE kind='sales' AND state IN ('running','queued','unverified')""").fetchall() if sales else []
         for row in open_phases:
@@ -378,21 +378,34 @@ class Ledger:
             last = max((at for at in (row["started"], row["last"]) if at is not None), default=None)
             # A phase newer than the job's end, or of a job not listed yet, may
             # still be running: only a phase silent for 30 minutes is closed.
-            silent = last is not None and now - last >= 1800
+            # Fehleraudit 29.10.2026: a phase without start and turns (wormland,
+            # 'unverified' since 18.10.) is silent once its Mac has not reported it
+            # for 30 minutes; before, it was never closed.
+            quiet = last if last is not None else row["last_seen"]
+            silent = quiet is not None and now - quiet >= 1800
+            # Without a recorded turn the phase's start is no end (Fehleraudit
+            # 29.10.2026: 7 aborted jobs closed with end = start, duration 0): the
+            # job's compacted end, for a phase without start also the end of a closed
+            # sibling phase, stands in when the phase did not begin after it.
+            closing = last
+            if row["last"] is None:
+                known = self.sales_job_end(row)
+                if known is not None and (row["started"] is None or row["started"] <= known):
+                    closing = known
             if status == "completed":
                 completed = stamp(task.get("completedAt"))
                 if completed is not None and (row["started"] is None or row["started"] <= completed):
                     state, end = "completed", completed
                 elif completed is None or silent:
-                    state, end = "completed", last
+                    state, end = "completed", closing
                 else:
                     continue
             elif status == "blocked" and (silent or row["state"] == "unverified"):
                 # `sales-cli resume` builds on in the same runDir while the Hub job
                 # stays 'blocked': an active phase is no blocked one.
-                state, end = "blockiert", last
+                state, end = "blockiert", closing
             elif status == "aborted" and silent:
-                state, end = "abgebrochen", last
+                state, end = "abgebrochen", closing
             else:
                 continue
             # The close is a new observation of the row: the Hub's tracking copy
@@ -406,6 +419,20 @@ class Ledger:
             self.averages_changed('task_changed')
         self.meta("last_fleet_sample", iso(now))
         self.db.commit()
+
+    def sales_job_end(self, row):
+        """The recorded end of an open Sales phase's job, or None.
+
+        Its compacted record holds the closed job's end. A phase without its own
+        start also takes the newest end of a closed sibling phase of that job.
+        """
+        compact = self.db.execute("SELECT finished FROM compact_jobs WHERE job=?", (row["job"],)).fetchone()
+        if compact and compact[0] is not None:
+            return compact[0]
+        if row["started"] is not None:
+            return None
+        return self.db.execute("""SELECT MAX(finished) FROM runs WHERE job=? AND NOT (worker=? AND run_id=?)
+            AND state NOT IN ('running','queued','unverified')""", (row["job"], row["worker"], row["run_id"])).fetchone()[0]
 
     def expire_workers(self, data, machines, pool, now):
         """Remember each worker's newest evidence; return the live workers.
@@ -571,7 +598,17 @@ class Ledger:
                 if compact is None and kind == "translation":
                     # Already compacted under its former kind: never count it twice.
                     compact = self.db.execute("SELECT finished FROM compact_jobs WHERE job=?", ("newsletter:" + task_id,)).fetchone()
-                if (not payload.get('sales_replay') or kind != 'sales') and compact and finished is not None and finished <= compact[0] and now - compact[0] > 48 * 3600:
+                # Fehleraudit 29.10.2026: a Sales stream has no own end, and its Mac
+                # reports it 72 h after the last write. Without an active receipt
+                # ('unverified') and not begun after the compacted job's end, it is a
+                # phase of that closed job: re-inserting it reopened the job and closed
+                # it again with end = start, in a cycle until the 72 h ran out.
+                run_started = stamp(run.get("started"))
+                ended_phase = finished is not None or (
+                    kind == 'sales' and run.get("state") == "unverified"
+                    and (run_started is None or (compact and compact[0] is not None and run_started <= compact[0])))
+                if ((not payload.get('sales_replay') or kind != 'sales') and compact and compact[0] is not None
+                        and ended_phase and (finished is None or finished <= compact[0]) and now - compact[0] > 48 * 3600):
                     retired_runs.add(run_id)
                     continue
                 fields = 'job,title,customer,started,finished,state,evidence_errors,pending_scan'
@@ -801,6 +838,8 @@ class Ledger:
                 j["started"].append(row["started"])
             if row["finished"] is not None:
                 j["finished"].append(row["finished"])
+            if row["kind"] == "sales":
+                j.setdefault("phases", []).append((row["worker"], row["run_id"], row["started"]))
         quota_events = defaultdict(list)
         universe = self.reset_universe()
         for event in self.db.execute("SELECT * FROM events WHERE event_type='quota' AND at>=? ORDER BY at", (cutoff - 3600,)):
@@ -931,6 +970,9 @@ class Ledger:
                 values = [a[field] for a in j["allocations"].values() if a[field] is not None]
                 j[result] = sum(values) if values else None
             j["duration_seconds"] = max(0, max(j["finished"]) - min(j["started"])) if j["finished"] and j["started"] and not j["in_progress"] else None
+            phases = j.pop("phases", None)
+            if phases is not None:
+                j["active_seconds"] = self.active_seconds(phases) if j["finished"] and not j["in_progress"] else None
             # Averages train only on finished, sufficiently observed jobs. Missing
             # counters are unknown, never zero-cost completed tasks.
             j["partial_window"] = not j["started"] or min(j["started"]) < cutoff
@@ -980,6 +1022,31 @@ class Ledger:
             "averages": {name: {key: describe(items) for key, items in sorted(group.items())} for name, group in groups.items()},
             "jobs": sorted(jobs.values(), key=lambda j: j["started"] or "", reverse=True)}
 
+    def active_seconds(self, phases):
+        """Active build time of a Sales job, or None without any recorded turn.
+
+        Fehleraudit 29.10.2026: a Sales job pauses for days between its phases
+        (weekly limit, interrupted Mac; frogcoffee 4 872 min end minus start).
+        Each phase counts from its start to its own last recorded turn; parallel
+        phases and subagent streams of one job count once.
+        """
+        spans = []
+        for worker, run_id, started in phases:
+            first, last = self.db.execute("SELECT MIN(at),MAX(at) FROM events WHERE worker=? AND run_id=?",
+                                          (worker, run_id)).fetchone()
+            begin = min((at for at in (started, first) if at is not None), default=None)
+            if begin is not None and last is not None and last > begin:
+                spans.append((begin, last))
+        if not spans:
+            return None
+        total, covered = 0, None
+        for begin, end in sorted(spans):
+            if covered is None or begin > covered:
+                total, covered = total + end - begin, end
+            elif end > covered:
+                total, covered = total + end - covered, end
+        return total
+
     def forecast(self, selected, mix, hours=168):
         return {"schema": SCHEMA, "accounts": [{"account": a, "tasks_per_week": None} for a in selected],
                 "tasks_per_week": None, "reason": "quota_allocation_not_calibrated", "mix": mix}
@@ -1016,6 +1083,8 @@ class Ledger:
                          weekly_pp=j["estimated_weekly_pp"] if weekly_ready else None,
                          accounts=sorted(j["allocations"]), estimated=True, estimator_version=USAGE_VERSION,
                          check="carryover" if carryover else "complete" if ready else "pending_evidence" if closed else "running")
+            if "active_seconds" in j:
+                entry["active_seconds"] = j["active_seconds"]
             # A new continuation after retention is counted, but cannot masquerade
             # as a complete new measurement when old evidence is already compacted.
             old = archived.get(j["job"])
@@ -1046,9 +1115,15 @@ class Ledger:
                     if field == "duration_seconds":
                         # Preserve elapsed time across all attempts/worker changes.
                         # Old compressed jobs already retain both timestamps.
-                        measured = [end - start for j in closed
-                                    if (start := stamp(j.get('started'))) is not None
-                                    and (end := stamp(j.get('finished'))) is not None and end > start]
+                        # Fehleraudit 29.10.2026: a Sales job counts its active build
+                        # time (Ledger.active_seconds); days paused between its
+                        # phases are no build time. Without it, its elapsed time.
+                        measured = []
+                        for j in closed:
+                            start, end = stamp(j.get('started')), stamp(j.get('finished'))
+                            active = j.get('active_seconds') if j["kind"] == "sales" else None
+                            if start is not None and end is not None and end > start:
+                                measured.append(active if number(active) and active > 0 else end - start)
                     else:
                         measured = [j[field] for j in closed if j[field] is not None]
                     values[field] = {"n": len(measured), "mean": statistics.mean(measured) if measured else None,

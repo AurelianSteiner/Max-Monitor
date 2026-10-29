@@ -708,6 +708,86 @@ class LedgerTests(unittest.TestCase):
         self.ledger.fleet(data, NOW + 4800)
         self.assertEqual(rows()[active], ("blockiert", NOW + 3000, NOW + 4800))
 
+    @staticmethod
+    def sales_report(run, task, started, state="unverified", turns=(), worker="mac-1"):
+        """One collector report of a Sales stream (quota_worker run_inventory)."""
+        return {"schema": 1, "worker": worker, "runs": [{"run_id": run, "task_id": task, "title": "Sales · shop.example",
+                "customer": "shop.example", "kind": "sales", "started": started, "finished": None, "state": state, "pending_scan": 0}],
+                "events": [{"id": "m-%s-%s" % (run, at), "event_type": "message", "run_id": run, "at": at,
+                            "time_quality": "timestamp", "input_tokens": 10, "output_tokens": 10} for at in turns]}
+
+    def test_compacted_aborted_sales_job_is_not_revived_by_its_later_stream_reports(self):
+        # Fehleraudit 29.10.2026: 7 aborted Sales builds of 25.10. came back as 204
+        # 'unverified' rows (Macs report a stream 72 h after its last write) and
+        # closed again with end = start, in a cycle with the 48 h compaction.
+        self.ledger.reset(NOW - 1)
+        listing = lambda at: {**fleet(at, 10), "queue": {"tasks": [
+            {"id": "sales:9.9", "workflow": "sales", "status": "completed", "completedAt": NOW}]}}
+        run, part = "sales-1.1-abcd", "sales-1.1-abcd:part:0123"
+        self.ledger.ingest(self.sales_report(run, "sales:1.1", NOW, "running", (NOW + 60, NOW + 1200)), NOW + 1300)
+        self.ledger.ingest(self.sales_report(part, "sales:1.1", NOW, "running", (NOW + 120, NOW + 900)), NOW + 1300)
+        # Not listed by the Hub queue: aborted, closed at each phase's last turn.
+        self.ledger.fleet(listing(NOW + 3600), NOW + 3600)
+        rows = lambda: {r["run_id"]: (r["state"], r["finished"])
+                        for r in self.ledger.db.execute("SELECT run_id,state,finished FROM runs WHERE job='sales:sales:1.1'")}
+        self.assertEqual(rows(), {run: ("abgebrochen", NOW + 1200), part: ("abgebrochen", NOW + 900)})
+        self.ledger.dashboard(NOW + 3700)
+        compact = lambda: self.ledger.db.execute("SELECT finished FROM compact_jobs WHERE job='sales:sales:1.1'").fetchone()[0]
+        self.assertEqual(compact(), NOW + 1200)
+        # A stream found only now, without a turn, ends with its job, never at its start.
+        late_part = "sales-1.1-abcd:part:4567"
+        self.ledger.ingest(self.sales_report(late_part, "sales:1.1", NOW), NOW + 3800)
+        self.ledger.fleet(listing(NOW + 3900), NOW + 3900)
+        self.assertEqual(rows()[late_part], ("abgebrochen", NOW + 1200))
+        later = NOW + 3 * 86400
+        self.ledger.dashboard(later)
+        self.assertEqual(rows(), {})
+        # The Mac reports all three streams again, without receipt and without end.
+        for stream in (run, part, late_part):
+            self.ledger.ingest(self.sales_report(stream, "sales:1.1", NOW), later + 60)
+        self.ledger.fleet(listing(later + 3600), later + 3600)
+        self.assertEqual(rows(), {})
+        self.assertEqual(compact(), NOW + 1200)
+        # New work stays: a phase begun after the job's end, or one with an active receipt.
+        self.ledger.ingest(self.sales_report("sales-1.1-new", "sales:1.1", later), later + 3700)
+        self.ledger.ingest(self.sales_report(run, "sales:1.1", NOW, "running"), later + 3700)
+        self.assertEqual(set(rows()), {"sales-1.1-new", run})
+
+    def test_sales_phase_without_start_or_turns_closes_once_its_mac_stops_reporting_it(self):
+        # Fehleraudit 29.10.2026: wormland's phase on Lila stayed 'unverified'
+        # without start since 18.10.; its job had ended aborted on Blau.
+        undated = self.sales_phase("sales:8.8", run="sales-8.8-lila", started=None, state="unverified")
+        self.ledger.db.execute("INSERT INTO runs(worker,run_id,job,task_id,kind,started,finished,state,last_seen) VALUES(?,?,?,?,?,?,?,?,?)",
+                               ("blau", "sales-8.8-blau", "sales:sales:8.8", "sales:8.8", "sales", NOW + 600, NOW + 700, "abgebrochen", NOW + 700))
+        alone = self.sales_phase("sales:7.7", run="sales-7.7-lila", started=None, state="unverified")
+        reported = self.sales_phase("sales:6.6", run="sales-6.6-lila", started=None, state="unverified")
+        self.ledger.db.execute("UPDATE runs SET last_seen=? WHERE run_id=?", (NOW + 3000, reported))
+        data = fleet(NOW + 3600, 10)
+        data["queue"] = {"tasks": [{"id": "sales:5.5", "workflow": "sales", "status": "running", "workerId": "mac-1"}]}
+        self.ledger.fleet(data, NOW + 3600)
+        rows = {r["run_id"]: (r["state"], r["finished"], r["last_seen"])
+                for r in self.ledger.db.execute("SELECT run_id,state,finished,last_seen FROM runs")}
+        self.assertEqual(rows[undated], ("abgebrochen", NOW + 700, NOW + 3600))
+        self.assertEqual(rows[alone], ("abgebrochen", None, NOW + 3600))
+        # Still reported by its Mac within 30 minutes: it may yet start.
+        self.assertEqual(rows[reported], ("unverified", None, NOW + 3000))
+        self.assertEqual(self.ledger.db.execute("""SELECT COUNT(*) FROM runs WHERE kind='sales' AND started IS NULL
+            AND state IN ('running','queued','unverified') AND last_seen<?""", (NOW + 1800,)).fetchone()[0], 0)
+
+    def test_sales_duration_counts_active_phases_not_the_pause_between_them(self):
+        # Fehleraudit 29.10.2026: frogcoffee paused at the weekly limit and counted
+        # 4 872 min end minus start; the Sales mean was 127 min against a 78 min median.
+        self.ledger.reset(NOW - 1)
+        self.ledger.ingest(self.sales_report("sales-2.2-gelb", "sales:2.2", NOW, "running", (NOW + 60, NOW + 2400), "gelb"), NOW + 2400)
+        resumed = NOW + 2400 + 3 * 86400
+        self.ledger.ingest(self.sales_report("sales-2.2-pink", "sales:2.2", resumed, "running", (resumed + 60, resumed + 2400), "pink"),
+                           resumed + 2400)
+        data = fleet(resumed + 2500, 10)
+        data["queue"] = {"tasks": [{"id": "sales:2.2", "workflow": "sales", "status": "completed", "completedAt": resumed + 2400}]}
+        self.ledger.fleet(data, resumed + 2500)
+        sales = next(r for r in self.ledger.dashboard(resumed + 2600)["by_kind"] if r["key"] == "sales")
+        self.assertEqual((sales["closed"], sales["duration_seconds"]["mean"]), (1, 4800))
+
 
     def test_scheduler_preserves_measurement_age_and_shares_one_account_budget(self):
         self.ledger.fleet(fleet(NOW, 23, worker='mac-a'), NOW)
