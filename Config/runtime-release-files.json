@@ -32,6 +32,7 @@
     "scripts/worker-remote.mjs",
     "scripts/worker-wallpaper.mjs",
     "team-server/account-provisioning.js",
+    "team-server/claude-account-control.js",
     "team-server/claude-accounts.js",
     "team-server/codex-account.js",
     "team-server/distribution.js",

@@ -415,6 +415,16 @@ button.stage-count:active { transform: translateY(1px); }
 }
 .fleet-account-name[data-available="true"]::before, .claude-account-name[data-available="true"]::before { background: var(--st-done); }
 .fleet-accounts.pool .fleet-account-name.next { color: var(--ink); font-weight: 600; }
+.account-lock { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.account-lock input { width: 14px; height: 14px; margin: 0; flex-shrink: 0; accent-color: var(--focus); cursor: pointer; }
+.account-lock input:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.account-lock:hover { color: var(--ink); background: var(--hover); }
+.account-lock input:checked + .fleet-account-name, .account-lock input:checked + .claude-account-name { color: var(--muted); }
+.account-lock.compact { height: 20px; }
+.account-lock.compact .fleet-account-name { min-width: 0; }
+.account-lock-caption { color: var(--muted); font-size: 12px; }
+.account-lock:not(.compact) { flex-wrap: wrap; min-height: 32px; }
+@media (pointer: coarse) { .account-lock:not(.compact) { min-height: 44px; } }
 .meter { display: grid; grid-template-columns: minmax(20px, 1fr) 38px 58px; align-items: center; gap: 6px; height: 20px; }
 .meter .usage-track { height: 5px; }
 .meter b { font-weight: 500; font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -765,11 +775,13 @@ dialog.wide { max-width: 1060px; }
   .fleet-row td:nth-child(6) { grid-column: 3; grid-row: 3; }
   .machine-account { white-space: normal; overflow-wrap: anywhere; }
   .panel-head .fleet-sort-note { display: none; }
-  .fleet-row td:nth-child(4)::before { content: "Account"; }
+  .fleet-row td:nth-child(4)::before { content: "Sperren"; }
   .fleet-row td:nth-child(5)::before { content: "5 h · Reset"; }
   .fleet-row td:nth-child(6)::before { content: "Woche · Reset"; }
   .fleet-row td:nth-child(n+4)::before { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
   .meter { grid-template-columns: minmax(6px, 1fr) 36px 54px; gap: 2px; }
+  .account-lock.compact { height: 44px; min-height: 44px; touch-action: manipulation; }
+  .fleet-limits .meter { height: 44px; }
   .meter b { font-size: 11px; }
   .fleet-panel .panel-head { flex-wrap: wrap; row-gap: 2px; }
   .fleet-dots { display: none; }

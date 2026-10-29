@@ -1130,8 +1130,8 @@
     const name = node("strong", "claude-account-name", identity.name);
     const item = fleetAccountLines(machine).find(line => line.id === account.id);
     markAccountAvailability(name, item);
-    heading.append(name);
-    if (selected && account.status==='ready' && !stale) heading.append(node("span", "worker-account-selected", "Nächster Start"));
+    heading.append(accountLockControl(machine, item, name, false));
+    if (selected && !item?.disabled && account.status==='ready' && !stale) heading.append(node("span", "worker-account-selected", "Nächster Start"));
     column.append(heading);
     const limits = node("div", "machine-limits");
     for (const [label,kind] of [["5 h","session"],["Woche","weekly"]]) {
@@ -1369,13 +1369,55 @@
     element.title = item.title;
     element.setAttribute("aria-label", `${item.name} · ${item.availability}${item.next ? " · nächster Start" : ""}`);
   }
+  const accountLocksPending = new Set();
+  function accountLockControl(machine, item, name, compact = true) {
+    if (isCodexRepair(machine) || !machine.workerId || !snapshot?.capabilities?.canManageClaudeAccounts) return name;
+    const label = node('label', `account-lock${compact ? ' compact' : ''}`);
+    label.title = `${item.name}: Für neue Aufgaben sperren. Laufende Aufgaben werden beendet. Ein weiterer aktiver Account wird nur mit freiem Kontingent genutzt.`;
+    const input = node('input');
+    input.type = 'checkbox'; input.name = `lock-${machine.workerId}-${item.id}`;
+    input.checked = item.disabled === true;
+    input.setAttribute('aria-label', `Für neue Aufgaben sperren: ${item.name}`);
+    const key = `${machine.workerId}:${item.id}`;
+    input.disabled = accountLocksPending.has(key);
+    label.addEventListener('click', event => event.stopPropagation());
+    label.addEventListener('keydown', event => event.stopPropagation());
+    input.addEventListener('change', async () => {
+      const disabled = input.checked, connection = credentials, hadFocus = document.activeElement === input;
+      accountLocksPending.add(key); input.disabled = true;
+      input.setAttribute('aria-busy', 'true');
+      try {
+        const result = await consumptionRequest(`/workers/${encodeURIComponent(machine.workerId)}/claude-accounts/control`, 'PATCH',
+          { deviceId: machine.claudeAccountControl?.deviceId || machine.deviceId, accountId: item.id, disabled });
+        if (credentials !== connection) return;
+        for (const target of snapshot?.machines || []) if (target.workerId === machine.workerId)
+          target.claudeAccountControl = { ...target.claudeAccountControl, ...result };
+        showNotice(disabled ? `${item.name} ist für neue Aufgaben gesperrt. Laufende Aufgaben werden beendet.` : `${item.name} ist wieder für neue Aufgaben freigegeben. Die Kontingentprüfung gilt weiter.`);
+      } catch (error) {
+        if (credentials !== connection) return;
+        input.checked = !disabled; showNotice(error.message);
+      } finally {
+        accountLocksPending.delete(key);
+        input.disabled = false; input.removeAttribute('aria-busy');
+        if (credentials === connection) {
+          render(); await refresh();
+          if (hadFocus) [...document.querySelectorAll('input[type="checkbox"]')]
+            .find(el => el.name === input.name && el.getClientRects().length)?.focus({ preventScroll: true });
+        }
+      }
+    });
+    label.append(input, name);
+    if (!compact) label.append(node('span', 'account-lock-caption', 'Für neue Aufgaben sperren'));
+    return label;
+  }
   function fleetAccountLines(machine) {
     const pool = machine.claudeAccounts?.accounts;
     if (pool?.length === 2) return pool.map((account) => {
       const stale = account.stale || !snapshot || !timestamp(account.updatedAt)
         || Date.now() - timestamp(account.updatedAt) > 10 * 60000;
       const identity = claudeAccountIdentity(account);
-      const next = machine.claudeAccounts.selectedAccountId === account.id && account.status === "ready" && !stale;
+      const disabled = machine.claudeAccountControl?.disabledAccountIds.includes(account.id) === true;
+      const next = !disabled && machine.claudeAccounts.selectedAccountId === account.id && account.status === "ready" && !stale;
       const note = stale ? "Messung veraltet" : account.status === "limited" ? "Limit erreicht"
         : account.status === "error" ? "Account prüfen" : account.status === "unknown" ? "Wird geprüft…" : "";
       const blocked = account.blockedUntil && !account.windows.some(w => w.reset === account.blockedUntil)
@@ -1386,7 +1428,8 @@
       };
       const session = limit("session"), weekly = limit("weekly");
       const availability = accountAvailability(session, weekly, stale, account.status, account.blockedUntil);
-      return { id: account.id, name: identity.name, next, stale, note: note || blocked, ...availability,
+      if (disabled) Object.assign(availability, { available: false, availability: "Für neue Aufgaben gesperrt · Laufende Aufgaben werden beendet" });
+      return { id: account.id, name: identity.name, disabled, next, stale, note: disabled ? "Gesperrt" : note || blocked, ...availability,
         tone: account.status === "error" && !stale ? "bad" : blocked ? "warn" : "unknown",
         title: [identity.email || identity.name, availability.availability, next ? "Nächster Start" : "", note, blocked].filter(Boolean).join("\n"),
         session, weekly };
@@ -1397,7 +1440,9 @@
     const stale = usageStale(machine) || Boolean(machine.usageError);
     const session = machineLimit(machine, account, "session"), weekly = machineLimit(machine, account, "weekly");
     const availability = accountAvailability(session, weekly, stale, machine.codexAccount?.status, undefined, isCodexRepair(machine));
-    return [{ name: isCodexRepair(machine) ? `Codex · ${identity.email ? identity.name : account.name || "Account"}` : identity.name, next: false, stale, note: "", ...availability,
+    const disabled = !isCodexRepair(machine) && machine.claudeAccountControl?.disabledAccountIds.includes('primary') === true;
+    if (disabled) Object.assign(availability, { available: false, availability: "Für neue Aufgaben gesperrt · Laufende Aufgaben werden beendet" });
+    return [{ id: 'primary', disabled, name: isCodexRepair(machine) ? `Codex · ${identity.email ? identity.name : account.name || "Account"}` : identity.name, next: false, stale, note: disabled ? "Gesperrt" : "", ...availability,
       title: [`${machineProviderLabel(machine)}-Account: ${identity.email || account.name || "E-Mail nicht gemeldet"}`,
         availability.availability, machine.usageError || "",
         stale ? `Letzte Messung ${relative(machine.usageUpdatedAt)}` : ""].filter(Boolean).join("\n"),
@@ -1497,7 +1542,7 @@
           const accountName = node("span", `fleet-account-name${item.next ? " next" : ""}`, item.name);
           markAccountAvailability(accountName, item);
           if (item.note) accountName.dataset.tone = item.tone;
-          accountCell.append(accountName);
+          accountCell.append(accountLockControl(machine, item, accountName));
           sessionCell.append(meter(item.session, item.stale));
           weeklyCell.append(meter(item.weekly, item.stale));
         }
@@ -1590,13 +1635,14 @@
       }
       const account = machineAccount(machine);
       const accountIdentity = machineAccountIdentity(machine);
-      const accountLabel = node("p", account ? "machine-account" : "machine-account unbound", accountIdentity.text);
+      const accountLabel = node("span", account ? "machine-account" : "machine-account unbound", accountIdentity.text);
       accountLabel.title = accountIdentity.title;
       if (account && machine.claudeAccounts?.accounts?.length !== 2) {
         accountLabel.classList.add("claude-account-name");
         markAccountAvailability(accountLabel, fleetAccountLines(machine)[0]);
       }
-      card.append(accountLabel);
+      card.append(account && !isCodexRepair(machine) && machine.claudeAccounts?.accounts?.length !== 2
+        ? accountLockControl(machine, fleetAccountLines(machine)[0], accountLabel, false) : accountLabel);
       card.append(accountActions(machine));
       const figmaIdentity = machineFigmaIdentity(machine);
       const figmaLabel = node("p", "machine-account machine-figma-account", figmaIdentity.text);
@@ -2321,7 +2367,9 @@
           ),
         );
     }
-    const children = [accountActions(machine),...(machine.claudeAccounts?.accounts?.length===2 ? [workerAccountsGrid(machine)] : []), grid, list];
+    const singleLock = !isCodexRepair(machine) && account && machine.claudeAccounts?.accounts?.length !== 2
+      ? [accountLockControl(machine, fleetAccountLines(machine)[0], node('span', '', 'Account'), false)] : [];
+    const children = [...singleLock, accountActions(machine),...(machine.claudeAccounts?.accounts?.length===2 ? [workerAccountsGrid(machine)] : []), grid, list];
     if (machine.workerId) {
       const button = node(
         "button",

@@ -27,7 +27,7 @@ mkdir -p "$mm_stage/scripts" "$mm_stage/team-server"
 for mm_file in worker-admin.mjs worker-admin-hub.mjs worker-diagnose.py member-remote.py worker-remote.mjs worker-remote-hub.mjs setup-mac-monitor.mjs enroll-monitor-worker.mjs check-worker-control.mjs; do
   cp "$mm_source/scripts/$mm_file" "$mm_stage/scripts/"
 done
-for mm_file in remote-access.js worker-control.js enrollment.js; do
+for mm_file in remote-access.js worker-control.js claude-account-control.js enrollment.js; do
   cp "$mm_source/team-server/$mm_file" "$mm_stage/team-server/"
 done
 if [ -e "$mm_parent/tool.previous" ]; then rm -rf "$mm_parent/tool.previous"; fi

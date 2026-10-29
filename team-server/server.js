@@ -42,6 +42,7 @@ const { gunzipSync } = require("node:zlib");
 const { createFleetStore, FleetError, MAX_QUEUE_BODY_BYTES, MAX_PREVIEW_BYTES } = require("./fleet");
 const { EnrollmentError, enrollWorkerMember, validateEnrollment } = require("./enrollment");
 const { controlForWorker, registeredDeviceId, WORKER_ID, DEVICE_ID } = require("./worker-control");
+const claudeAccountControl = require('./claude-account-control');
 const { workerProfile } = require('./worker-kinds');
 const remoteAccess = require("./remote-access");
 const effortConfig = require('./effort-config');
@@ -426,7 +427,13 @@ function visibleFleet(teamId, who) {
   return {
     ...snapshot,
     capabilities: { canDeleteMachines: ["admin", "super"].includes(who.role),canManageClaudeAccounts:["admin","super"].includes(who.role) },
-    machines,
+    machines: machines.map(machine => ({ ...machine,
+      ...(machine.workerId && machine.provider !== 'codex' ? {
+        claudeAccountControl: { ...claudeAccountControl.control(teamDir(teamId), machine.workerId,
+          registeredDeviceId(machine.workerId, identities, snapshot.machines)),
+          deviceId: registeredDeviceId(machine.workerId, identities, snapshot.machines) },
+      } : {}),
+    })),
     events: snapshot.events.filter((entry) => entry.type.startsWith("machine_")
       ? devices.has(entry.deviceId || entry.entityId)
       : entry.type.startsWith("worker_") ? workers.has(entry.workerId || entry.entityId) : true),
@@ -557,6 +564,31 @@ const server = http.createServer((req, res) => {
   // Read current identities, not the filtered dashboard or cached queue source.
   const controlMatch = rest.match(/^\/workers\/([^/]+)\/control$/);
   const reportMatch = rest.match(/^\/workers\/([^/]+)\/report$/);
+  const accountControlMatch = rest.match(/^\/workers\/([^/]+)\/claude-accounts\/control$/);
+  if (accountControlMatch && req.method === 'PATCH') {
+    if (!['admin', 'super'].includes(who.role)) return send(res, 403, { error: 'Nur Admins dürfen Claude-Accounts sperren.' });
+    const workerId = accountControlMatch[1];
+    if (!WORKER_ID.test(workerId) || workerProfile(workerId).provider !== 'claude') return send(res, 400, { error: 'Ungültiger Claude-Worker.' });
+    return readBody(req, (error, raw) => {
+      if (error) return send(res, 413, { error: 'Anfrage zu groß.' });
+      const current = identify(req, teamId);
+      if (!current || !['admin', 'super'].includes(current.role)) return send(res, 403, { error: 'Team-Berechtigung wurde geändert.' });
+      try {
+        const body = JSON.parse(raw), machines = fleet.snapshot(teamId).machines;
+        const members = [ownerIdentity(teamId, true), ...readMembers(teamId, true)];
+        const deviceId = registeredDeviceId(workerId, members, machines);
+        const permission = controlForWorker(workerId, members, machines, body.deviceId);
+        if (!deviceId || body.deviceId !== deviceId || !['enabled', 'disabled'].includes(permission.reason))
+          return send(res, 409, { error: 'Mac-Zuordnung geändert. Aktualisiere die Ansicht.' });
+        const report = fleet.workerReportStatus(teamId, workerId);
+        const ids = report.claudeAccounts?.accounts.map(a => a.id) || ['primary'];
+        if (!ids.includes(body.accountId)) return send(res, 409, { error: 'Account-Zuordnung geändert. Aktualisiere die Ansicht.' });
+        const result = claudeAccountControl.save(teamDir(teamId), { ...body, workerId, deviceId });
+        fleet.notify(teamId);
+        return send(res, 200, result);
+      } catch { return send(res, 400, { error: 'Claude-Account-Sperre konnte nicht gespeichert werden. Aktualisiere die Ansicht und versuche es erneut.' }); }
+    });
+  }
   const accountMatch=rest.match(/^\/workers\/([^/]+)\/claude-accounts$/);
   if(accountMatch && ['GET','POST'].includes(req.method)) {
     const workerId=accountMatch[1];
@@ -615,7 +647,8 @@ const server = http.createServer((req, res) => {
       // The worker read this app UUID on its own Mac: name an app without Worker ID
       // after it, so its accepted tasks show on the right Mac. Never fails admission.
       if (deviceId) try { fleet.linkWorker(teamId, controlMatch[1], deviceId); } catch { /* display only */ }
-      return send(res, 200, result);
+      return send(res, 200, { ...result, disabledClaudeAccountIds: claudeAccountControl.control(teamDir(teamId),
+        controlMatch[1], registeredDeviceId(controlMatch[1], members, fleet.snapshot(teamId).machines)).disabledAccountIds });
     } catch { return send(res, 503, { error: "Worker-Freigabe konnte nicht geprüft werden" }); }
   }
 

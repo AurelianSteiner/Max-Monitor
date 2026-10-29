@@ -935,3 +935,13 @@ nicht erzeugt. Die Queue prüft den tatsächlichen Kandidatenhash und Kundenscop
 gegen den Reservierungsbeleg. Erst der abgeschlossene Hub-Import mit geprüftem
 Quell-, Metadaten-, Footer- und Framebeleg zeigt einen Figma-Ziellink. Bei einer
 unlesbaren Importquelle bleibt der bisherige vollständige Snapshot erhalten.
+
+## Claude-Accounts für neue Aufgaben sperren
+
+Admins und Inhaber können in Übersicht, Mac-Karten und Account-Details je Claude-Account
+„Für neue Aufgaben sperren“ anhaken. Die dauerhafte Sperre ist an Worker und
+registrierte Geräte-ID gebunden und wird über den bestehenden Hub-Freigabepfad
+vor Annahme und Start geprüft. Laufende Aufgaben mit Account-Bindung laufen zu Ende;
+ein weiterer aktiver Account muss weiterhin seine Kontingentprüfung bestehen. Sind
+alle Accounts gesperrt, werden keine neuen Aufgaben angenommen. Der Haken lässt
+sich jederzeit entfernen. Codex-Repair-Accounts haben diesen Claude-Schalter nicht.

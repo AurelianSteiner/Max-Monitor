@@ -3,6 +3,7 @@
 import { pathToFileURL } from 'node:url';
 import { loadConfiguration } from './enroll-monitor-worker.mjs';
 import control from '../team-server/worker-control.js';
+import accountControl from '../team-server/claude-account-control.js';
 
 export async function checkWorkerControl(settings, workerId, { fetchImpl = fetch, deviceId = null, workflow = null } = {}) {
   if (typeof workerId !== 'string' || !control.WORKER_ID.test(workerId)) throw new Error('Ungültige Worker-ID.');
@@ -21,7 +22,9 @@ export async function checkWorkerControl(settings, workerId, { fetchImpl = fetch
       !['enabled', 'disabled', 'unregistered', 'ambiguous', 'wrong_worker_kind'].includes(result.reason) || result.enabled !== (result.reason === 'enabled')) {
     throw new Error('Ungültige Worker-Freigabe.');
   }
+  if (result.disabledClaudeAccountIds !== undefined && !accountControl.validIds(result.disabledClaudeAccountIds)) throw new Error('Ungültige Claude-Account-Freigabe.');
   return { schema: 1, workerId, enabled: result.enabled, reason: result.reason,
+    ...(result.disabledClaudeAccountIds ? { disabledClaudeAccountIds: result.disabledClaudeAccountIds } : {}),
     ...(result.workerKind ? {workerKind:result.workerKind,provider:result.provider,allowedWorkflows:result.allowedWorkflows} : {}) };
 }
 

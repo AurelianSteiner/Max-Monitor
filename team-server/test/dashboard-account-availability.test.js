@@ -68,3 +68,14 @@ test('unused windows without a reset remain available and unbound accounts are n
   m.monitoringAccountId = 'unbound';
   assert.equal(context.lines(m).length, 0);
 });
+
+test('an account lock overrides healthy quota and selection without hiding either measurement', () => {
+  const m = pool(); m.claudeAccountControl = {disabledAccountIds: ['a']};
+  const lines = context.lines(m);
+  assert.equal(lines[0].available, false); assert.equal(lines[0].next, false);
+  assert.match(lines[0].availability, /gesperrt/); assert.equal(lines[0].weekly.percent, 25);
+  assert.equal(lines[1].available, true);
+  const one = single(); one.claudeAccountControl = {disabledAccountIds: ['primary']};
+  assert.equal(context.lines(one)[0].disabled, true);
+  assert.equal(context.lines(one)[0].available, false);
+});

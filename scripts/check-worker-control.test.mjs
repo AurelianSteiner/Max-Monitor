@@ -5,6 +5,17 @@ import { checkWorkerControl, main } from './check-worker-control.mjs';
 
 const settings = { serverURL: 'https://monitor.example.test/relay', teamId: 'CTRL1234', ownerToken: 'private-test-owner' };
 const reply = { schema: 1, workerId: 'mac-a', enabled: false, reason: 'disabled', token: settings.ownerToken };
+test('Hub forwards account restrictions and re-enable but rejects invalid restrictions', async () => {
+  for (const disabledClaudeAccountIds of [[], ['primary'], ['primary', 'account-2']]) {
+    const result = await checkWorkerControl(settings, 'mac-a', {fetchImpl: async () => ({ok: true,
+      json: async () => ({...reply, disabledClaudeAccountIds})})});
+    assert.deepEqual(result.disabledClaudeAccountIds, disabledClaudeAccountIds);
+    assert.equal(result.token, undefined);
+  }
+  for (const disabledClaudeAccountIds of [null, ['unknown'], ['primary', 'primary'], 'primary'])
+    await assert.rejects(checkWorkerControl(settings, 'mac-a', {fetchImpl: async () => ({ok: true,
+      json: async () => ({...reply, disabledClaudeAccountIds})})}));
+});
 test('Hub permission command is read-only, validates identity and prints no credentials', async () => {
   let output = '';
   await main(['--stdin'], { settings, input: Readable.from([JSON.stringify({ workerId: 'mac-a' })]), output: { write: s => { output += s; } },

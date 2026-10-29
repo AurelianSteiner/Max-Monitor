@@ -80,7 +80,7 @@ test('HTTP control follows saved member/owner switches and reassignment without 
   assert.equal((await call('/workers/mac-a/control')).body.enabled, true, 'enrollment works before first heartbeat');
   await call(`/members/${member.id}`, 'PATCH', { macWorker: false });
   const disabled = await call('/workers/mac-a/control');
-  assert.deepEqual(disabled.body, { schema: 1, workerId: 'mac-a', enabled: false, reason: 'disabled' });
+  assert.deepEqual(disabled.body, { schema: 1, workerId: 'mac-a', enabled: false, reason: 'disabled', disabledClaudeAccountIds: [] });
   assert.equal(disabled.cache, 'no-store');
   assert.ok(!JSON.stringify(disabled).includes(member.token));
   assert.equal((await call('/workers/mac-a/control', 'GET', undefined, member.token)).status, 403);

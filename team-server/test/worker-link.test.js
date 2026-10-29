@@ -47,7 +47,7 @@ test('a worker-reported device link names the Mac and its work without changing 
   assert.ok(!before.machines.some(machine => machine.workerId === 'macbook-2'), 'unenrolled Hub row stays hidden');
 
   const control = (await call(`/workers/macbook-2/control?deviceId=${device}`)).body;
-  assert.deepEqual(control, { schema: 1, workerId: 'macbook-2', enabled: true, reason: 'enabled' });
+  assert.deepEqual(control, { schema: 1, workerId: 'macbook-2', enabled: true, reason: 'enabled', disabledClaudeAccountIds: [] });
   const linked = await byDevice(device);
   assert.deepEqual([linked.workerId, linked.name, linked.deviceName, linked.workerIdSource, linked.telemetrySource],
     ['macbook-2', 'Blau', 'Macbook 2', 'worker', 'app']);
