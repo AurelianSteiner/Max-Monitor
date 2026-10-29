@@ -403,3 +403,51 @@ test('a PM blocker naming the FileStage correction order shows it as next step',
   assert.equal(rows[4].responsibleRole, 'Technik');
   assert.notEqual(rows[4].nextStep, CORRECTION_STEP);
 });
+
+// Fehleraudit 29.10.2026, second round (real stands of Orange, 29.10.2026).
+function storedRun(run) {
+  const value = { schema: 2, producer: 'mac-worker-6-64d66918', runId: run.run_id, runs: [{ run }] };
+  const packed = Buffer.concat([Buffer.from('RSART2\0'), zlib.brotliCompressSync(Buffer.from(JSON.stringify(value)))]).toString('base64');
+  return { producer: 'mac-worker-6-64d66918', run_id: run.run_id, task_id: run.task_id, packed, digest: crypto.createHash('sha256').update(packed).digest('hex') };
+}
+
+test('DesignToLike: a stored design wait names its wait for PM und Design, with or without its text', () => {
+  const base = { run_id: '20261029T174218Z-e509-86cbfx407@1793287445532', task_id: '86cbfx407@1793287445532', state: 'paused',
+    paused_since: '2026-10-29T17:42:39.531Z', pause_reason: 'designsystem', pause_step: 'prepare', detail: null };
+  // As Orange stored it (no text in the stand): no longer „kein lesbarer Blockergrund“.
+  const older = checkpointBlocker(storedRun(base));
+  assert.deepEqual([older.reasonCode, older.responsibleRole, older.blockerKind], ['design_approval_pending', 'PM und Design', 'waiting_human']);
+  assert.match(older.blockerReason, /^Wartet auf Designsystem und Produktionsfreigabe/);
+  assert.match(older.nextStep, /startet danach automatisch/);
+  // Since the worker fix the stand carries the wait's own text.
+  const text = 'Bestehende Designquelle: Kundenwissen fehlt oder ist nicht live lesbar (Kunden/designtolike/produktion/gestaltung.json): RS Hub: Datei in der Newsletter-Wissensbasis nicht gefunden.';
+  const current = checkpointBlocker(storedRun({ ...base, run_id: base.run_id + 'x', pause_detail: text }));
+  assert.equal(current.blockerReason, text);
+  assert.equal(current.responsibleRole, 'PM und Design');
+  // Gegenprobe: another pause without text stays unreadable, never guessed.
+  const portal = checkpointBlocker(storedRun({ ...base, run_id: base.run_id + 'y', pause_reason: 'portal' }));
+  assert.equal(portal.reasonCode, 'blocker_context_missing');
+});
+
+test('Gartenfachmarkt24: a Miro board outside the Hub app\'s team is the PM\'s, with the worker step', () => {
+  const miro = 'Kurzfassung: Die Mailinhalte des Flows sind nicht lesbar. Laut Briefing stehen sie ausschließlich im verlinkten Miro-Board, und die Miro-App von RS Hub hat auf dieses Board keinen Datenzugriff (HTTP 403).\n\n'
+    + 'Ursachen:\n1. Miro-Zugriff fehlt: Das Board liegt nicht in dem Miro-Team, für das die RS-Hub-App freigegeben ist. Board und Einträge liefern beide „kein Zugriff“.\n'
+    + '2. Keine andere Quelle gefunden: In der ClickUp-Aufgabe gibt es keine Kommentare oder Anhänge. In der Flow-Datei des Kunden in Figma, im Kunden-Drive '
+    + 'und in den Hub-Kundendaten steht kein Winback- oder Replenishment-Inhalt. Mailanzahl, Rollen und Texte werden nicht erfunden.\n\n'
+    + 'Nächste Schritte:\n• Board-Inhaber bzw. Miro-Teamadmin: das Board für die RS-Hub-App freigeben, z. B. in das Team mit der installierten App verschieben oder dort teilen.\n'
+    + '• Alternativ trägt der PM die Inhalte aus dem Miro-Board in die ClickUp-Aufgabe ein.';
+  const context = blockerContext(miro, { state: 'blockiert' });
+  assert.deepEqual([context.reasonCode, context.responsibleRole, context.blockerKind], ['source_access_missing', 'PM', 'waiting_human']);
+  // The worker typed it technik before its fix: the stored PM code is no unowned code and stays.
+  const [row] = applyBlockerContexts([{ status: 'blocked', url: 'https://app.clickup.com/t/86c91h7y0', blockerOwner: 'technik', blockerReason: miro, ...context }], []);
+  assert.equal(row.responsibleRole, 'PM');
+  // The real cause is longer than the 500 stored characters: the step behind it is not readable here.
+  assert.equal(row.nextStep, 'Miro-Board für das Miro-Team der RS-Hub-App freigeben lassen (Board-Inhaber bzw. Miro-Teamadmin) oder die Inhalte in die ClickUp-Aufgabe übertragen; danach neu beauftragen.');
+  // A short cause keeps the worker's own step.
+  const short = 'Miro-Zugriff fehlt (HTTP 403). Nächste Schritte: • Board-Inhaber bzw. Miro-Teamadmin: das Board für die RS-Hub-App freigeben. • Alternativ überträgt der PM die Inhalte.';
+  const [own] = applyBlockerContexts([{ status: 'blocked', url: 'https://app.clickup.com/t/86c91h7y0', blockerReason: short, ...blockerContext(short, { state: 'blockiert' }) }], []);
+  assert.equal(own.nextStep, 'Board-Inhaber bzw. Miro-Teamadmin: das Board für die RS-Hub-App freigeben.');
+  assert.equal(blockerContext(miro, { owner: 'pm' }).reasonCode, 'source_access_missing', 'the typed PM keeps the specific code');
+  // A Mac's Figma right without Miro stays as before.
+  assert.notEqual(blockerContext('Das Figma-Konto dieses Macs darf die Datei nur lesen (HTTP 403).', { state: 'technisch_blockiert' }).reasonCode, 'source_access_missing');
+});

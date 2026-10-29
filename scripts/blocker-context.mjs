@@ -56,7 +56,8 @@ OWNER_CONTEXT.sales = { reasonCode: 'sales_shop_unavailable', responsibleRole: '
 const GROUP = { customer_setup_incomplete: 'onboarding', master_data_missing: 'stammdaten',
   pm_decision_pending: 'pm', pm_source_changed: 'pm', approved_content_incomplete: 'pm',
   technical_blocker: 'technik', preparation_source_changed: 'technik', source_link_changed: 'technik',
-  product_feed_missing: 'technik', quality_review_failed: 'technik', sales_shop_unavailable: 'sales' };
+  product_feed_missing: 'technik', quality_review_failed: 'technik', sales_shop_unavailable: 'sales',
+  design_approval_pending: 'onboarding', source_access_missing: 'pm' };
 const OWNER_GROUP = { pm: 'pm', onboarding: 'onboarding', stammdaten: 'stammdaten', technik: 'technik', automatisch: 'technik', sales: 'sales' };
 
 // The worker's setup predicate (technical-repair.js MISSING_SETUP, worker.js
@@ -78,6 +79,17 @@ const PREPARATION_SOURCE = /Aufgabenquelle während der Vorbereitung geändert/i
 const PM_ANSWER_CHANGE = /nach der PM-Antwort geändert(?: \(([^)]*)\))?/i;
 const LINK_FIELD = /^(?:Klaviyo[ -]?Link|Freigabe (?:intern|extern)|Filestage[ -]Link(?: (?:intern|extern))?)$/i;
 const PM_DECISION = /PM[- ]Entscheidung erforderlich|PM entscheidet|im Aufgabentitel/i;
+// Fehleraudit 29.10.2026 (Gartenfachmarkt24 86c91h7y0): a briefing source the RS Hub's
+// Miro app cannot read (the board lies outside the Miro team the app is authorised for)
+// is no technical step and no gap of one Mac: the PM has it shared or transfers its
+// contents (worker technical-repair.js SOURCE_ACCESS, owner pm/source_access).
+const SOURCE_ACCESS = /\bMiro\b[^.\n]{0,160}(?:kein(?:en)?\s+(?:Daten|Lese)?[Zz]ugriff|HTTP\s*403|\b403\b|nicht\s+freigegeben)|\bBoard\b[^.\n]{0,80}nicht\s+in\s+dem\s+Miro-Team/i;
+const SOURCE_ACCESS_STEP = 'Miro-Board für das Miro-Team der RS-Hub-App freigeben lassen (Board-Inhaber bzw. Miro-Teamadmin) oder die Inhalte in die ClickUp-Aufgabe übertragen; danach neu beauftragen.';
+// Fehleraudit 29.10.2026 (DesignToLike 86cbfx407/86cbfx40u): a run paused for the design
+// system and its production approval (worker waitForDesign) is a planned wait for PM and
+// design. Its text travels as pause_detail since then; an older stored stand has none.
+export const DESIGN_WAIT_TEXT = 'Wartet auf Designsystem und Produktionsfreigabe; automatische Fortsetzung';
+const DESIGN_WAIT_STEP = 'Designsystem bereitmachen und Designbasis bzw. Produktionsfreigabe im RS Hub erteilen; der gespeicherte Auftrag startet danach automatisch, ohne neue Beauftragung.';
 // Fehleraudit 26.10.2026 (Tomishop Black Week): the worker's fixed prefix of a PM
 // question it withdrew after a source change (pm-question-worker.js
 // withdrawnQuestionRelease, technical-repair.js PM_QUESTION_WITHDRAWN). Nothing is
@@ -100,8 +112,9 @@ export function setupOwner(owner, text) {
 }
 const SETUP_PHASE = { onboarding: 'Blockiert · Kunden-Setup', stammdaten: 'Blockiert · Stammdaten' };
 
-function fallbackContext(reason, state, technical) {
+function fallbackContext(reason, state, technical, pause = null) {
   const cause = causeOf(reason);
+  if (pause === 'designsystem') return { reasonCode: 'design_approval_pending', responsibleRole: 'PM und Design', blockerKind: 'waiting_human', nextStep: DESIGN_WAIT_STEP };
   const setupCause = cause.replace(DESIGN_GATE, ' ');
   const change = PM_ANSWER_CHANGE.exec(cause);
   if (QUESTION_WITHDRAWN.test(cause)) return { reasonCode: 'pm_source_changed', responsibleRole: 'PM', blockerKind: 'waiting_human',
@@ -119,6 +132,7 @@ function fallbackContext(reason, state, technical) {
         nextStep: 'Geänderte Angabe prüfen: gewollt, dann neu beauftragen; sonst zurücksetzen.' };
   }
   if (PM_DECISION.test(cause)) return { ...OWNER_CONTEXT.pm };
+  if (SOURCE_ACCESS.test(cause)) return { reasonCode: 'source_access_missing', responsibleRole: 'PM', blockerKind: 'waiting_human', nextStep: SOURCE_ACCESS_STEP };
   if (KLAVIYO_KEY_CODE.test(reason) || KLAVIYO_KEY_PROSE.test(cause)) return { ...OWNER_CONTEXT.stammdaten,
     nextStep: 'Privaten Klaviyo-Schlüssel „RS Hub“ (Full Access Key) im Kundenkonto anlegen und im RS Hub beim Kunden speichern; danach 🔁 am blockierten Beitrag.' };
   if (STAMMDATEN.test(cause)) return { ...OWNER_CONTEXT.stammdaten };
@@ -137,9 +151,9 @@ function fallbackContext(reason, state, technical) {
   if (technical || state === 'technisch_blockiert') return { reasonCode: 'technical_blocker', responsibleRole: 'Technik', nextStep: TECHNICAL_STEP };
   return { reasonCode: 'blocker_review_required', responsibleRole: 'Zuständigkeit ungeklärt', nextStep: 'Gesicherten Originalbefund prüfen und die zuständige Rolle für die Behebung festlegen.' };
 }
-export function blockerContext(detail, { state, technical = false, owner } = {}) {
+export function blockerContext(detail, { state, technical = false, owner, pause = null } = {}) {
   const reason = clean(detail, 4000);
-  let context = fallbackContext(reason, state, technical);
+  let context = fallbackContext(reason, state, technical, pause);
   // The worker decided the owner once at the end of the run (O53); the text
   // patterns above remain the fallback for untyped and older rows.
   if (OWNER_CONTEXT[owner]) {
@@ -189,6 +203,9 @@ function workerNextStep(text) {
   if (!steps) return '';
   const first = steps.replace(/^(?:•|-|\d{1,2}\.)\s*/u, '').split(/\s(?:•|\d{1,2}\.\s)|\s\**Stand\**:\s/u)[0].trim();
   const end = sentenceEnds(first)[0];
+  // Fehleraudit 29.10.2026: a step that runs without its sentence end into the end of a
+  // cause cut at 500 characters (clean) is cut itself; the role's own step applies.
+  if (!end && own.length >= 500 && own.endsWith(first)) return '';
   return clip(end ? first.slice(0, end) : first, 160);
 }
 
@@ -216,7 +233,10 @@ export function checkpointBlocker(entry) {
     if (![1, 2].includes(value.schema) || value.producer !== entry.producer || value.runId !== entry.run_id) throw Error('identity');
     const run = value.runs?.find(v => v.run?.run_id === entry.run_id)?.run;
     if (!run || run.task_id !== entry.task_id) throw Error('task');
-    const result = { ...blockerContext(run.detail || run.pause_detail, { state: run.state }),
+    // A design wait without a stored text still names its wait (older worker stands).
+    const designWait = run.state === 'paused' && run.pause_reason === 'designsystem' && !clean(run.detail);
+    const result = { ...blockerContext(run.detail || run.pause_detail || (designWait ? DESIGN_WAIT_TEXT : ''),
+        { state: run.state, pause: designWait ? 'designsystem' : null }),
       blockerState: run.state,
       blockerRecordedAt: run.finished_at || run.paused_since || run.queued_at,
       blockerSource: 'checkpoint', blockerSourceRunId: entry.run_id, blockerSourceHash: entry.digest };
