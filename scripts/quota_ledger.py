@@ -181,6 +181,7 @@ class Ledger:
           cache_create INTEGER DEFAULT 0,cache_read INTEGER DEFAULT 0);
         CREATE INDEX IF NOT EXISTS events_time ON events(at,event_type);
         CREATE INDEX IF NOT EXISTS events_run ON events(worker,run_id,event_type,at);
+        CREATE INDEX IF NOT EXISTS events_job ON events(job);
         CREATE TABLE IF NOT EXISTS collectors(worker TEXT PRIMARY KEY,last_seen REAL,
           scanned INTEGER,backfill_hours INTEGER,errors INTEGER);
         CREATE TABLE IF NOT EXISTS worker_settings(worker TEXT PRIMARY KEY,at REAL,settings TEXT);
@@ -1167,7 +1168,13 @@ class Ledger:
         cutoff = now - 48 * 3600
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            old_jobs = [] if replay else [r[0] for r in self.db.execute("SELECT job FROM compact_jobs WHERE finished<?", (cutoff,))
+            # Only jobs that still keep hot rows. compact_jobs stay forever; re-reading
+            # every archived job with table scans held this write lock 36-48 s per
+            # 15-s pass, and the Macs' ingest (busy timeout 30 s) failed with
+            # "database is locked" (Fehleraudit 29.10.2026, zweiter Durchlauf).
+            old_jobs = [] if replay else [r[0] for r in self.db.execute("""SELECT job FROM compact_jobs c WHERE finished<?
+                AND (EXISTS(SELECT 1 FROM runs WHERE runs.job=c.job) OR EXISTS(SELECT 1 FROM events WHERE events.job=c.job)
+                     OR EXISTS(SELECT 1 FROM tool_usage WHERE tool_usage.job=c.job))""", (cutoff,))
                         if jobs[r[0]]["closed"]]
             archived_rows = {"events": [], "runs": [], "usage_features": [], "tool_usage": []}
             for job in old_jobs:

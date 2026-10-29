@@ -9,6 +9,7 @@ import unittest
 import hashlib
 import zlib
 import random
+import re
 from unittest.mock import patch
 
 
@@ -495,6 +496,33 @@ class LedgerTests(unittest.TestCase):
         row=next(r for r in self.ledger.dashboard(NOW+3*86400)['by_kind'] if r['key']=='newsletter')
         self.assertEqual(row['weekly_pp']['mean'],4)
         self.assertEqual(row['weekly_pp']['n'],1)
+
+    def test_dashboard_skips_already_pruned_compact_jobs_inside_its_write_lock(self):
+        # Fehleraudit 29.10.2026: 1 106 old compact jobs without hot rows were re-read with
+        # table scans on every 15-s pass under BEGIN IMMEDIATE (36-48 s); Mac ingests failed
+        # with "database is locked". Only jobs that still keep rows may be archived again.
+        self.ledger.reset(NOW - 1)
+        self.ledger.fleet(fleet(NOW, 10), NOW)
+        p = payload(); p['runs'][0]['pending_scan'] = 0
+        self.ledger.ingest(p, NOW + 600)
+        self.ledger.fleet(fleet(NOW + 600, 14), NOW + 600)
+        self.ledger.dashboard(NOW + 700)
+        self.ledger.dashboard(NOW + 3 * 86400)
+        compacted = self.ledger.db.execute("SELECT finished,payload FROM compact_jobs").fetchone()
+        self.assertIsNotNone(compacted)
+        for i in range(50):
+            self.ledger.db.execute("INSERT INTO compact_jobs VALUES(?,?,?)", ("newsletter:old-%d@1" % i, compacted[0], compacted[1]))
+        self.ledger.db.execute("INSERT INTO tool_usage(id,job,name) VALUES('tool-hot','newsletter:old-7@1','Read')")
+        self.ledger.db.commit()
+        statements = []
+        self.ledger.db.set_trace_callback(statements.append)
+        self.ledger.dashboard(NOW + 3 * 86400 + 60)
+        self.ledger.db.set_trace_callback(None)
+        scanned = sorted({m for q in statements for m in re.findall(r"newsletter:old-\d+@1", q)})
+        self.assertEqual(scanned, ["newsletter:old-7@1"], "already pruned compact jobs are never scanned again")
+        self.assertIsNone(self.ledger.db.execute("SELECT 1 FROM tool_usage WHERE id='tool-hot'").fetchone(),
+                          "a job that still keeps hot rows is archived and pruned as before")
+        self.assertIn("events_job", [r[0] for r in self.ledger.db.execute("SELECT name FROM sqlite_master WHERE type='index'")])
 
     def test_sales_metadata_uses_exact_queue_identity_without_assuming_completion(self):
         data = fleet(NOW, 10)
