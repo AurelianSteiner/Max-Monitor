@@ -286,3 +286,30 @@ test('an #ai-fehler copy names its own owner and never inherits the queue row bl
   const [system] = buildBlockedErrors([battery], channel, [queued]);
   for (const field of ['reasonCode', 'responsibleRole', 'nextStep', 'blockerKind', 'blockerReason']) assert.equal(system[field], undefined, field);
 });
+
+// Fehleraudit 29.10.2026: 7 of 62 copies (12451cu8z6m, 12451cu8z6n, 86cb62a8d,
+// 12451cu6nt3, 12451cu70yv) showed only „Offene Fehlermeldung in #ai-fehler“.
+// Their text is the worker's copy of an undelivered PM question (src/slack-notifier.js
+// fehlerKopieText, grund rueckfrage_nicht_zugestellt), which says no „blockiert“.
+test('an undelivered PM question copy names its registration cause, else its metadata', () => {
+  const copy = (lines, payload = {}, ts = '1791823000.000021') => ({ ts, bot_id: 'bot',
+    text: ['*Korrektur intern · Kunde*', '⚠️ PM-Rückfrage nicht zugestellt: <https://app.clickup.com/t/12451cu8z6m|Mail>', ...lines,
+      '<https://ruegamer-steiner.slack.com/archives/CKORR/p1793100000000100|Meldung in #ai-korrektur> · Mac `Grün`'].join('\n'),
+    metadata: { event_type: 'ai_newsletter_fehler', event_payload: { v: 1, scope: 'run', kind: 'lauf', worker: 'mac-f121ae17',
+      run_id: 'attempt-8z6m', task_id: 'korrektur-cu-12451cu8z6m@1793100000000-intern', state: 'unklar',
+      grund: 'rueckfrage_nicht_zugestellt', ...payload } } });
+  const repair = 'Bitte den Zustellfehler beheben. Die fachliche Rückfrage ist noch nicht beim PM angekommen; seine Antwort steht weiterhin aus.';
+  const reason = message => buildBlockedErrors([message], channel)[0];
+  const figma = reason(copy(['Rückfrage nicht zugestellt: Paket-Figma-Quellübergang: Figma-Quelle des Mailpakets fehlt', repair]));
+  assert.equal(figma.blockedReason, 'PM-Rückfrage nicht zugestellt: Paket-Figma-Quellübergang: Figma-Quelle des Mailpakets fehlt');
+  assert.equal(figma.responsibleRole, 'Technik');
+  assert.equal(reason(copy(['Rückfrage nicht zugestellt: seit 2 h nicht im Fragen-Hub registriert', repair])).blockedReason,
+    'PM-Rückfrage nicht zugestellt: seit 2 h nicht im Fragen-Hub registriert');
+  assert.equal(reason(copy([repair])).blockedReason, 'PM-Rückfrage nicht zugestellt');
+  // A copy text without a readable reason falls back to its metadata.
+  const unreadable = (payload, ts) => ({ ...copy([], payload, ts), text: '*Korrektur intern · Kunde*\nNeue Meldung' });
+  assert.equal(reason(unreadable({})).blockedReason, 'PM-Rückfrage nicht zugestellt');
+  assert.equal(reason(unreadable({ hinweis: 'Fragen-Hub nicht erreichbar' })).blockedReason, 'Fragen-Hub nicht erreichbar');
+  assert.equal(reason(unreadable({ grund: 'erschoepft' })).blockedReason, 'Automatische Reparatur ohne Erfolg');
+  assert.equal(reason(unreadable({ grund: 'mensch' })).blockedReason, 'Offene Fehlermeldung in #ai-fehler');
+});

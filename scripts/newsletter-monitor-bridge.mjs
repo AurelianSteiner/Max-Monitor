@@ -717,6 +717,16 @@ const COPY_UNINHERITED = new Set(['blockerReason', 'reasonCode', 'responsibleRol
 // 'eingabe' and 'mensch' cover PM, master data and technical cases alike; the
 // text fallback decides those.
 const OWNER_OF_GRUND = { stammdaten: 'stammdaten', technisch: 'technik', erschoepft: 'technik', rueckfrage_nicht_zugestellt: 'technik' };
+// Fehleraudit 29.10.2026: a run copy whose text yields no reason still names it in
+// its metadata (Worker errorCopyBody: kind 'lauf', grund, owner). An explicit
+// `hinweis` wins; else the worker's own wording of that grund in the copy.
+const REASON_OF_GRUND = { rueckfrage_nicht_zugestellt: 'PM-Rückfrage nicht zugestellt',
+  erschoepft: 'Automatische Reparatur ohne Erfolg', eingabe: 'Eingabe nötig' };
+function metadataReason(value) {
+  if (value?.kind !== 'lauf') return null;
+  const hint = typeof value.hinweis === 'string' ? parseBlockedReason(`:warning: blockiert: ${value.hinweis}`) : null;
+  return hint || (Object.hasOwn(REASON_OF_GRUND, value.grund) ? REASON_OF_GRUND[value.grund] : null);
+}
 
 // One row per still-present bot error in #ai-fehler, independent of historical
 // ClickUp tags, claim outcomes and canceled Sales tests. A cause post that names
@@ -756,7 +766,7 @@ export function buildBlockedErrors(messages, channelId, tasks = [], { manualUplo
     const workspace = /https:\/\/([a-z0-9-]+\.slack\.com)\/archives\//i.exec(text)?.[1] || 'app.slack.com';
     const errorUrl = `https://${workspace}/archives/${encodeURIComponent(channelId)}/p${message.ts.replace('.', '')}`;
     const body = text.split('\n').slice(1).join('\n').replace(/^(.*?[Bb]lockiert:)\s*<https:\/\/app\.clickup\.com\/t\/[^>]+>[^\n]*\n/u, '$1\n');
-    const diagnosis = issue?.message || parseBlockedReason(body) || 'Offene Fehlermeldung in #ai-fehler';
+    const diagnosis = issue?.message || parseBlockedReason(body) || metadataReason(value) || 'Offene Fehlermeldung in #ai-fehler';
     const company = displayText(slackText(value?.customer_name || text.split('\n')[0].replace(/[*`]/g, '').split(' · ').slice(1).join(' · ')), 200);
     const id = `slack-error:${channelId}:${message.ts}`;
     const updatedAt = new Date(time).toISOString();
@@ -1193,11 +1203,27 @@ export function parseRunStatus(text) {
   return step ? { percent: Number(match[1]), step } : null;
 }
 
+// Fehleraudit 29.10.2026: the #ai-fehler copy of a PM question the Fragen-Hub never
+// registered (Worker src/slack-notifier.js fehlerKopieText, grund
+// rueckfrage_nicht_zugestellt) says no „blockiert“. Its cause is the worker's
+// following line „Rückfrage nicht zugestellt: …“ (registration error, e.g. a
+// Paket-Figma-Quellübergang, or since when it is unregistered).
+const UNDELIVERED_QUESTION = /^(?:⚠️?|:warning:)\s*PM-Rückfrage nicht zugestellt\b/u;
+
 export function parseBlockedReason(text) {
   // Keep worker section headings apart from their text when lines are joined.
   const value = String(text ?? '').replace(/[*`]/g, '').replace(/^(Kurzfassung|Ursachen|Nächste Schritte|Stand):?[ \t]*$/gm, '$1: ');
+  if (UNDELIVERED_QUESTION.test(value)) {
+    const cause = /^Rückfrage nicht zugestellt:[ \t]*(\S[^\n]*)$/m.exec(value)?.[1];
+    return safeReason(`PM-Rückfrage nicht zugestellt${cause ? `: ${cause}` : ''}`);
+  }
   if (!/^(?:⛔|⚠️?|:warning:|:no_entry:).*?(?:Blockiert|blockiert)/u.test(value)) return null;
   const detail = /(?:^|\n|\.\s+)Grund:?\s*([\s\S]+)/.exec(value)?.[1] || value.replace(/^.*?(?:Blockiert|blockiert):?\s*/u, '');
+  return safeReason(detail);
+}
+
+// Only the diagnosis, never stack frames, credentials or the copy's footer.
+function safeReason(detail) {
   return displayText(detail.split(/\n(?:_?Stand |:stopwatch:|⏱|Dauer |Entwurf:|<https:\/\/[a-z0-9-]+\.slack\.com\/archives\/)/)[0]
     .replace(/<[^|>]+\|([^>]+)>/g, '$1').replace(/\s+at \w[^\n]*$/, '')
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[ENTFERNT]')
