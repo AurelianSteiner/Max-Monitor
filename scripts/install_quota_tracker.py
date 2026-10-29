@@ -88,6 +88,22 @@ def unit_text():
                         + ' -' + str(register / 'claims.sqlite-wal'))
 
 
+def collect_once(run=subprocess.run, sleep=None, attempts=3):
+    """Run one collect after the file swap. The running service collects every 15 s on the
+    same ledger; a collect that meets its write lock fails (29.10.2026: two of three install
+    runs). Retry briefly and name the last error instead of failing on the first lock."""
+    import time
+    sleep = sleep or time.sleep
+    for attempt in range(1, attempts + 1):
+        result = run(["/usr/bin/python3", "/opt/max-monitor-quota/quota_ledger.py", "collect"], capture_output=True)
+        if result.returncode == 0:
+            return attempt
+        if attempt == attempts:
+            detail = (result.stderr or b"")[-500:].decode("utf-8", "replace").strip()
+            raise subprocess.CalledProcessError(result.returncode, result.args, output=result.stdout, stderr=detail)
+        sleep(2 * attempt)
+
+
 def plan(source):
     source = Path(source)
     return [(source / "quota_ledger.py", Path("/opt/max-monitor-quota/quota_ledger.py")),
@@ -150,7 +166,7 @@ def main():
             unit.write_text(text)
             os.chmod(unit, 0o644)
         subprocess.run(["/usr/bin/systemd-analyze", "verify", *map(str, unit_paths)], check=True)
-        subprocess.run(["/usr/bin/python3", "/opt/max-monitor-quota/quota_ledger.py", "collect"], check=True, capture_output=True)
+        collect_once()
         subprocess.run(["/usr/bin/systemctl", "daemon-reload"], check=True)
         subprocess.run(["/usr/bin/systemctl", "enable", "--now", SERVICE], check=True, capture_output=True)
         subprocess.run(["/usr/bin/systemctl", "restart", SERVICE], check=True)

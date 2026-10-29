@@ -1208,5 +1208,21 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(sum(len(body["events"]) for body in calls), 2)
 
 
+class InstallerCollectRetryTest(unittest.TestCase):
+    def test_collect_retries_a_locked_ledger_and_names_the_last_error(self):
+        import install_quota_tracker as installer
+        calls = []
+        class Result:
+            def __init__(self, code, err=b""):
+                self.returncode, self.stderr, self.stdout, self.args = code, err, b"", ["collect"]
+        outcomes = [Result(1, b"database is locked"), Result(0)]
+        self.assertEqual(installer.collect_once(run=lambda *a, **k: calls.append(1) or outcomes.pop(0), sleep=lambda s: None), 2)
+        always = lambda *a, **k: Result(1, b"sqlite3.OperationalError: database is locked")
+        with self.assertRaises(installer.subprocess.CalledProcessError) as caught:
+            installer.collect_once(run=always, sleep=lambda s: None)
+        self.assertIn("database is locked", caught.exception.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
+
