@@ -20,8 +20,14 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
 
 
+# The worker's admission rules the queue bridge loads (--worker-root). Dotless names
+# keep its config/worker.local.json out.
+NEWSLETTER_SOURCE = re.compile(r'newsletter-source/(?:src/[A-Za-z0-9_-]+\.js|config/[A-Za-z0-9_-]+\.json)')
+
+
 def safe_path(value):
-    return isinstance(value, str) and (value == 'Config/runtime-release-files.json' or re.fullmatch(r'(?:(?:team-server|scripts)/[A-Za-z0-9_.-]+|team-server/public/[A-Za-z0-9_-]+\.(?:html|css|js))', value)) and '..' not in value
+    return isinstance(value, str) and bool(value == 'Config/runtime-release-files.json' or re.fullmatch(r'(?:(?:team-server|scripts)/[A-Za-z0-9_.-]+|team-server/public/[A-Za-z0-9_-]+\.(?:html|css|js))', value)
+        or NEWSLETTER_SOURCE.fullmatch(value)) and '..' not in value
 
 
 def install(payload, root=Path('/opt/max-monitor'), backup_root=Path('/var/backups/max-monitor'),
@@ -31,7 +37,17 @@ def install(payload, root=Path('/opt/max-monitor'), backup_root=Path('/var/backu
     allowed = payload.get('manifest', {})
     if not re.fullmatch(r'[a-f0-9]{40}', revision) or allowed.get('schema') != 1:
         raise ValueError('Invalid immutable release')
-    if set(files) != set(allowed.get('files', [])) or not files or not all(safe_path(p) for p in set(files) | set(baseline)):
+    expected = set(allowed.get('files', []))
+    newsletter = payload.get('newsletterSource')
+    if newsletter is not None:
+        # Prinz 12451cu4101 (29.10.2026): copied once by the full installer, these rules
+        # aged unnoticed; a release now carries them from one published worker revision.
+        listed = newsletter.get('files') if isinstance(newsletter, dict) else None
+        if not isinstance(listed, list) or not listed or not re.fullmatch(r'[a-f0-9]{40}', str(newsletter.get('revision', '')))\
+                or not all(isinstance(p, str) and NEWSLETTER_SOURCE.fullmatch(p) for p in listed):
+            raise ValueError('Invalid newsletter source')
+        expected |= set(listed)
+    if set(files) != expected or not files or not all(safe_path(p) for p in set(files) | set(baseline)):
         raise ValueError('Invalid source manifest')
     if not set(files).issubset(baseline):
         raise ValueError('Missing preflight baseline')
@@ -69,6 +85,7 @@ def install(payload, root=Path('/opt/max-monitor'), backup_root=Path('/var/backu
     preserved = {rel: sha for rel, sha in baseline.items() if rel not in files}
     manifest = {'schema': 2, 'component': 'monitor-runtime', 'sourceRevision': revision, 'verifiedSource': True,
                 'sourceFiles': {p: v['sha256'] for p, v in files.items()},
+                'newsletterSourceRevision': newsletter['revision'] if newsletter else None,
                 'preservedHelpers': preserved, 'installedAt': stamp, 'backupDirectory': str(backup)}
     (backup / 'before.json').write_text(json.dumps(previous, indent=2) + '\n')
     try:

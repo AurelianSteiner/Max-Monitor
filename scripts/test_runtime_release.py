@@ -40,6 +40,31 @@ class ReleaseTests(unittest.TestCase):
         for value in ['team-server/public/../../secrets.json','team-server/public/other/private.js','team-server/public/secret.json','/etc/passwd']:
             self.assertFalse(runtime.safe_path(value))
 
+    def test_newsletter_source_installs_only_with_its_own_revision_and_never_credentials(self):
+        # Prinz 12451cu4101 (29.10.2026): the copied worker rules stayed at 17.10. because
+        # the runtime release never carried them; the queue then hid automatic uploads.
+        policy = b"module.exports = { uploadPolicy() { return { manual: false }; } };"
+        rules = b'{"customers": []}'
+        files = {'newsletter-source/src/upload-policy.js': policy, 'newsletter-source/config/manual-uploads.json': rules}
+        for rel, data in files.items():
+            self.payload['files'][rel] = {'base64': base64.b64encode(data).decode(), 'sha256': hashlib.sha256(data).hexdigest()}
+            self.payload['baseline'][rel] = None
+        with self.assertRaisesRegex(ValueError, 'manifest'):
+            self.install(dry_run=True)
+        self.payload['newsletterSource'] = {'revision': 'b' * 40, 'files': sorted(files)}
+        result = self.install()
+        self.assertEqual('b' * 40, result['newsletterSourceRevision'])
+        self.assertEqual(policy, (self.root / 'newsletter-source/src/upload-policy.js').read_bytes())
+        self.assertEqual(rules, (self.root / 'newsletter-source/config/manual-uploads.json').read_bytes())
+        self.assertIn('newsletter-source/src/upload-policy.js', result['sourceFiles'])
+        for value in ['newsletter-source/config/worker.local.json', 'newsletter-source/src/../config.js',
+                      'newsletter-source/node_modules/x.js', 'newsletter-source/src/a/b.js', 'newsletter-source/config/x.js']:
+            self.assertFalse(runtime.safe_path(value), value)
+        self.assertTrue(runtime.safe_path('newsletter-source/src/hub-transport.js'))
+        self.payload['newsletterSource']['revision'] = 'main'
+        with self.assertRaisesRegex(ValueError, 'newsletter source'):
+            self.install(dry_run=True)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

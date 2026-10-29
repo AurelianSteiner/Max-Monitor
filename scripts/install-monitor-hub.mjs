@@ -115,6 +115,14 @@ export function workerSourceFiles(workerRoot, entries = WORKER_ENTRY_POINTS, opt
   return [...files].map(([relative, content]) => ({ relative, content }));
 }
 
+// Copy only the public routing contract, never the worker's local credentials.
+export function monitorChannels(workerRoot) {
+  const channelFile = path.join(workerRoot, 'src', 'slack-kanaele.js');
+  if (!fs.existsSync(channelFile)) return null;
+  const { KANAELE, FEHLER_KANAL } = createRequire(import.meta.url)(channelFile);
+  return JSON.stringify({ claims: Object.values(KANAELE).map(channel => channel.id), errors: FEHLER_KANAL.id }) + '\n';
+}
+
 export function nginxLocation(settings) {
   return `    ${BEGIN}\n    location = ${settings.prefix} {\n        return 308 ${settings.prefix}/$is_args$args;\n    }\n    location ^~ ${settings.prefix}/ {\n        proxy_pass http://127.0.0.1:${settings.port}/;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_redirect off;\n        client_max_body_size 3m;\n    }\n    ${END}\n`;
 }
@@ -247,13 +255,8 @@ export function prepareInstallation({ stageDirectory, nginxConfigPath, workerRoo
   for (const { relative, content } of workerSourceFiles(workerRoot)) {
     files.push({ target: `/opt/max-monitor/newsletter-source/${relative}`, content, mode: 0o644 });
   }
-  // Copy only the public routing contract, never the worker's local credentials.
-  const channelFile = path.join(workerRoot, 'src', 'slack-kanaele.js');
-  if (fs.existsSync(channelFile)) {
-    const { KANAELE, FEHLER_KANAL } = createRequire(import.meta.url)(channelFile);
-    files.push({ target: '/opt/max-monitor/newsletter-source/config/monitor-channels.json', mode: 0o644,
-      content: JSON.stringify({ claims: Object.values(KANAELE).map(channel => channel.id), errors: FEHLER_KANAL.id }) + '\n' });
-  }
+  const channels = monitorChannels(workerRoot);
+  if (channels) files.push({ target: '/opt/max-monitor/newsletter-source/config/monitor-channels.json', mode: 0o644, content: channels });
   files.push({ target: '/opt/max-monitor/newsletter-source/config/worker.local.json', mode: 0o600,
     content: `${JSON.stringify({ worker_id: 'max-monitor-source', claude: { bin: '/usr/bin/false' } }, null, 2)}\n` });
   files.push({ target: '/etc/max-monitor/enrollment.json', content: `${JSON.stringify({ serverURL: settings.serverURL, teamId: settings.teamId, ownerToken: settings.ownerToken }, null, 2)}\n`, mode: 0o600 },

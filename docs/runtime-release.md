@@ -10,9 +10,19 @@ Die Nutzdaten werden mit `git show <Commit>:<Datei>` gelesen. Der Releaseweg nut
 den vorhandenen Hub-Zugang von `setup-mac-monitor.mjs`/`worker-remote.mjs`.
 
 ```bash
-node scripts/release-runtime.mjs --baseline /private/source-inventory.json --output /private/preflight.json
-node scripts/release-runtime.mjs --baseline /private/source-inventory.json --output /private/receipt.json --install
+node scripts/release-runtime.mjs --baseline /private/source-inventory.json --output /private/preflight.json --newsletter-root /private/worker-main
+node scripts/release-runtime.mjs --baseline /private/source-inventory.json --output /private/receipt.json --newsletter-root /private/worker-main --install
 ```
+
+`--newsletter-root` ist Pflicht: ein sauberer Checkout exakt auf dem veröffentlichten
+`main` von AI Newsletter Creation. Jeder Release erneuert damit unter
+`/opt/max-monitor/newsletter-source/` die Worker-Regeln, die die Queue-Bridge lädt
+(Require-Abschluss von `upload-policy.js`, `test-workspace.js`, `slack-kanaele.js`,
+`workflow-cutover.json` und Einstiegspunkten, dazu `config/monitor-channels.json`),
+niemals `config/worker.local.json`. Die Quittung nennt `newsletterSourceRevision`.
+Anlass (Prinz 12451cu4101, 29.10.2026): Die Kopie stammte vom 17.10. und hielt Prinz
+noch für einen manuellen Upload; die Queue verbarg den blockierten automatischen Upload.
+Das Inventar enthält daher auch diese Pfade, neue Dateien mit `"sha256": null`.
 
 Das lesend aufgenommene Inventar enthält `files: { "scripts/datei.mjs": {
 "sha256": "…" } }` für die tatsächlich vorhandenen Quellen und zusätzlich zu
