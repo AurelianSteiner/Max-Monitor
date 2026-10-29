@@ -61,7 +61,10 @@ const OWNER_GROUP = { pm: 'pm', onboarding: 'onboarding', stammdaten: 'stammdate
 
 // The worker's setup predicate (technical-repair.js MISSING_SETUP, worker.js
 // missingCustomer). A season design gate is a PM decision, never customer setup.
-const SETUP = /Kunde fehlt im RS Hub|noch nicht als Kunde|Kunden-Onboarding|Designbasis.*nicht freigegeben|Design.Library.*nicht freigegeben|(?:keine?|ohne|fehlende?)\s+(?:im RS[- ]Hub\s+)?freigegeben\w*\s+(?:Design\w*|Gestaltung\w*|Library|Basis)|Kunden-?(?:Setup|Onboarding)\s+(?:ist\s+)?(?:noch\s+)?nicht\s+(?:fertig|abgeschlossen|vollständig)|kein RS-Hub-Kunde für ClickUp-Ordner|kein Flow-Ziel/i;
+// Fehleraudit 29.10.2026 (LKW-Teile24 12451cua2hn): as the worker since then, a customer
+// the RS Hub lists as inactive (only next to „RS Hub“: „inaktive Kunden“ alone is the
+// audience of a winback mail) and „noch keine/niemand eine … Designbasis … freigegeben“.
+const SETUP = /Kunde fehlt im RS Hub|noch nicht als Kunde|Kunden-Onboarding|Designbasis.*nicht freigegeben|Design.Library.*nicht freigegeben|(?:keine?|ohne|fehlende?)\s+(?:im RS[- ]Hub\s+)?freigegeben\w*\s+(?:Design\w*|Gestaltung\w*|Library|Basis)|Kunden-?(?:Setup|Onboarding)\s+(?:ist\s+)?(?:noch\s+)?nicht\s+(?:fertig|abgeschlossen|vollständig)|kein RS-Hub-Kunde für ClickUp-Ordner|kein Flow-Ziel|\bim RS[- ]Hub\s+(?:als\s+)?inaktiv|\binaktiv\w*\s+im RS[- ]Hub\b|\bRS[- ]Hub-Kunde\b[^.\n]{0,80}\bist\s+inaktiv\b|\b(?:kein\w*|niemand)\s+(?:[^\s.,;:!?\n]+\s+){0,5}?(?:Designbasis|Designsystem)\b(?:\s+[^\s.,;:!?\n]+){0,8}?\s+(?:freigegeben|bestätigt|hinterlegt|eingetragen)\b|\bfehlt\s+(?:noch\s+|weiterhin\s+)?(?:die\s+|eine\s+)?freigegebene\s+(?:Design\w*|Gestaltung\w*|Library|Basis)/i;
 const DESIGN_GATE = /(?:Black[- ]?(?:Week(?:end)?|Friday)|Cyber[- ]?Monday)[^.;]{0,60}(?:Gestaltung|Freigabe|freigegeben|Bausteine)|(?:Gestaltung|Freigabe|Bausteine)[^.;]{0,40}(?:Black[- ]?Week(?:end)?|Cyber[- ]?Monday)/gi;
 // Missing Klaviyo key: the Hub's codes count everywhere, the prose only in the
 // cause (technical-repair.js KLAVIYO_KEY_CODE/KLAVIYO_KEY_PROSE).
@@ -127,6 +130,10 @@ function fallbackContext(reason, state, technical) {
   if (/Endabnahme|QA.*(?:fehlgeschlagen|nicht bestanden)|Fixrunden/i.test(cause)) {
     return { reasonCode: 'quality_review_failed', responsibleRole: 'Design und QA', nextStep: 'Offene Muss-Punkte anhand des gespeicherten Prüfberichts korrigieren und erneut abnehmen lassen.' };
   }
+  // Fehleraudit 29.10.2026 (JuCad 12451cu9w7h): unklar is the agent's end with a question
+  // or decision for the PM; the worker types it pm (blocker-owner.js) once no cause above
+  // names a role. A stored run without its owner (checkpoint) is no unowned blocker.
+  if (state === 'unklar') return { ...OWNER_CONTEXT.pm };
   if (technical || state === 'technisch_blockiert') return { reasonCode: 'technical_blocker', responsibleRole: 'Technik', nextStep: TECHNICAL_STEP };
   return { reasonCode: 'blocker_review_required', responsibleRole: 'Zuständigkeit ungeklärt', nextStep: 'Gesicherten Originalbefund prüfen und die zuständige Rolle für die Behebung festlegen.' };
 }

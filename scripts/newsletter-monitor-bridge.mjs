@@ -1751,8 +1751,14 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
       && claim.resumeRequestedAt >= (Date.parse(entry.blocker?.blockerRecordedAt) || Number(claim.ts) * 1000)
       && Number.isFinite(entry.ready_at) && entry.ready_at < 8640000000000000);
     row.workerId = undefined;
-    // The claim's typed owner describes its own run only.
-    if (entry.run_id !== run.id) delete row.blockerOwner;
+    // The claim's typed owner describes its own run only: a newer stored run takes the
+    // owner of its own claim (Fehleraudit 29.10.2026: identical ends showed „Technik“ and
+    // „Zuständigkeit ungeklärt“ depending on which claim the row was bound to).
+    if (entry.run_id !== run.id) {
+      delete row.blockerOwner;
+      const own = claims.find(claim => claim.runId === entry.run_id && claim.workerId === entry.producer && BLOCKER_OWNERS.has(claim.owner));
+      if (own) row.blockerOwner = own.owner;
+    }
     row.attemptId = entry.run_id;
     if (!explicit && (failed(entry) || (['blocked', 'failed'].includes(row.status) && !entry.blocker?.blockerState))) {
       // Fehleraudit 19.10.2026 (Smileypack d857): a stored run without text never

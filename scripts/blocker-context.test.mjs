@@ -340,3 +340,37 @@ test('the worker\'s prefix of a withdrawn PM question is a fixed contract', () =
     assert.notEqual(blockerContext(other, { state: 'unklar' }).reasonCode, 'pm_source_changed', other);
   }
 });
+
+// Fehleraudit 29.10.2026 (Zuständigkeit und offene Inhaltsfragen), real ends of 29.10.2026.
+test('JuCad: a stored unklar end without a typed owner is the PM with the worker step, never „Zuständigkeit ungeklärt“', () => {
+  const jucad = 'Kurzfassung: Für die FR-CH-Fassung fehlt nur noch der Aktions-EK. Die PM-Antwort nennt ausschließlich CHF-Verkaufspreise.\n\n'
+    + 'Ursachen:\n1. Aktions-EK in CHF: Offen ist, ob CHF-EK-Werte geliefert werden, der Euro-EK aus dem Master bleibt oder die EK-Zeile entfällt.\n\n'
+    + 'Nächste Schritte:\n• PM beantwortet Frage Q3 im Rückfragen-Thread.\n• Danach wird dieselbe Aufgabe fortgesetzt.';
+  const context = blockerContext(jucad, { state: 'unklar' });
+  assert.deepEqual([context.reasonCode, context.responsibleRole, context.blockerKind], ['pm_decision_pending', 'PM', 'waiting_human']);
+  const [row] = applyBlockerContexts([{ status: 'blocked', url: 'https://app.clickup.com/t/12451cu9w7h', blockerReason: jucad, ...context }], []);
+  assert.equal(row.nextStep, 'PM beantwortet Frage Q3 im Rückfragen-Thread.');
+  // Dynatech 86cbgtpjr keeps its own PM code and step, also as unklar.
+  const dynatech = 'Platzhalter „[XX %]“ im freigegebenen Rahmen: Angebotswerte fehlen – Rahmen von Hand berichtigen und 🔁.';
+  assert.equal(blockerContext(dynatech, { state: 'unklar' }).reasonCode, 'approved_content_incomplete');
+  // Gegenprobe: the same text as an ordinary blocked end stays unowned without a typed owner.
+  assert.equal(blockerContext(jucad, { state: 'blockiert' }).reasonCode, 'blocker_review_required');
+});
+
+test('LKW-Teile24: an inactive Hub customer and a design basis nobody approved are customer setup, not Technik', () => {
+  const lkw = 'Kurzfassung: Der Newsletter wurde nicht gebaut, weil LKW-Teile24 im RS Hub nicht für die Produktion eingerichtet ist.\n\n'
+    + 'Ursachen:\n1. Kunde inaktiv: LKW-Teile24 ist im RS Hub als inaktiver Kunde geführt.\n'
+    + '2. Designbasis fehlt: Für LKW-Teile24 hat noch niemand eine gemeinsame Designbasis für Newsletter freigegeben.\n\n'
+    + 'Nächste Schritte:\n• PM/Team: Kunden im RS Hub aktivieren, falls die Produktion für LKW-Teile24 wieder laufen soll.';
+  for (const state of ['blockiert', 'technisch_blockiert']) {
+    const context = blockerContext(lkw, { state });
+    assert.deepEqual([context.reasonCode, context.responsibleRole], ['customer_setup_incomplete', 'PM und Design'], state);
+  }
+  // The worker's own start check (worker.js, inactiveCustomer).
+  const own = 'Kunden-Setup noch nicht abgeschlossen: Der RS-Hub-Kunde lkw-teile24 („LKW-Teile24“) für ClickUp-Ordner 901514369501 ist inaktiv. '
+    + 'Kunden im RS Hub aktivieren und die Designbasis freigeben (Kunden-Onboarding), danach den Auftrag neu beauftragen.';
+  assert.equal(blockerContext(own, { owner: 'onboarding' }).responsibleRole, 'PM und Design');
+  // The audience of a winback mail is no customer setup.
+  const winback = 'Der Winback-Flow für inaktive Kunden hat in Klaviyo keinen Trigger; der Kunde ist seit 180 Tagen inaktiv.';
+  assert.equal(blockerContext(winback, { state: 'technisch_blockiert' }).responsibleRole, 'Technik');
+});

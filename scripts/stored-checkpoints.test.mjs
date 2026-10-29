@@ -144,3 +144,23 @@ test('a stored run without readable text never replaces a readable reason of the
   const same = row({ blockerOwner: 'pm' }); applyStoredCheckpoints([same], [saved()]);
   assert.equal(same.blockerOwner, 'pm');
 });
+
+// Fehleraudit 29.10.2026: a newer stored attempt of the bound order keeps the owner its
+// own claim typed; a claim of another Mac or run, or an untyped claim, gives none.
+test('a newer stored attempt takes the owner of its own claim, never of the bound older run', () => {
+  const bound = { id:'clickup:newsletter:86cbgumnn', workflow:'newsletter', status:'blocked', blockerOwner:'pm',
+    blockedReason:'Mail-Paket-Abschluss: Mail-Paket-Abschluss angehalten; vorhandene Belege bleiben erhalten', run:{id:'20261029T104506Z-7541-86cbgumnn@1',jobId:'86cbgumnn@1',taskId:'86cbgumnn'} };
+  const entry = { run_id:'20261029T124506Z-7541-86cbgumnn@1', task_id:'86cbgumnn@1', producer:'macbook-2', owner:null, ready_at:8640000000000000,
+    blocker:{ blockerState:'blockiert', blockerReason:'Mail-Paket-Abschluss: Mail-Paket-Abschluss angehalten; vorhandene Belege bleiben erhalten',
+      reasonCode:'blocker_review_required', responsibleRole:'Zuständigkeit ungeklärt' } };
+  const claim = extra => ({ hub:true, runId:entry.run_id, jobId:entry.task_id, workerId:'macbook-2', state:'final', owner:'technik', ...extra });
+  const own = { ...bound, run:{ ...bound.run } };
+  applyStoredCheckpoints([own],[entry],undefined,[claim()]);
+  assert.equal(own.attemptId, entry.run_id);
+  assert.equal(own.blockerOwner, 'technik', 'the owner the worker typed for this very run');
+  for (const other of [claim({ workerId:'macbook-1' }), claim({ runId:'20261029T124507Z-x-86cbgumnn@1' }), claim({ owner:null })]) {
+    const value = { ...bound, run:{ ...bound.run } };
+    applyStoredCheckpoints([value],[entry],undefined,[other]);
+    assert.equal(value.blockerOwner, undefined, JSON.stringify(other));
+  }
+});
