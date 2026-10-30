@@ -29,7 +29,8 @@ function stalledAnswer(set, sets, jobs, now, { stored = false } = {}) {
       && other.questions.some(q => UNSETTLED.includes(q.status)))) return null;
   const answered = own.filter(job => (job.state === 'queued' || unstarted(job)) && job.sourceVersion === set.sourceVersion
     && set.questions.some(q => q.id === job.questionId && q.status === 'accepted' && q.revision === job.revision))
-    .map(job => job.createdAt);
+    // An unstarted dispatch counts from its first dispatch (Fragen-Hub dispatchedAt) where recorded.
+    .map(job => unstarted(job) && Number.isFinite(job.dispatchedAt) ? Math.max(job.createdAt, job.dispatchedAt) : job.createdAt);
   if (!answered.length || !answered.every(Number.isFinite)) return null;
   const at = Math.max(...answered);
   return now - at >= CONTINUATION_STALL_MS ? at : null;

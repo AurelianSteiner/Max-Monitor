@@ -264,6 +264,9 @@ test('an answer dispatched to the asking run but never stored or started is a vi
   assert.match(late.blockedReason, /nicht übernommen \(Besitzer: Blau\)\. Antwort: Q1: streichen$/);
   const early = held(); applyPmQuestions([early], { sets: [answered], jobs: [job] }, new Map(), { now: answeredAt + 5 * 60000 });
   assert.equal(early.status, 'queued'); assert.equal(early.phase, 'Wartet auf Fortsetzung');
+  // An old answer dispatched just now (e.g. after a question the run decided itself) is no stall yet.
+  const fresh = held(); applyPmQuestions([fresh], { sets: [answered], jobs: [{ ...job, dispatchedAt: answeredAt + 3 * 3600000 - 60000 }] }, new Map(), { now: answeredAt + 3 * 3600000 });
+  assert.equal(fresh.phase, 'Wartet auf Fortsetzung');
   // A stored central checkpoint waits for a free Mac; a continuation run is progress.
   const stored = row('newsletter', { status: 'queued', phase: 'Wartet · Fortsetzung im RS Hub gesichert', workerId: 'macbook-2' });
   applyPmQuestions([stored], { sets: [answered], jobs: [job] }, new Map(), { now: answeredAt + 3 * 3600000 });
