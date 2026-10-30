@@ -15,7 +15,7 @@ import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
 import { applyPmOwners, createPmRoutingReader } from './pm-owner.mjs';
 import taskState from './task-state.cjs';
 import issueScope from './worker-issue-scope.cjs';
-import { checkpointBlocker, applyBlockerContexts, blockerContext, setupOwner, questionWithdrawn, sourceRenewal, BLOCKER_OWNERS } from './blocker-context.mjs';
+import { checkpointBlocker, applyBlockerContexts, blockerContext, setupOwner, questionWithdrawn, sourceRenewal, BLOCKER_OWNERS, SALES_CLOSED_PHASE } from './blocker-context.mjs';
 import { createStatusAudit, saveStatusAudit } from './status-reconciliation.mjs';
 
 const require = createRequire(import.meta.url);
@@ -1685,14 +1685,23 @@ export async function readLocalSales(directory, now = Date.now()) {
       const typedCodes = present([job.reason_code, job.reasonCode]);
       const salesOwner = status === 'blocked' && (typedOwners.length ? typedOwners.every(value => value === 'sales')
         : typedCodes.length > 0 && typedCodes.every(value => value === 'sales_shop_unavailable'));
+      // Till, 30.10.2026: a shop that stays unusable ends the Sales order without production. The
+      // worker writes done with outcome no_production; older Macs left the typed block. Both are
+      // finished, never a blocker (blocker-context SALES_CLOSED_PHASE).
+      const noProduction = salesOwner || status === 'completed' && job.outcome === 'no_production'
+        && present([job.blocker_owner, job.blockerOwner]).every(value => value === 'sales');
+      const closedTime = noProduction ? [job.completed_at, job.updated_at, seen].map(value => typeof value === 'number' ? value : Date.parse(value))
+        .find(Number.isFinite) : finishedTime;
       // Job state is authoritative. A missing heartbeat must never remove accepted work.
       const awaitingWorker = ['queued', 'running'].includes(status) && now - seen > 30 * 60000;
       const progress = salesProgress(job);
-      rows.push({ id: `sales:${name}`, title: `Sales · ${url.hostname}`, url: url.href, workflow: 'sales', status,
+      rows.push({ id: `sales:${name}`, title: `Sales · ${url.hostname}`, url: url.href, workflow: 'sales', status: noProduction ? 'completed' : status,
         sourceStatus: job.status, workerId: job.worker, attemptId: displayText(job.owner, 200),
-        phase: paused ? 'Pausiert · wartet außerhalb der Worker-Plätze' : awaitingWorker ? 'Worker-Meldung ausstehend' : phases[job.status],
-        progress: progress.progress, step: paused || awaitingWorker ? undefined : progress.step,
-        ...(blockedReason ? { blockedReason } : {}), ...(salesOwner ? { blockerOwner: 'sales' } : {}), ...(status === 'completed' ? { ...(Number.isFinite(finishedTime) ? { completedAt: new Date(finishedTime).toISOString(), completionSource: 'sales' } : {}) } : {}),
+        phase: noProduction ? SALES_CLOSED_PHASE : paused ? 'Pausiert · wartet außerhalb der Worker-Plätze' : awaitingWorker ? 'Worker-Meldung ausstehend' : phases[job.status],
+        ...(noProduction ? { reasonCode: 'sales_shop_unavailable', responsibleRole: 'Sales', blockerReason: displayText(job.reason, 500, SALES_CLOSED_PHASE) }
+          : { progress: progress.progress, step: paused || awaitingWorker ? undefined : progress.step }),
+        ...(blockedReason && !noProduction ? { blockedReason } : {}), ...(salesOwner && !noProduction ? { blockerOwner: 'sales' } : {}),
+        ...(status === 'completed' || noProduction ? { ...(Number.isFinite(closedTime) ? { completedAt: new Date(closedTime).toISOString(), completionSource: 'sales' } : {}) } : {}),
         updatedAt: new Date(seen).toISOString() });
     } catch {
       throw new Error(`Sales-Job ${name} konnte nicht vollständig gelesen werden; bisheriger Queue-Stand bleibt erhalten.`);
@@ -1783,6 +1792,11 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
       // replaces a readable reason of the same commission.
       const readable = displayText(row.blockedReason || row.blockerReason, 500);
       if (entry.blocker && !(entry.blocker.reasonCode === 'blocker_context_missing' && readable)) Object.assign(row, entry.blocker);
+      // Till, 30.10.2026 (Arbeitsbedarf24 86cb6tfay): a held renewal promised an automatic fresh start
+      // that the central queue never schedules. The PM has nothing to decide; Technik owns the stall.
+      if (sourceRenewal(entry.blocker?.blockerReason || entry.blocker?.blockedReason || '')) Object.assign(row, {
+        reasonCode: 'technical_blocker', responsibleRole: 'Technik', blockerKind: 'technical_failure', blockerOwner: 'technik',
+        nextStep: 'Automatischen Neustart nach dem Briefingwechsel prüfen: Die zentrale Fortsetzung ist gehalten statt geplant.' });
       const question = /PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')
         && entry.blocker?.blockerState !== 'technisch_blockiert' && entry.blocker?.blockerKind !== 'technical_failure';
       if (!question) row.status = 'blocked';

@@ -178,4 +178,13 @@ test('a scheduled renewal after a changed brief waits instead of showing a block
   const held = row({ workflow:'newsletter', status:'blocked', run:{id:'run-a',jobId:'task@1',taskId:'task'} });
   applyStoredCheckpoints([held],[saved({task_id:'task@1',blocker})]);
   assert.equal(held.status,'blocked');
+  // Till, 30.10.2026 (Arbeitsbedarf24 86cb6tfay): the held renewal is no PM decision, also when the
+  // stored owner still names the PM of the withdrawn question; Technik owns the stall.
+  const pm = { ...blocker, reasonCode:'pm_decision_pending', responsibleRole:'PM', blockerKind:'waiting_human',
+    nextStep:'Entscheidung im Rückfragen-Thread bzw. in ClickUp treffen; danach setzt der Worker fort.' };
+  const stalled = row({ workflow:'newsletter', status:'blocked', blockerOwner:'pm', run:{id:'run-a',jobId:'task@1',taskId:'task'} });
+  applyStoredCheckpoints([stalled],[saved({task_id:'task@1',blocker:pm})]);
+  assert.deepEqual([stalled.status,stalled.reasonCode,stalled.responsibleRole,stalled.blockerKind,stalled.blockerOwner],
+    ['blocked','technical_blocker','Technik','technical_failure','technik']);
+  assert.match(stalled.nextStep,/Neustart nach dem Briefingwechsel/);
 });

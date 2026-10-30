@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { readLocalSales, salesProgress, collectSnapshot, syncOnce } from './newsletter-monitor-bridge.mjs';
+import { SALES_CLOSED_PHASE } from './blocker-context.mjs';
 
 const require = createRequire(import.meta.url);
 const { createFleetStore } = require('../team-server/fleet.js');
@@ -229,8 +230,27 @@ test('a blocked Sales job typed by the worker carries the Sales owner into the q
     job({ ...shop, reason_code: 'sales_shop_unavailable', reasonCode: 'technical_step_failed' }),
     job({ ...shop, blocker_owner: 'sales', reason_code: 'technical_step_failed' })]);
   const rows = (await readLocalSales(directory, now)).sort((a, b) => a.id.localeCompare(b.id));
-  assert.deepEqual(rows.map(row => row.blockerOwner), ['sales', 'sales', 'sales', undefined, undefined, undefined,
-    undefined, undefined, undefined, 'sales']);
+  // Till, 30.10.2026: a typed Sales finding is a finished order without production, never a blocker.
+  const closed = [true, true, true, false, false, false, false, false, false, true];
+  assert.deepEqual(rows.map(row => row.status), closed.map((value, index) => value ? 'completed' : index === 5 ? 'running' : 'blocked'));
+  assert.deepEqual(rows.map(row => row.phase === SALES_CLOSED_PHASE), closed);
+  assert.deepEqual(rows.map(row => row.reasonCode), closed.map(value => value ? 'sales_shop_unavailable' : undefined),
+    'only the closed case is typed here; the bridge derives the other contexts itself');
+  assert.equal(rows.some(row => row.blockerOwner || (row.status === 'completed' && row.blockedReason)), false);
   assert.deepEqual(rows.map(row => row.attemptId), rows.map(() => 'e5908a37-6225-4918-adb6-90e8dceba2c7'));
-  assert.equal(rows.some(row => row.reasonCode), false, 'the bridge derives the context itself');
+});
+
+// Till, 30.10.2026 (petiteannee.ch NXDOMAIN, angharadvashe.com HTTP 401): the worker ends an unusable
+// shop as done with outcome no_production; the queue shows it finished, with its reason and owner.
+test('a Sales job finished without production shows as completed, not as blocked or delivered', async t => {
+  const reason = 'Shop nicht erreichbar: www.petiteannee.ch ist im DNS nicht vorhanden (NXDOMAIN).';
+  const directory = await fixture(t, [
+    job({ status: 'done', outcome: 'no_production', reason, blocker_owner: 'sales', reason_code: 'sales_shop_unavailable', files: [], completed_at: now - 60000, updated_at: now - 60000 }),
+    job({ status: 'done', files: [], updated_at: now - 30000 })]);
+  const [closed, delivered] = (await readLocalSales(directory, now)).sort((a, b) => a.id.localeCompare(b.id));
+  assert.deepEqual([closed.status, closed.sourceStatus, closed.phase, closed.reasonCode, closed.responsibleRole, closed.blockerReason],
+    ['completed', 'done', SALES_CLOSED_PHASE, 'sales_shop_unavailable', 'Sales', reason]);
+  assert.equal(closed.completedAt, new Date(now - 60000).toISOString());
+  assert.equal(closed.blockedReason, undefined);
+  assert.deepEqual([delivered.status, delivered.phase, delivered.reasonCode], ['completed', 'Fertig', undefined]);
 });
