@@ -164,3 +164,18 @@ test('a newer stored attempt takes the owner of its own claim, never of the boun
     assert.equal(value.blockerOwner, undefined, JSON.stringify(other));
   }
 });
+
+// Till, 29.10.2026 (Maxton 12451cu7mqq): a changed brief is no blocker; the worker's renewal waits.
+test('a scheduled renewal after a changed brief waits instead of showing a blocker nobody owns', () => {
+  const reason = 'Aufgabenquelle geändert, offene PM-Rückfrage zurückgezogen: Die Aufgabenquelle wurde geändert (Briefingtext). Der Auftrag startet automatisch frisch auf der aktuellen Quelle; der PM muss nichts tun (Quellwechsel 1 von 3).';
+  const blocker = { blockerState:'blockiert', blockerReason:reason, reasonCode:'blocker_review_required', responsibleRole:'Zuständigkeit ungeklärt' };
+  const value = row({ workflow:'newsletter', status:'blocked', run:{id:'run-a',jobId:'task@1',taskId:'task'} });
+  applyStoredCheckpoints([value],[saved({task_id:'task@1',ready_at:Date.now()+300000,blocker})]);
+  assert.equal(value.status,'queued');
+  assert.equal(value.phase,'Wartet · Briefing geändert, Neustart auf aktueller Quelle');
+  for (const field of ['blockedReason','blockerReason','reasonCode','responsibleRole']) assert.equal(value[field],undefined,field);
+  // Held (not scheduled) it stays visible like any saved failure.
+  const held = row({ workflow:'newsletter', status:'blocked', run:{id:'run-a',jobId:'task@1',taskId:'task'} });
+  applyStoredCheckpoints([held],[saved({task_id:'task@1',blocker})]);
+  assert.equal(held.status,'blocked');
+});

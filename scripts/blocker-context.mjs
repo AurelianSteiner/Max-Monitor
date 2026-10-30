@@ -98,6 +98,11 @@ const DESIGN_WAIT_STEP = 'Designsystem bereitmachen und Designbasis bzw. Produkt
 // rendering (HEAD); a text quoting an earlier attempt's withdrawal stays as it is.
 const QUESTION_WITHDRAWN = /^(?:Gesicherter Befund:\s*)?Offene PM-Rückfrage zurückgezogen:/i;
 export const questionWithdrawn = text => QUESTION_WITHDRAWN.test(clean(text, 4000));
+// Till, 29.10.2026 (worker src/source-renewal.js): the worker's fixed prefix of a question a
+// changed brief withdrew. Nobody has to act: the order continues on the current source by
+// itself through the central queue (applyStoredCheckpoints keeps its scheduled start waiting).
+const SOURCE_RENEWAL = /^(?:Gesicherter Befund:\s*)?Aufgabenquelle geändert, offene PM-Rückfrage zurückgezogen:/i;
+export const sourceRenewal = text => SOURCE_RENEWAL.test(clean(text, 4000));
 // Checked access or setup in the "Stand:" section never decides the cause.
 const causeOf = reason => reason.split(/(?:^|\s)\**Stand\**\s*:/)[0];
 

@@ -15,7 +15,7 @@ import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
 import { applyPmOwners, createPmRoutingReader } from './pm-owner.mjs';
 import taskState from './task-state.cjs';
 import issueScope from './worker-issue-scope.cjs';
-import { checkpointBlocker, applyBlockerContexts, blockerContext, setupOwner, questionWithdrawn, BLOCKER_OWNERS } from './blocker-context.mjs';
+import { checkpointBlocker, applyBlockerContexts, blockerContext, setupOwner, questionWithdrawn, sourceRenewal, BLOCKER_OWNERS } from './blocker-context.mjs';
 import { createStatusAudit, saveStatusAudit } from './status-reconciliation.mjs';
 
 const require = createRequire(import.meta.url);
@@ -1746,9 +1746,13 @@ export async function readStoredCheckpoints(localHub) {
 export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.filter(row => row.run).map(row => [row.id, row.run])), claims = []) {
   // A retry time schedules work; it never resolves the saved failure. Only a
   // newer active attempt, successful result or bound PM answer can replace it.
-  const failed = entry => entry.ready_at === 8640000000000000
+  // Till, 29.10.2026: a run a changed brief renewed is no failure; its scheduled fresh
+  // start on the current source waits (worker src/source-renewal.js). A held one stays.
+  const renewing = entry => Number.isFinite(entry.ready_at) && entry.ready_at < 8640000000000000
+    && sourceRenewal(entry.blocker?.blockerReason || entry.blocker?.blockedReason || '');
+  const failed = entry => !renewing(entry) && (entry.ready_at === 8640000000000000
     || ['blockiert', 'technisch_blockiert', 'zeitlimit', 'unklar'].includes(entry.blocker?.blockerState)
-    || entry.blocker?.reasonCode === 'blocker_context_unreadable';
+    || entry.blocker?.reasonCode === 'blocker_context_unreadable');
   for (const row of rows) {
     if (row.status === 'completed') continue;
     const run = bindings.get(row.id);
@@ -1785,7 +1789,7 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
       if (!question) row.phase = 'Blockiert · Fortschritt im RS Hub gesichert';
     } else {
       row.status = 'queued';
-      row.phase = 'Wartet · Fortsetzung im RS Hub gesichert';
+      row.phase = renewing(entry) ? 'Wartet · Briefing geändert, Neustart auf aktueller Quelle' : 'Wartet · Fortsetzung im RS Hub gesichert';
       for (const field of ['blockedReason', 'errorUrl', 'blockerReason', 'reasonCode', 'responsibleRole', 'blockerKind', 'nextStep', 'blockerOwner']) delete row[field];
     }
   }
