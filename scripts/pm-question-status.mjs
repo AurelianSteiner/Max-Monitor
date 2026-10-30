@@ -18,12 +18,16 @@ const UNSETTLED = ['open', 'waiting', 'conflict', 'failed'];
 // Answer time of a complete set whose saved answer is still unclaimed after
 // CONTINUATION_STALL_MS; the newest answer starts the clock. A started claim or
 // dispatch is progress, an unknown answer time never escalates.
-function stalledAnswer(set, sets, jobs, now) {
+// Fehleraudit 30.10.2026 (Gartenfachmarkt24 86c91vafx): a dispatch still bound to the asking
+// run, without a stored checkpoint (stored) and without completion, is no progress: its
+// continuation was neither published nor started (the checkpoint exceeded the safe size).
+function stalledAnswer(set, sets, jobs, now, { stored = false } = {}) {
   const own = jobs.filter(job => job.setId === set.id);
-  if (own.some(job => ['running', 'uncertain', 'dispatched'].includes(job.state))
+  const unstarted = job => job.state === 'dispatched' && !stored && !set.completion && job.dispatchRunId === (set.headRunId || set.runId);
+  if (own.some(job => ['running', 'uncertain'].includes(job.state) || job.state === 'dispatched' && !unstarted(job))
     || sets.some(other => (other.id === set.id || other.mode === set.mode && !other.archivedAt && other.taskId === set.taskId)
       && other.questions.some(q => UNSETTLED.includes(q.status)))) return null;
-  const answered = own.filter(job => job.state === 'queued' && job.sourceVersion === set.sourceVersion
+  const answered = own.filter(job => (job.state === 'queued' || unstarted(job)) && job.sourceVersion === set.sourceVersion
     && set.questions.some(q => q.id === job.questionId && q.status === 'accepted' && q.revision === job.revision))
     .map(job => job.createdAt);
   if (!answered.length || !answered.every(Number.isFinite)) return null;
@@ -45,7 +49,10 @@ export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}, bindings =
   for (const row of rows) {
     const run = row.run || bindings.get(row.id);
     const storedContinuation = row.status === 'queued' && row.phase === 'Wartet · Fortsetzung im RS Hub gesichert';
-    if ((!['blocked', 'failed'].includes(row.status) && !storedContinuation) || !run || (row.attemptId && row.attemptId !== run.id)) continue;
+    // Fehleraudit 30.10.2026 (Gartenfachmarkt24 86c91vafx): a queued row whose own claim names
+    // the PM but which has no phase (no stored checkpoint) waits on its PM journal as well.
+    const pmHeld = row.status === 'queued' && !row.phase && row.blockerOwner === 'pm';
+    if ((!['blocked', 'failed'].includes(row.status) && !storedContinuation && !pmHeld) || !run || (row.attemptId && row.attemptId !== run.id)) continue;
     const stage = row.workflow === 'upload' ? 'klaviyo' : row.workflow === 'correction' ? 'korrektur' : row.workflow;
     const matches = sets.filter(set => set.mode === 'production' && !set.archivedAt && set.stage === stage
       && set.questions.some(q => ['open', 'waiting', 'accepted'].includes(q.status) || q.status === 'replaced' && set.sourceChange?.reason)
@@ -81,7 +88,7 @@ export function applyPmQuestions(rows, { sets = [], jobs = [] } = {}, bindings =
       row.updatedAt = new Date(Math.max(Date.parse(row.updatedAt), Number(sourceChange.at) || 0)).toISOString();
       continue;
     }
-    const stalledAt = !open.length && stalledAnswer(set, sets, jobs, now);
+    const stalledAt = !open.length && stalledAnswer(set, sets, jobs, now, { stored: /im RS Hub gesichert$/.test(row.phase || '') });
     if (stalledAt) {
       const owner = workerName(set.workerId);
       const saved = set.questions.filter(q => q.answer).map(q => `${q.id}: ${q.answer.value}`).join(' · ');

@@ -233,18 +233,47 @@ test('an old answer still waiting for a person or already taken over is no stall
   const conflict = row('newsletter');
   applyPmQuestions([conflict], { sets: [set('newsletter', { questions: [accepted, { id: 'Q2', status: 'conflict', revision: 2 }] })], jobs: [job] }, new Map(), { now });
   assert.equal(conflict.reasonCode, 'continuation_pending');
-  // A started claim or dispatch is progress of the continuation itself.
-  for (const state of ['running', 'uncertain', 'dispatched']) {
-    const claimed = row('newsletter');
+  // A started claim or dispatch is progress of the continuation itself: a dispatch to its own
+  // continuation run, or one to the asking run whose checkpoint is stored in the RS Hub.
+  for (const [state, dispatchRunId, phase] of [['running', 'run1'], ['uncertain', 'run1'], ['dispatched', 'run2'],
+    ['dispatched', 'run1', 'Blockiert · Fortschritt im RS Hub gesichert']]) {
+    const claimed = row('newsletter', phase ? { phase } : {});
     applyPmQuestions([claimed], { sets: [set('newsletter', { questions: [accepted, { ...accepted, id: 'Q2' }] })],
-      jobs: [job, { ...job, questionId: 'Q2', state, runId: 'run1', dispatchRunId: 'run1' }] }, new Map(), { now });
-    assert.equal(claimed.reasonCode, 'continuation_pending', state);
+      jobs: [job, { ...job, questionId: 'Q2', state, runId: 'run1', dispatchRunId }] }, new Map(), { now });
+    assert.equal(claimed.reasonCode, 'continuation_pending', `${state} ${dispatchRunId}`);
   }
   // A test or archived journal of the same order never holds a production answer back.
   const unrelated = row('newsletter');
   applyPmQuestions([unrelated], { sets: [set('newsletter', { questions: [accepted] }), set('newsletter', { id: 's2', mode: 'test', runId: 'x', questions: [{ id: 'Q9', status: 'open', revision: 1 }] }),
     set('newsletter', { id: 's3', archivedAt: 1, runId: 'y', questions: [{ id: 'Q8', status: 'open', revision: 1 }] })], jobs: [job] }, new Map(), { now });
   assert.equal(unrelated.reasonCode, 'continuation_stalled'); assert.match(unrelated.blockedReason, /Besitzer: mac1\)/);
+});
+
+// Fehleraudit 30.10.2026 (Gartenfachmarkt24 86c91vafx): the PM answered „streichen“ at 22:14;
+// the answer was dispatched for the central queue, but the 537 MB checkpoint was never
+// published. The queued row without phase (owner PM) showed no reason at all.
+test('an answer dispatched to the asking run but never stored or started is a visible stall', () => {
+  const answeredAt = Date.parse('2026-10-29T21:14:53.762Z');
+  const answered = set('newsletter', { workerId: 'macbook-2', runId: 'run1', headRunId: 'run1',
+    questions: [{ id: 'Q1', title: 'Produkt 3 streichen?', status: 'accepted', revision: 1, answer: { value: 'streichen' } }] });
+  const job = { setId: 's1', questionId: 'Q1', sourceVersion: 'v1', revision: 1, state: 'dispatched', runId: 'run1', dispatchRunId: 'run1', createdAt: answeredAt };
+  const held = () => row('newsletter', { status: 'queued', workerId: 'macbook-2', blockerOwner: 'pm' });
+  const late = held(); applyPmQuestions([late], { sets: [answered], jobs: [job] }, new Map(), { now: answeredAt + 3 * 3600000 });
+  assert.equal(late.status, 'blocked'); assert.equal(late.phase, 'Blockiert · PM-Antwort nicht übernommen');
+  assert.equal(late.reasonCode, 'continuation_stalled'); assert.equal(late.responsibleRole, 'Technik');
+  assert.match(late.blockedReason, /nicht übernommen \(Besitzer: Blau\)\. Antwort: Q1: streichen$/);
+  const early = held(); applyPmQuestions([early], { sets: [answered], jobs: [job] }, new Map(), { now: answeredAt + 5 * 60000 });
+  assert.equal(early.status, 'queued'); assert.equal(early.phase, 'Wartet auf Fortsetzung');
+  // A stored central checkpoint waits for a free Mac; a continuation run is progress.
+  const stored = row('newsletter', { status: 'queued', phase: 'Wartet · Fortsetzung im RS Hub gesichert', workerId: 'macbook-2' });
+  applyPmQuestions([stored], { sets: [answered], jobs: [job] }, new Map(), { now: answeredAt + 3 * 3600000 });
+  assert.equal(stored.reasonCode, 'continuation_pending');
+  const continued = held(); applyPmQuestions([continued], { sets: [answered], jobs: [{ ...job, dispatchRunId: 'run2' }] }, new Map(), { now: answeredAt + 3 * 3600000 });
+  assert.equal(continued.status, 'queued'); assert.equal(continued.reasonCode, undefined, 'a row without own question binding stays as it is');
+  // Only a row the PM owns; an ordinary queued row stays untouched.
+  const plain = row('newsletter', { status: 'queued', workerId: 'macbook-2' });
+  applyPmQuestions([plain], { sets: [answered], jobs: [job] }, new Map(), { now: answeredAt + 3 * 3600000 });
+  assert.equal(plain.status, 'queued'); assert.equal(plain.reasonCode, undefined);
 });
 
 test('archived journals cannot replace an active decision or revive a retired question', () => {
