@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from quota_routing import routing_inputs, valid_quota_slots
 
 PACING = Path(__file__).resolve().parent.parent / 'team-server/quota-pacing.js'
@@ -140,6 +141,58 @@ class RoutingTest(unittest.TestCase):
             self.assertNotIn('secret', json.dumps(result))
             self.assertEqual(db.execute('SELECT count(*) FROM reservations').fetchone()[0], 5)
             db.close()
+
+    # Fehleraudit 30.10.2026 (infra P1 f): the Hub register keeps released rows for 67 days
+    # (76 982 rows on 30.10., 71 280 of them released knowledge reservations), so the bounded
+    # read of all rows made routing unavailable for every Mac since about 24.10.
+    def _register(self, folder, docs):
+        hub = Path(folder)
+        register = hub / 'state/worker-reservations'
+        register.mkdir(parents=True)
+        (register / 'enabled').touch()
+        db = sqlite3.connect(register / 'claims.sqlite')
+        db.execute('CREATE TABLE reservations(run_id TEXT PRIMARY KEY, doc TEXT NOT NULL)')
+        db.executemany('INSERT INTO reservations VALUES(?,?)', ((str(index), json.dumps(doc)) for index, doc in enumerate(docs)))
+        db.commit()
+        db.close()
+        return hub
+
+    def test_released_history_beyond_the_bound_keeps_the_open_jobs_available(self):
+        released = [{'worker': 'mac-f121ae17', 'taskId': f'knowledge:kunde-{index}:figma', 'state': 'released'} for index in range(10005)]
+        open_rows = [{'worker': 'macbook-1', 'taskId': 'abc-klaviyo', 'state': 'running'},
+                     {'worker': 'pink', 'taskId': 'korrektur-cu-def@1-intern', 'state': 'claiming'},
+                     {'worker': 'pink', 'taskId': 'paused', 'state': 'running', 'paused': True}]
+        with tempfile.TemporaryDirectory() as folder:
+            result = routing_inputs(self._register(folder, released[:5000] + open_rows + released[5000:]))
+            self.assertTrue(result['available'])
+            self.assertEqual(result['jobs'], [{'worker': 'macbook-1', 'kind': 'upload'}, {'worker': 'pink', 'kind': 'correction'}])
+        # The bound still applies to the open rows themselves.
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertFalse(routing_inputs(self._register(folder, [open_rows[0]] * 10001))['available'])
+
+    def test_without_sqlite_json_functions_the_python_filter_decides_within_the_bound(self):
+        connect = sqlite3.connect
+
+        class NoJson:
+            def __init__(self, *args, **kwargs):
+                self.db = connect(*args, **kwargs)
+
+            def execute(self, sql, *args):
+                if 'json_extract' in sql:
+                    raise sqlite3.OperationalError('no such function: json_extract')
+                return self.db.execute(sql, *args)
+
+            def close(self):
+                self.db.close()
+
+        rows = [{'worker': 'macbook-1', 'taskId': 'abc-klaviyo', 'state': 'running'}, {'worker': 'macbook-1', 'taskId': 'done', 'state': 'released'}]
+        with tempfile.TemporaryDirectory() as small, tempfile.TemporaryDirectory() as large:
+            hubs = self._register(small, rows), self._register(large, rows + rows[1:] * 10000)
+            with mock.patch('quota_routing.sqlite3.connect', NoJson):
+                result = routing_inputs(hubs[0])
+                self.assertTrue(result['available'])
+                self.assertEqual(result['jobs'], [{'worker': 'macbook-1', 'kind': 'upload'}])
+                self.assertFalse(routing_inputs(hubs[1])['available'])
 
     def test_valid_quota_slots_are_forwarded_and_invalid_ones_dropped_without_the_heartbeat(self):
         with tempfile.TemporaryDirectory() as folder:

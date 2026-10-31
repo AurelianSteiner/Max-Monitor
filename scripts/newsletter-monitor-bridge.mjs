@@ -784,9 +784,12 @@ export function buildBlockedErrors(messages, channelId, tasks = [], { manualUplo
     const company = displayText(slackText(value?.customer_name || text.split('\n')[0].replace(/[*`]/g, '').split(' · ').slice(1).join(' · ')), 200);
     const id = `slack-error:${channelId}:${message.ts}`;
     const updatedAt = new Date(time).toISOString();
+    // Fehleraudit 30.10.2026 (pm-zuordnung P1, artifex 12451cu8w7p): an undelivered PM
+    // question is Technik's until it is registered, also when the worker typed the run pm.
     const context = order ? blockerContext(diagnosis, { state: value.state,
       owner: issue?.stage === 'filestage_zuordnung' ? 'stammdaten'
-        : issue?.scope === 'run' ? 'technik' : BLOCKER_OWNERS.has(value.owner) ? value.owner : OWNER_OF_GRUND[value.grund] }) : {};
+        : issue?.scope === 'run' || value.grund === 'rueckfrage_nicht_zugestellt' ? 'technik'
+          : BLOCKER_OWNERS.has(value.owner) ? value.owner : OWNER_OF_GRUND[value.grund] }) : {};
     if (!(kind === 'upload' && manualUploadIds.has(taskId))) {
       rows.set(id, { ...own(source), ...context, id, status: 'blocked', workflow,
         title: displayText(slackText(taskLink?.[2] || source?.title || (issue?.scope === 'worker' ? `Worker · ${issue.workerId} · ${issue.stage}`
@@ -810,6 +813,21 @@ export function buildBlockedErrors(messages, channelId, tasks = [], { manualUplo
     }
   }
   return [...rows.values()];
+}
+
+// Fehleraudit 30.10.2026 (pm-zuordnung P1): runs whose open #ai-fehler copy says their PM
+// question is not delivered (worker grund rueckfrage_nicht_zugestellt). The Fragen-Hub has
+// no thread for them yet, so their ❓ is no PM question (applyBlockerContexts).
+export function undeliveredQuestionAttempts(messages) {
+  const attempts = new Set();
+  for (const message of messages) {
+    if (message.thread_ts && message.thread_ts !== message.ts) continue;
+    const value = message.metadata?.event_type === 'ai_newsletter_fehler' ? message.metadata.event_payload : null;
+    const run = value?.run_id;
+    if (value?.kind === 'lauf' && value.grund === 'rueckfrage_nicht_zugestellt' && value.state !== WITHDRAWN_RUN_STATE
+      && typeof run === 'string' && run.length <= MAX_ATTEMPT_ID && /^[A-Za-z0-9_.@:-]+$/.test(run)) attempts.add(run);
+  }
+  return attempts;
 }
 
 function taskDate(value, fallback) {
@@ -2063,7 +2081,7 @@ export async function collectSnapshot({ config, hubFetch, workflows = DEFAULT_WO
   applyPmQuestions(queue, questionResult.value, bindings, { now });
   queue.push(...salesResult.value);
   applyBlockerGrace(queue, previousTasks, now, { workflows, admission });
-  applyBlockerContexts(queue, tasks, now);
+  applyBlockerContexts(queue, tasks, now, { undeliveredAttempts: undeliveredQuestionAttempts(errorMessages) });
   await applyPmOwners(queue, tasks, { questions: questionResult.value, routing: pmRouting, now });
   for (let index = 0; index < queue.length; index++) queue[index] = taskState.reconcileTask(queue[index]);
   let runKinds = [];

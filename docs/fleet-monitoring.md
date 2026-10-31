@@ -240,8 +240,14 @@ Hub/ClickUp)“, „PM-Entscheidung erforderlich“, „PM entscheidet“ und An
 Aufgabentitel → „PM“. Eine während der Vorbereitung geänderte Aufgabenquelle ist
 Technik (Till, 19.10.2026); eine Änderung nach der PM-Antwort ist PM-Arbeit, außer es
 änderten sich nur Klaviyo- oder Filestage-Linkfelder. Eine offene PM-Rückfrage ist
-immer PM. Eine vom Worker zurückgezogene Rückfrage (Grund beginnt mit „Offene
-PM-Rückfrage zurückgezogen:“) ist keine offene Entscheidung, sondern
+PM, solange sie zugestellt ist. Bis zur Registrierung im Fragen-Hub ist sie eine
+technische Blockade (Fehleraudit 30.10.2026, Entscheidung im Auftrag von Till; artifex
+12451cu8w7p): Hat der Lauf den Owner `technik` oder steht für genau diesen Versuch
+(`run_id`) eine offene `#ai-fehler`-Kopie mit `grund` `rueckfrage_nicht_zugestellt`,
+zeigt die Brücke „Blockiert · PM-Rückfrage nicht zugestellt“, Zuständigkeit Technik,
+nächster Schritt „PM-Frage ist nicht im Fragen-Hub registriert; Registrierung technisch
+reparieren – der PM sieht noch keine Frage.“ Eine vom Worker zurückgezogene
+Rückfrage (Grund beginnt mit „Offene PM-Rückfrage zurückgezogen:“) ist keine offene Entscheidung, sondern
 `pm_source_changed` (PM, neu beauftragen); ein früheres `pm_decision_pending`
 desselben Versuchs bleibt nicht stehen (Fehleraudit 26.10.2026). Bei PM, Kunden-Setup
 und Stammdaten gilt der erste Punkt von „Nächste Schritte:“ bzw. „Nächster Schritt:“
@@ -257,8 +263,9 @@ nicht zugeordnet“).
 Eine `#ai-fehler`-Zeile übernimmt keine Blockerfelder ihrer Queue-Zeile. Ihre
 Zuständigkeit kommt aus `owner` oder einem eindeutigen `grund` (`stammdaten`;
 `technisch`, `erschoepft` und `rueckfrage_nicht_zugestellt` als Technik), sonst aus
-dem Text; `eingabe` und `mensch` entscheidet der Text. Ein im RS Hub gesicherter
-Lauf ohne lesbaren Grund ersetzt keinen lesbaren Grund derselben Aufgabe.
+dem Text; `eingabe` und `mensch` entscheidet der Text. `rueckfrage_nicht_zugestellt`
+ist auch gegen einen `owner` `pm` Technik (Fehleraudit 30.10.2026). Ein im RS Hub
+gesicherter Lauf ohne lesbaren Grund ersetzt keinen lesbaren Grund derselben Aufgabe.
 
 Zwischenzustände sind keine Blockade ohne Grund: Eine frische, nicht pausierte
 Live-Reservierung eines neuen Laufs geht dem Tag „· blockiert“ des Vorlaufs vor

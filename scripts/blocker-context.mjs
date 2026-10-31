@@ -259,7 +259,7 @@ export function checkpointBlocker(entry) {
 // Codes a typed worker owner may replace: they name no owner of their own.
 const UNOWNED = new Set(['blocker_review_required', 'blocker_context_missing', 'technical_blocker']);
 const HEAD = 'Gesicherter Befund: ';
-export function applyBlockerContexts(rows, tasks, now = Date.now()) {
+export function applyBlockerContexts(rows, tasks, now = Date.now(), { undeliveredAttempts = new Set() } = {}) {
   const byId = new Map(tasks.map(t => [String(t.id), t]));
   for (const row of rows) {
     if (row.status !== 'blocked') continue;
@@ -275,8 +275,15 @@ export function applyBlockerContexts(rows, tasks, now = Date.now()) {
     // phase): a ❓ of a setup gap or missing master data keeps that owner and step.
     const setup = row.phase === 'PM-Rückfrage offen' && setupOwner(row.blockerOwner, reason);
     if (setup) row.phase = SETUP_PHASE[setup];
+    // Fehleraudit 30.10.2026 (pm-zuordnung P1, artifex 12451cu8w7p): a question the Fragen-Hub
+    // refused or never registered (owner technik, or an open copy „PM-Rückfrage nicht
+    // zugestellt“ of this attempt) has no thread; the PM sees nothing yet.
+    if (row.phase === 'PM-Rückfrage offen' && (row.blockerOwner === 'technik' || undeliveredAttempts.has(row.attemptId))) {
+      row.phase = 'Blockiert · PM-Rückfrage nicht zugestellt';
+      Object.assign(row, { ...OWNER_CONTEXT.technik, blockerReason: clean(reason) || 'PM-Rückfrage nicht zugestellt',
+        nextStep: 'PM-Frage ist nicht im Fragen-Hub registriert; Registrierung technisch reparieren – der PM sieht noch keine Frage.' });
     // An open PM question is a PM decision, also against a checkpoint code (Fehleraudit 19.10.2026).
-    if (row.phase === 'PM-Rückfrage offen') {
+    } else if (row.phase === 'PM-Rückfrage offen') {
       Object.assign(row, { ...OWNER_CONTEXT.pm, nextStep: row.reasonCode === 'pm_decision_pending' && row.nextStep || OWNER_CONTEXT.pm.nextStep,
         blockerReason: clean(reason) || 'PM-Rückfrage offen' });
     // A workflow name proves no technical cause. Preserve unknown ownership

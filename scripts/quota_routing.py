@@ -118,7 +118,16 @@ def routing_inputs(hub=Path('/opt/rs-hub')):
             return {'available': False, 'fleet': fleet}
         db = sqlite3.connect((register / 'claims.sqlite').as_uri() + '?mode=ro', uri=True, timeout=2)
         try:
-            for index, row in enumerate(db.execute('SELECT doc FROM reservations LIMIT 10001')):
+            # Fehleraudit 30.10.2026 (infra P1 f): released rows stay 67 days in the
+            # register (about 77 000 on 30.10.); read and bound only the open ones.
+            # Without SQLite's JSON functions the Python filter below decides.
+            try:
+                rows = db.execute("SELECT doc FROM reservations WHERE json_extract(doc, '$.state') IN ('claiming', 'running') LIMIT 10001")
+            except sqlite3.OperationalError as error:
+                if 'no such function' not in str(error):
+                    raise
+                rows = db.execute('SELECT doc FROM reservations LIMIT 10001')
+            for index, row in enumerate(rows):
                 if index >= 10000:
                     return {'available': False, 'fleet': fleet}
                 doc = json.loads(row[0])

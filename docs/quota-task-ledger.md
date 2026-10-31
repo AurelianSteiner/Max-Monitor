@@ -480,7 +480,11 @@ höchstens zwölf Läufe je Platz, Zeiten im ISO-Format); ein ungültiges Feld w
 verworfen, die Betriebsmeldung bleibt. Meldungen über 64 KiB werden weiterhin
 übersprungen. Der begrenzte Snapshot wird mit der Verbrauchsübersicht etwa
 minütlich erneuert. Fehlt das Register, gibt es keine scheinbar leere Last und
-keine Empfehlung.
+keine Empfehlung. Aus dem Register liest `quota_routing.py` nur offene Zeilen
+(`claiming`/`running`, per `json_extract` in SQLite, höchstens 10 000); beendete
+Zeilen bleiben dort 67 Tage stehen und machten die Vorschau seit etwa 24.10.2026 für
+alle Macs „nicht verfügbar“ (Fehleraudit 30.10.2026). Ohne JSON-Funktionen in SQLite
+filtert Python wie bisher innerhalb derselben Grenze.
 
 SQLite-WAL-Leser dürfen im Registerverzeichnis die Koordinationsdateien
 initialisieren. Die Dienst-Sandbox bindet die Datenbank und eine vorhandene WAL
