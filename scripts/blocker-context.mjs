@@ -276,12 +276,18 @@ export function applyBlockerContexts(rows, tasks, now = Date.now(), { undelivere
     const setup = row.phase === 'PM-Rückfrage offen' && setupOwner(row.blockerOwner, reason);
     if (setup) row.phase = SETUP_PHASE[setup];
     // Fehleraudit 30.10.2026 (pm-zuordnung P1, artifex 12451cu8w7p): a question the Fragen-Hub
-    // refused or never registered (owner technik, or an open copy „PM-Rückfrage nicht
-    // zugestellt“ of this attempt) has no thread; the PM sees nothing yet.
-    if (row.phase === 'PM-Rückfrage offen' && (row.blockerOwner === 'technik' || undeliveredAttempts.has(row.attemptId))) {
+    // refused or never registered (an open copy „PM-Rückfrage nicht zugestellt“ of this
+    // attempt) has no thread; the PM sees nothing yet.
+    if (row.phase === 'PM-Rückfrage offen' && undeliveredAttempts.has(row.attemptId)) {
       row.phase = 'Blockiert · PM-Rückfrage nicht zugestellt';
       Object.assign(row, { ...OWNER_CONTEXT.technik, blockerReason: clean(reason) || 'PM-Rückfrage nicht zugestellt',
         nextStep: 'PM-Frage ist nicht im Fragen-Hub registriert; Registrierung technisch reparieren – der PM sieht noch keine Frage.' });
+    // Fehleraudit 30.10.2026 (FP17): the claim's owner technik carries no code; the worker also
+    // types other stops with a ❓ technik (legacyRouteStop, a source changed during preparation,
+    // a held renewal). Technik with its own cause and step, no undelivered question.
+    } else if (row.phase === 'PM-Rückfrage offen' && row.blockerOwner === 'technik') {
+      row.phase = row.workflow === 'correction' ? 'Korrektur blockiert' : 'Blockiert';
+      Object.assign(row, blockerContext(reason, { owner: row.blockerOwner }));
     // An open PM question is a PM decision, also against a checkpoint code (Fehleraudit 19.10.2026).
     } else if (row.phase === 'PM-Rückfrage offen') {
       Object.assign(row, { ...OWNER_CONTEXT.pm, nextStep: row.reasonCode === 'pm_decision_pending' && row.nextStep || OWNER_CONTEXT.pm.nextStep,

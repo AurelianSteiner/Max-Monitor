@@ -242,11 +242,17 @@ Technik (Till, 19.10.2026); eine Änderung nach der PM-Antwort ist PM-Arbeit, au
 änderten sich nur Klaviyo- oder Filestage-Linkfelder. Eine offene PM-Rückfrage ist
 PM, solange sie zugestellt ist. Bis zur Registrierung im Fragen-Hub ist sie eine
 technische Blockade (Fehleraudit 30.10.2026, Entscheidung im Auftrag von Till; artifex
-12451cu8w7p): Hat der Lauf den Owner `technik` oder steht für genau diesen Versuch
-(`run_id`) eine offene `#ai-fehler`-Kopie mit `grund` `rueckfrage_nicht_zugestellt`,
-zeigt die Brücke „Blockiert · PM-Rückfrage nicht zugestellt“, Zuständigkeit Technik,
-nächster Schritt „PM-Frage ist nicht im Fragen-Hub registriert; Registrierung technisch
-reparieren – der PM sieht noch keine Frage.“ Eine vom Worker zurückgezogene
+12451cu8w7p): Steht für genau diesen Versuch (`run_id`) eine offene `#ai-fehler`-Kopie
+mit `grund` `rueckfrage_nicht_zugestellt`, zeigt die Brücke „Blockiert · PM-Rückfrage
+nicht zugestellt“, Zuständigkeit Technik, nächster Schritt „PM-Frage ist nicht im
+Fragen-Hub registriert; Registrierung technisch reparieren – der PM sieht noch keine
+Frage.“ Nur diese Kopie belegt die nicht zugestellte Frage: Die Reservierung trägt nur
+den `owner`, keinen Code, und der Worker typisiert auch andere Stopps mit ❓ als
+`technik` (Korrektur oder Übersetzung ohne Ausgabeweg, während der Vorbereitung
+geänderte Quelle, gehaltener Quellwechsel). Ein solches ❓ ohne Kopie zeigt die Brücke
+als „Korrektur blockiert“ bzw. „Blockiert“, Zuständigkeit Technik, mit dem eigenen Grund
+und dem technischen Schritt (Fehleraudit 30.10.2026, Entscheidung im Auftrag von Till).
+Eine vom Worker zurückgezogene
 Rückfrage (Grund beginnt mit „Offene PM-Rückfrage zurückgezogen:“) ist keine offene Entscheidung, sondern
 `pm_source_changed` (PM, neu beauftragen); ein früheres `pm_decision_pending`
 desselben Versuchs bleibt nicht stehen (Fehleraudit 26.10.2026). Bei PM, Kunden-Setup

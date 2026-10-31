@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { addRunDetails, buildBlockedErrors, collectSnapshot, parseClaim, undeliveredQuestionAttempts } from './newsletter-monitor-bridge.mjs';
+import { addRunDetails, buildBlockedErrors, collectSnapshot, parseClaim, parseRegisterClaim, undeliveredQuestionAttempts } from './newsletter-monitor-bridge.mjs';
 import { applyBlockerContexts } from './blocker-context.mjs';
 const { createFleetStore } = createRequire(import.meta.url)('../team-server/fleet.js');
 
@@ -38,7 +38,9 @@ test('an open PM question row is Technik while its question is undelivered, PM o
     status: 'blocked', phase: 'PM-Rückfrage offen', reasonCode: 'pm_decision_pending', attemptId: 'a1',
     blockedReason: 'Der Welcome Flow steht in Klaviyo inzwischen auf live.', ...change });
   const apply = (value, options) => applyBlockerContexts([value], [], now, options)[0];
-  for (const technical of [apply(row({ blockerOwner: 'technik' })), apply(row({ blockerOwner: 'pm' }), { undeliveredAttempts: new Set(['a1']) })]) {
+  // Only the open copy proves the question undelivered; the claim's owner carries no code (FP17).
+  const copied = { undeliveredAttempts: new Set(['a1']) };
+  for (const technical of [apply(row({ blockerOwner: 'technik' }), copied), apply(row({ blockerOwner: 'pm' }), copied)]) {
     assert.deepEqual([technical.phase, technical.responsibleRole, technical.reasonCode, technical.blockerKind],
       ['Blockiert · PM-Rückfrage nicht zugestellt', 'Technik', 'technical_blocker', 'technical_failure']);
     assert.equal(technical.nextStep, UNDELIVERED);
@@ -52,6 +54,39 @@ test('an open PM question row is Technik while its question is undelivered, PM o
   // A setup gap posted with ❓ keeps its own owner.
   const setup = apply(row({ blockerOwner: 'onboarding', blockedReason: 'Kunde fehlt im RS Hub' }), { undeliveredAttempts: new Set(['a1']) });
   assert.equal(setup.phase, 'Blockiert · Kunden-Setup');
+});
+
+// Fehleraudit 30.10.2026 (FP17, Integrationsreview): the worker types technik also for other
+// stops that end with a ❓ (blocker-owner.js: a correction or translation without output route,
+// legacyRouteStop; a source changed during preparation; a held source renewal). The claim carries
+// only the owner, no code, so such a row is no undelivered question: Technik with its own cause
+// and the ordinary technical step, never „Registrierung technisch reparieren“.
+const LEGACY = 'Für diese Altquelle fehlt ein bestätigter Ausgabeweg. Newsletter- und Flow-Korrekturen werden über die vollständige Hub-Übernahme fortgesetzt; eine unbekannte Quellenbindung muss technisch geklärt werden. Angenommene PM-Antworten und vorhandene Arbeit bleiben erhalten.';
+const TECHNICAL_STEP = 'Technischen Originalbefund beheben und den betroffenen Schritt mit den vorhandenen Belegen prüfen.';
+test('a ❓ of a run typed technik for another reason is Technik with its own cause, not an undelivered question', t => {
+  const open = change => ({ status: 'blocked', phase: 'PM-Rückfrage offen', reasonCode: 'pm_decision_pending', responsibleRole: 'PM',
+    nextStep: 'Die offene Entscheidung im bestehenden Rückfragen-Thread klären; vorhandene Arbeit erhalten.', blockerOwner: 'technik',
+    updatedAt: new Date(now - 10000).toISOString(), ...change });
+  const legacy = () => open({ id: 'correction:korrektur-cu-t2@1000-intern', title: 'Korrektur Mail', url: 'https://app.clickup.com/t/t2',
+    workflow: 'correction', attemptId: 'run-t2', blockedReason: LEGACY, blockerReason: LEGACY });
+  const changed = () => open({ id: 'clickup:upload:t3', title: 'Upload Mail', url: 'https://app.clickup.com/t/t3', workflow: 'upload', attemptId: 'run-t3',
+    blockedReason: 'PM-Entscheidung erforderlich: Aufgabenquelle während der Vorbereitung geändert (Briefing).' });
+  const rows = applyBlockerContexts([legacy(), changed()], [], now);
+  assert.deepEqual([rows[0].phase, rows[0].responsibleRole, rows[0].reasonCode, rows[0].blockerKind, rows[0].nextStep],
+    ['Korrektur blockiert', 'Technik', 'technical_blocker', 'technical_failure', TECHNICAL_STEP]);
+  assert.match(rows[0].blockedReason, /^Gesicherter Befund: Für diese Altquelle fehlt ein bestätigter Ausgabeweg\..* · Zuständig: Technik/);
+  assert.deepEqual([rows[1].phase, rows[1].responsibleRole, rows[1].reasonCode, rows[1].blockerKind, rows[1].nextStep],
+    ['Blockiert', 'Technik', 'preparation_source_changed', 'technical_failure', 'Geänderte Angaben aus dem Befund mit der gespeicherten Vorbereitung abgleichen; Arbeitsstand erhalten.']);
+  for (const row of rows) assert.doesNotMatch(row.blockedReason, /nicht im Fragen-Hub registriert|PM-Rückfrage nicht zugestellt/);
+  // The relay keeps both a technical blocker instead of „Wartet · PM-Rückfrage“.
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'fehleraudit-3010-fp17-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const store = createFleetStore(directory, () => now);
+  store.updateQueue('TEAM1234', { source: { name: 'ClickUp', lastSuccessAt: new Date(now).toISOString() }, tasks: rows });
+  assert.deepEqual(store.snapshot('TEAM1234').queue.tasks.map(row => [row.status, row.phase]), [['blocked', 'Korrektur blockiert'], ['blocked', 'Blockiert']]);
+  // An open copy „PM-Rückfrage nicht zugestellt“ of the same attempt still decides.
+  const [undelivered] = applyBlockerContexts([legacy()], [], now, { undeliveredAttempts: new Set(['run-t2']) });
+  assert.deepEqual([undelivered.phase, undelivered.responsibleRole, undelivered.nextStep], ['Blockiert · PM-Rückfrage nicht zugestellt', 'Technik', UNDELIVERED]);
 });
 
 test('only open top-level undelivered-question copies with a valid run name their attempt', () => {
@@ -77,7 +112,7 @@ test('a full snapshot shows the open question of an undelivered copy as Technik;
       run_id: 'run-t1', worker: 'macworker-5-schwarz', state: 'final', heartbeat: now / 1000, owner: 'pm' } } });
   const error = copy({ run_id: 'run-t1', task_id: job, state: 'unklar' });
   const config = { clickup: { workspace_id: 'test' }, slack: { channel_id: 'status' }, monitor_channels: { errors: channel }, hub: {} };
-  const snapshot = errors => collectSnapshot({ now, config, fleetReader: async () => [],
+  const snapshot = (errors, reservationReader) => collectSnapshot({ now, config, fleetReader: async () => [], reservationReader,
     claimReader: async (fetcher, id, { onMessage = () => {} } = {}) => {
       if (id !== channel) return [claim];
       for (const message of errors) onMessage(message);
@@ -100,6 +135,13 @@ test('a full snapshot shows the open question of an undelivered copy as Technik;
   assert.deepEqual([relayed.status, relayed.phase], ['blocked', 'Blockiert · PM-Rückfrage nicht zugestellt']);
   const registered = (await snapshot([])).tasks.find(value => value.attemptId === 'run-t1');
   assert.deepEqual([registered.phase, registered.responsibleRole], ['PM-Rückfrage offen', 'PM']);
+  // FP17: a ❓ of a run the worker typed technik for another reason (owner from the RS Hub
+  // register), without such a copy, is Technik with the ordinary step, no undelivered question.
+  const register = () => [parseRegisterClaim({ runId: 'run-t1', taskId: job, worker: 'macworker-5-schwarz', state: 'final',
+    ts: '1792360700.000001', slackTs: '1792360700.000001', heartbeat: now / 1000, reactions: [], owner: 'technik' })];
+  const technical = (await snapshot([], register)).tasks.find(value => value.attemptId === 'run-t1');
+  assert.deepEqual([technical.status, technical.phase, technical.responsibleRole, technical.nextStep],
+    ['blocked', 'Korrektur blockiert', 'Technik', 'Technischen Originalbefund beheben und den betroffenen Schritt mit den vorhandenen Belegen prüfen.']);
 });
 
 // A Slack outage on a cold status cache keeps the attempt's earlier ❓ (addRunDetails); the
