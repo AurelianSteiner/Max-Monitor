@@ -15,7 +15,7 @@ import { readPmQuestions, applyPmQuestions } from './pm-question-status.mjs';
 import { applyPmOwners, createPmRoutingReader } from './pm-owner.mjs';
 import taskState from './task-state.cjs';
 import issueScope from './worker-issue-scope.cjs';
-import { checkpointBlocker, applyBlockerContexts, blockerContext, setupOwner, questionWithdrawn, sourceRenewal, BLOCKER_OWNERS, SALES_CLOSED_PHASE } from './blocker-context.mjs';
+import { checkpointBlocker, applyBlockerContexts, blockerContext, setupOwner, questionWithdrawn, sourceRenewal, designRenewal, BLOCKER_OWNERS, SALES_CLOSED_PHASE } from './blocker-context.mjs';
 import { createStatusAudit, saveStatusAudit } from './status-reconciliation.mjs';
 
 const require = createRequire(import.meta.url);
@@ -1757,8 +1757,10 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
   // newer active attempt, successful result or bound PM answer can replace it.
   // Till, 29.10.2026: a run a changed brief renewed is no failure; its scheduled fresh
   // start on the current source waits (worker src/source-renewal.js). A held one stays.
+  // Till, 30.10.2026: the same for a design base renewed mid-run (worker V1.2028).
+  const renewal = entry => entry.blocker?.blockerReason || entry.blocker?.blockedReason || '';
   const renewing = entry => Number.isFinite(entry.ready_at) && entry.ready_at < 8640000000000000
-    && sourceRenewal(entry.blocker?.blockerReason || entry.blocker?.blockedReason || '');
+    && sourceRenewal(renewal(entry));
   const failed = entry => !renewing(entry) && (entry.ready_at === 8640000000000000
     || ['blockiert', 'technisch_blockiert', 'zeitlimit', 'unklar'].includes(entry.blocker?.blockerState)
     || entry.blocker?.reasonCode === 'blocker_context_unreadable');
@@ -1794,16 +1796,17 @@ export function applyStoredCheckpoints(rows, entries, bindings = new Map(rows.fi
       if (entry.blocker && !(entry.blocker.reasonCode === 'blocker_context_missing' && readable)) Object.assign(row, entry.blocker);
       // Till, 30.10.2026 (Arbeitsbedarf24 86cb6tfay): a held renewal promised an automatic fresh start
       // that the central queue never schedules. The PM has nothing to decide; Technik owns the stall.
-      if (sourceRenewal(entry.blocker?.blockerReason || entry.blocker?.blockedReason || '')) Object.assign(row, {
+      if (sourceRenewal(renewal(entry))) Object.assign(row, {
         reasonCode: 'technical_blocker', responsibleRole: 'Technik', blockerKind: 'technical_failure', blockerOwner: 'technik',
-        nextStep: 'Automatischen Neustart nach dem Briefingwechsel prüfen: Die zentrale Fortsetzung ist gehalten statt geplant.' });
+        nextStep: `Automatischen Neustart nach ${designRenewal(renewal(entry)) ? 'der erneuerten Designbasis' : 'dem Briefingwechsel'} prüfen: Die zentrale Fortsetzung ist gehalten statt geplant.` });
       const question = /PM-Rückfrage|Wartet auf Fortsetzung/.test(row.phase || '')
         && entry.blocker?.blockerState !== 'technisch_blockiert' && entry.blocker?.blockerKind !== 'technical_failure';
       if (!question) row.status = 'blocked';
       if (!question) row.phase = 'Blockiert · Fortschritt im RS Hub gesichert';
     } else {
       row.status = 'queued';
-      row.phase = renewing(entry) ? 'Wartet · Briefing geändert, Neustart auf aktueller Quelle' : 'Wartet · Fortsetzung im RS Hub gesichert';
+      row.phase = !renewing(entry) ? 'Wartet · Fortsetzung im RS Hub gesichert'
+        : designRenewal(renewal(entry)) ? 'Wartet · Designbasis erneuert, Neustart auf neuer Basis' : 'Wartet · Briefing geändert, Neustart auf aktueller Quelle';
       for (const field of ['blockedReason', 'errorUrl', 'blockerReason', 'reasonCode', 'responsibleRole', 'blockerKind', 'nextStep', 'blockerOwner']) delete row[field];
     }
   }

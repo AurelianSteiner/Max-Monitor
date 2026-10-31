@@ -102,7 +102,13 @@ export const questionWithdrawn = text => QUESTION_WITHDRAWN.test(clean(text, 400
 // changed brief withdrew. Nobody has to act: the order continues on the current source by
 // itself through the central queue (applyStoredCheckpoints keeps its scheduled start waiting).
 const SOURCE_RENEWAL = /^(?:Gesicherter Befund:\s*)?Aufgabenquelle geändert, offene PM-Rückfrage zurückgezogen:/i;
-export const sourceRenewal = text => SOURCE_RENEWAL.test(clean(text, 4000));
+// Till, 30.10.2026 (worker V1.2028 source-renewal.js DESIGN_PREFIX): a Pre-Gen whose design base
+// was renewed mid-run renews the same way. The skill's own stop carries the same prefix, so only
+// the worker's detail with its count (source-renewal.js DETAIL) is a renewal; a run the worker
+// could not renew (count spent, older Mac) stays a blocker.
+const DESIGN_RENEWAL = /^(?:Gesicherter Befund:\s*)?Designbasis erneuert: [^\n]*\(Quellwechsel \d+ von \d+\)/i;
+export const designRenewal = text => DESIGN_RENEWAL.test(clean(text, 4000));
+export const sourceRenewal = text => SOURCE_RENEWAL.test(clean(text, 4000)) || designRenewal(text);
 // Checked access or setup in the "Stand:" section never decides the cause.
 const causeOf = reason => reason.split(/(?:^|\s)\**Stand\**\s*:/)[0];
 

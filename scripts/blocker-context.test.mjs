@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import zlib from 'node:zlib';
-import { blockerContext, checkpointBlocker, currentPm, pmFieldState, applyBlockerContexts, summary, clip, questionWithdrawn, PM_FIELD_ID, STAMMDATEN_ROLE, CORRECTION_STEP } from './blocker-context.mjs';
+import { blockerContext, checkpointBlocker, currentPm, pmFieldState, applyBlockerContexts, summary, clip, questionWithdrawn, sourceRenewal, designRenewal, PM_FIELD_ID, STAMMDATEN_ROLE, CORRECTION_STEP } from './blocker-context.mjs';
 import state from './task-state.cjs';
 
 function checkpoint(change = {}) {
@@ -338,6 +342,65 @@ test('the worker\'s prefix of a withdrawn PM question is a fixed contract', () =
     'Technischer Fehler beim Fortsetzen: Offene PM-Rückfrage zurückgezogen: Die Aufgabenquelle wurde geändert.']) {
     assert.equal(questionWithdrawn(other), false, other);
     assert.notEqual(blockerContext(other, { state: 'unklar' }).reasonCode, 'pm_source_changed', other);
+  }
+});
+
+// Till, 30.10.2026 (worker V1.2028 src/source-renewal.js, artifex 12451cua901): a design base
+// renewed mid-run renews the Pre-Gen like a changed brief. The skill's own stop
+// (content-creation produktionsfreigabe.py) carries the same prefix but never the worker's count.
+const SOURCE_DETAIL = 'Aufgabenquelle geändert, offene PM-Rückfrage zurückgezogen: Die Aufgabenquelle wurde geändert (Briefingtext). '
+  + 'Der Auftrag startet automatisch frisch auf der aktuellen Quelle; der PM muss nichts tun (Quellwechsel 1 von 3).';
+const DESIGN_DETAIL = 'Designbasis erneuert: Die freigegebene Library emqmXeFXtnELBhbKwHg4Yz wurde während des Laufs von Version 2414659657472725219 '
+  + 'auf 2416280762825511774 gehoben. Der Auftrag startet automatisch auf der neuen Basis neu und übernimmt die fertige Inhaltsarbeit; '
+  + 'der PM muss nichts tun (Quellwechsel 2 von 3).';
+const SKILL_STOP = 'Designbasis erneuert: Die freigegebene Library emqmXeFXtnELBhbKwHg4Yz wurde während des Laufs von Version 2414659657472725219 '
+  + 'auf 2416280762825511774 gehoben (Till, 30.10.2026). Diesen Lauf jetzt mit genau diesem Befund als blockiert beenden: keine PM-Frage, '
+  + 'nichts umgehen, nicht mit der alten Version weiterbauen. Der Worker startet den Auftrag automatisch auf der neuen Basis neu und übernimmt die fertige Inhaltsarbeit.';
+
+test('a design base renewed mid-run is a renewal like a changed brief; the skill\'s own stop without the count is none', () => {
+  for (const detail of [SOURCE_DETAIL, DESIGN_DETAIL]) {
+    // The bridge (applyStoredCheckpoints) reads this predicate: its scheduled start waits.
+    assert.equal(sourceRenewal(detail), true, detail);
+    assert.equal(sourceRenewal(`Gesicherter Befund: ${detail}`), true, detail);
+  }
+  assert.deepEqual([designRenewal(DESIGN_DETAIL), designRenewal(`Gesicherter Befund: ${DESIGN_DETAIL}`), designRenewal(SOURCE_DETAIL)], [true, true, false]);
+  // A run the worker could not renew (count spent, a Mac before V1.2028) keeps the skill's stop:
+  // still a blocker. Like the worker, only at the start of the cause.
+  for (const other of [SKILL_STOP, `Technischer Fehler beim Fortsetzen: ${DESIGN_DETAIL}`,
+    'Designbasis erneuert (Quellwechsel 1 von 3).', DESIGN_DETAIL.replace('Designbasis erneuert:', 'Designbasis veraltet:')]) {
+    assert.equal(sourceRenewal(other), false, other);
+    assert.equal(designRenewal(other), false, other);
+  }
+});
+
+// Word for word with the worker: NEWSLETTER_ROOT names a worker checkout (the release's
+// --newsletter-root), else the published main of the usual checkout on a Till Mac. Without
+// either (CI) the fixed samples above stay the contract.
+const RENEWAL_SOURCE = process.env.NEWSLETTER_ROOT ? path.join(process.env.NEWSLETTER_ROOT, 'src', 'source-renewal.js')
+  : 'origin/main:src/source-renewal.js of ~/Documents/AI Newsletter Creation';
+function renewalSource() {
+  try {
+    return process.env.NEWSLETTER_ROOT ? fs.readFileSync(RENEWAL_SOURCE, 'utf8')
+      : execFileSync('git', ['-C', path.join(os.homedir(), 'Documents', 'AI Newsletter Creation'), 'show', 'origin/main:src/source-renewal.js'],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch { return null; }
+}
+const workerRenewal = renewalSource();
+test('the renewal predicates follow the worker\'s src/source-renewal.js', { skip: workerRenewal === null && 'no worker checkout (NEWSLETTER_ROOT)' }, () => {
+  const source = workerRenewal;
+  const literal = name => {
+    const match = new RegExp(`^const ${name} = '([^'\\n]+)';$`, 'm').exec(source);
+    assert.ok(match, `${name} in ${RENEWAL_SOURCE}: update this contract with the worker`);
+    return match[1];
+  };
+  const detail = /^const DETAIL = \/(.+)\/;$/m.exec(source);
+  assert.ok(detail, `DETAIL in ${RENEWAL_SOURCE}: update this contract with the worker`);
+  const renewed = new RegExp(detail[1]), prefix = literal('PREFIX'), design = literal('DESIGN_PREFIX');
+  assert.equal(SOURCE_DETAIL.startsWith(prefix) && DESIGN_DETAIL.startsWith(design) && SKILL_STOP.startsWith(design), true);
+  // The worker's attemptOf decides a renewal by DETAIL; the bridge decides the same.
+  for (const sample of [SOURCE_DETAIL, DESIGN_DETAIL, SKILL_STOP, `${design}Die freigegebene Library x wurde gehoben. (Quellwechsel 3 von 3).`]) {
+    assert.equal(sourceRenewal(sample), renewed.test(sample), sample);
+    assert.equal(designRenewal(sample), renewed.test(sample) && sample.startsWith(design), sample);
   }
 });
 

@@ -188,3 +188,29 @@ test('a scheduled renewal after a changed brief waits instead of showing a block
     ['blocked','technical_blocker','Technik','technical_failure','technik']);
   assert.match(stalled.nextStep,/Neustart nach dem Briefingwechsel/);
 });
+
+// Till, 30.10.2026 (worker V1.2028, artifex 12451cua901): a design base renewed mid-run renews the
+// Pre-Gen like a changed brief. It showed for its five quiet minutes as a blocker nobody owns.
+test('a scheduled renewal after a renewed design base waits under its own name; held it is a technical stall', () => {
+  const reason = 'Designbasis erneuert: Die freigegebene Library emqmXeFXtnELBhbKwHg4Yz wurde während des Laufs von Version 2414659657472725219 '
+    + 'auf 2416280762825511774 gehoben. Der Auftrag startet automatisch auf der neuen Basis neu und übernimmt die fertige Inhaltsarbeit; '
+    + 'der PM muss nichts tun (Quellwechsel 1 von 3).';
+  const blocker = { blockerState:'blockiert', blockerReason:reason, reasonCode:'blocker_review_required', responsibleRole:'Zuständigkeit ungeklärt' };
+  const value = row({ workflow:'newsletter', status:'blocked', run:{id:'run-a',jobId:'task@1',taskId:'task'} });
+  applyStoredCheckpoints([value],[saved({task_id:'task@1',ready_at:Date.now()+300000,blocker})]);
+  assert.equal(value.status,'queued');
+  assert.equal(value.phase,'Wartet · Designbasis erneuert, Neustart auf neuer Basis');
+  for (const field of ['blockedReason','blockerReason','reasonCode','responsibleRole','nextStep']) assert.equal(value[field],undefined,field);
+  const held = row({ workflow:'newsletter', status:'blocked', run:{id:'run-a',jobId:'task@1',taskId:'task'} });
+  applyStoredCheckpoints([held],[saved({task_id:'task@1',blocker})]);
+  assert.deepEqual([held.status,held.reasonCode,held.responsibleRole,held.blockerKind,held.blockerOwner],
+    ['blocked','technical_blocker','Technik','technical_failure','technik']);
+  assert.match(held.nextStep,/Neustart nach der erneuerten Designbasis/);
+  // The skill's own stop without the worker's count (count spent, a Mac before V1.2028) is no
+  // renewal: a scheduled retry keeps the saved failure visible.
+  const stop = 'Designbasis erneuert: Die freigegebene Library emqmXeFXtnELBhbKwHg4Yz wurde während des Laufs von Version 2414659657472725219 '
+    + 'auf 2416280762825511774 gehoben (Till, 30.10.2026). Diesen Lauf jetzt mit genau diesem Befund als blockiert beenden.';
+  const raw = row({ workflow:'newsletter', status:'blocked', run:{id:'run-a',jobId:'task@1',taskId:'task'} });
+  applyStoredCheckpoints([raw],[saved({task_id:'task@1',ready_at:Date.now()+300000,blocker:{ ...blocker, blockerReason:stop }})]);
+  assert.deepEqual([raw.status,raw.phase,raw.reasonCode],['blocked','Blockiert · Fortschritt im RS Hub gesichert','blocker_review_required']);
+});
