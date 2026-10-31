@@ -581,16 +581,21 @@ select {
 .table-scroll { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 4px 8px; }
 .queue-table { border-collapse: collapse; width: 100%; table-layout: fixed; }
 .queue-table th { font-size: 11px; font-weight: 500; color: var(--muted); padding: 10px 8px; text-align: left; border-bottom: 1px solid var(--line); }
-.queue-table th:first-child { width: 30%; }
+.queue-table th:first-child { width: 28%; }
 .queue-table th:nth-child(2) { width: 13%; }
 .queue-table th:nth-child(3) { width: 13%; }
-.queue-table th:nth-child(4) { width: 19%; }
-.queue-table th:nth-child(5) { width: 12%; }
+.queue-table th:nth-child(4) { width: 17%; }
+.queue-table th:nth-child(5) { width: 16%; }
 .queue-table th:last-child { width: 13%; text-align: right; }
 .queue-table td { padding: 10px 8px; vertical-align: middle; border-bottom: 1px solid var(--line); overflow: hidden; text-overflow: ellipsis; }
 .queue-table tbody tr:last-child td { border-bottom: 0; }
 .queue-table td:last-child { overflow: visible; text-overflow: clip; }
 .queue-table tbody tr:hover td { background: var(--hover); }
+.task-duration { font-size: 12px; font-variant-numeric: tabular-nums; line-height: 1.5; }
+.duration-line { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0 8px; }
+.duration-line strong { font-weight: 500; white-space: nowrap; }
+.duration-label, .duration-missing { color: var(--muted); }
+.duration-missing { font-size: 11px; }
 .task-title { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); text-decoration: none; }
 a.task-title:hover, button.task-title:hover { text-decoration: underline; text-underline-offset: 3px; }
 button.task-title { max-width: 100%; padding: 0; border: 0; background: none; font: inherit; font-weight: 500; text-align: left; cursor: pointer; }
@@ -824,7 +829,8 @@ dialog.wide { max-width: 1060px; }
   button.task-title { min-height: 28px; }
   .queue-table td:nth-child(2), .queue-table td:nth-child(3) { margin-right: 10px; }
   .queue-table td:nth-child(4) { display: block; margin-top: 8px; }
-  .queue-table td:nth-child(5) { display: none; }
+  .queue-table td:nth-child(5) { display: block; margin-top: 8px; }
+  .task-duration { max-width: 260px; }
   .queue-table td:last-child { display: block; margin-top: 6px; }
   .task-links { flex-direction: row; gap: 12px; }
   .task-links a { min-height: 44px; padding: 0 4px; }

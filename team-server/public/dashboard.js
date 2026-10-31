@@ -795,7 +795,7 @@
     const queueTitle = statusFilter === "completed" && queuePeriod === "today" ? "Heute erledigt"
       : statusNames[statusFilter] || ({ open: "Offene Aufgaben", all: "Alle Aufgaben" })[statusFilter] || "Aufgaben";
     $("queue-title").textContent = queueTitle;
-    $("queue-time-heading").textContent = statusFilter === "completed" ? "Erledigt" : "Abschluss / Änderung";
+    $("queue-time-heading").textContent = "Dauer";
     $("page-title").textContent =
       { overview: "Übersicht", queue: queueTitle, machines: "Macs", log: "Log", usage: "Verbrauch & Aufwand" }[view] || "Übersicht";
     document.querySelectorAll(".nav-item").forEach((button) => {
@@ -1706,6 +1706,18 @@
       $("machine-grid").append(card);
     });
   }
+  // Sort every queue view by its displayed time; undated tasks follow dated ones.
+  function newestTaskFirst(a, b) {
+    const first = timestamp(a.status === "completed" ? a.completedAt : a.updatedAt);
+    const second = timestamp(b.status === "completed" ? b.completedAt : b.updatedAt);
+    if (first === null || second === null) {
+      const missing = (first === null) - (second === null);
+      if (missing) return missing;
+    } else if (first !== second) {
+      return second - first;
+    }
+    return String(a.id).localeCompare(String(b.id));
+  }
   function filtered(items, { ignoreStatus = false, ignorePeriod = false } = {}) {
     const workerNames = new Map(machines().filter(machine => machine.workerId).map(machine => [machine.workerId, [workerName(machine.workerId, machine.name), machine.deviceName].filter(Boolean).join(" ")]));
     const needle = query.trim().toLocaleLowerCase();
@@ -1723,17 +1735,7 @@
             .filter(Boolean).join(" ").toLocaleLowerCase().includes(needle)
         );
       })
-      .sort(
-        (a, b) =>
-          (({ running: 0, blocked: 1, failed: 2, clarification: 3, paused: 4, queued: 5, completed: 6 })[
-            a.status
-          ] ?? 5) -
-            ({ running: 0, blocked: 1, failed: 2, clarification: 3, paused: 4, queued: 5, completed: 6 }[
-              b.status
-            ] ?? 5) || (statusFilter === "completed"
-              ? (timestamp(b.completedAt) || 0) - (timestamp(a.completedAt) || 0) : 0)
-          || String(a.title).localeCompare(String(b.title)),
-      );
+      .sort(newestTaskFirst);
   }
   function canComplete(task) {
     return task && !task.errorUrl && ["blocked", "failed"].includes(task.status) && task.taskVersion;
@@ -1942,11 +1944,8 @@
         assigned.append(phase);
       }
       const updated = node("td");
-      const stamp = task.status === "completed" ? task.completedAt : task.updatedAt;
-      const time = node("time", "row-time", stamp ? relative(stamp) : "Datum unbekannt");
-      time.title = `${task.status === "completed" ? "Abschluss" : "Aktualisiert"}: ${exact(stamp)}`;
-      if (timestamp(stamp)) time.dateTime = stamp;
-      updated.append(time);
+      updated.className = "task-duration-cell";
+      updated.append(durationSummary(task));
       const actions = node("td");
       const actionGroup = node("div", "queue-actions");
       const links = node("div", "task-links");
@@ -2125,6 +2124,36 @@
     taskDetails(task, { mail: openTask.mail, scrollTop: $("detail-body").querySelector(".draft-well")?.scrollTop });
     if (focusKey) $("detail-body").querySelector(`[data-focus-key="${focusKey}"]`)?.focus({ preventScroll: true });
   }
+  function durationValue(ms, minimum = false) {
+    if (!Number.isFinite(ms)) return '—';
+    const seconds = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    const value = days ? `${days} T ${hours % 24} h ${minutes % 60} min`
+      : hours ? `${hours} h ${minutes % 60} min` : minutes ? `${minutes} min` : `${seconds} s`;
+    return (minimum ? '≥ ' : '') + value;
+  }
+  function durationSummary(task) {
+    const timing = task.timing;
+    const wrapper = node('div', 'task-duration');
+    wrapper.title = `Start: ${timing?.startKnown ? exact(timing.startedAt) : 'unbekannt'} · Ende: ${timing?.completedAt ? exact(timing.completedAt) : 'offen'} · Aktualisiert: ${exact(task.updatedAt)}`;
+    if (timing?.totalMs == null) {
+      wrapper.append(node('span', 'duration-missing', task.status === 'queued' ? 'Noch nicht gestartet' : 'Nicht erfasst'));
+      return wrapper;
+    }
+    for (const [label, value] of [
+      ['Inkl. Block.', durationValue(timing.totalMs, !timing.startKnown)],
+      ['Exkl. Block.', timing.coverageComplete ? durationValue(timing.activeMs) : '—'],
+    ]) {
+      const line = node('span', 'duration-line');
+      line.append(node('span', 'duration-label', label), node('strong', '', value));
+      wrapper.append(line);
+    }
+    if (!timing.coverageComplete) wrapper.append(node('span', 'duration-missing', 'Teilweise erfasst'));
+    return wrapper;
+  }
+
   function taskDetails(task, keep = {}) {
     const grid = node("div", "detail-grid");
     const salesStatuses = { reserved: "Reserviert", running: "Läuft", delivery: "PDF-Upload", blocked: "Blockiert", aborted: "Abgebrochen", done: "Fertig" };
@@ -2148,6 +2177,17 @@
         (task.workflow === "sales" ? salesStatuses[task.sourceStatus] : task.sourceStatus) || "Unbekannt"),
       detailField("Aktualisiert", exact(task.updatedAt)),
     );
+    const timing = task.timing;
+    const known = timing?.coverageComplete;
+    grid.append(
+      detailField("Start", timing?.startKnown ? exact(timing.startedAt) : "Nicht vollständig erfasst"),
+      detailField("Ende", timing?.completedAt ? exact(timing.completedAt) : timing?.running ? "Läuft noch" : "Nicht erfasst"),
+      detailField("Dauer inkl. Blockierzeit", durationValue(timing?.totalMs, timing && !timing.startKnown)),
+      detailField("Dauer exkl. Blockierzeit", known ? durationValue(timing.activeMs) : "Nicht vollständig erfasst"),
+      detailField("Blockierzeit", known ? durationValue(timing.blockedMs) : "Nicht vollständig erfasst"),
+    );
+    grid.append(detailField("Zeitmessung", "Vom ersten Arbeitsstart bis zum Abschluss, bei offenen Aufgaben bis jetzt. Blockiert, pausiert, PM-Rückfragen und Wartephasen nach dem Start zählen als Blockierzeit."
+      + (timing?.totalMs != null && !known ? " Für diese ältere Aufgabe fehlt ein Teil des Verlaufs; ≥ kennzeichnet die Mindestdauer seit der ersten Erfassung." : ""), true));
     if (stageOf(task) === "clarification") grid.append(detailField("Wartet auf", task.pmOwner || "PM in Slack noch nicht bestätigt"));
     if (task.blockedReason) grid.append(detailField(task.status === "clarification" ? "Offene Klärung" : "Blockiergrund", task.blockedReason, true));
     const source = runningPackage(task);

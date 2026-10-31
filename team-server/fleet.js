@@ -1,4 +1,5 @@
 // Shared fleet/queue state. Provider credentials never belong in this store.
+const { reconcileTimings, withTiming } = require('./task-timing');
 const fs = require("node:fs");
 const taskState = require("../scripts/task-state.cjs");
 const issueScope = require("../scripts/worker-issue-scope.cjs");
@@ -323,6 +324,8 @@ function validateQueue(body) {
       progress: percent(raw.progress, "task.progress", true),
       previews: previewList(raw.previews),
       updatedAt: timestamp(raw.updatedAt, "task.updatedAt", true),
+      startedAt: timestamp(raw.startedAt, "task.startedAt", true),
+      statusChangedAt: timestamp(raw.statusChangedAt, "task.statusChangedAt", true),
     });
   });
   let observedWorkers;
@@ -639,6 +642,9 @@ function createFleetStore(dataDir, now = Date.now) {
   }
 
   function write(teamId, state, notify = true) {
+    const time = now();
+    const reports = (state.workerReports || []).filter(report => publicReport(report, time).activity?.fresh);
+    reconcileTimings(state, currentQueue(state, reports), time);
     const file = filePath(teamId);
     const tmp = `${file}.${crypto.randomUUID()}.tmp`;
     const data = JSON.stringify(state);
@@ -867,6 +873,7 @@ function createFleetStore(dataDir, now = Date.now) {
       }
       if (oldSource.error) event(state, "queue_source_recovered", "queue", incoming.source.name, "Queue-Quelle ist wieder erreichbar", time);
       state.queue = {
+        timings: state.queue.timings,
         tasks: incoming.tasks,
         ...(incoming.blockedErrors === undefined ? {} : { blockedErrors: incoming.blockedErrors }),
         clarifications: (state.queue.clarifications || []).filter(entry => {
@@ -1028,6 +1035,7 @@ function createFleetStore(dataDir, now = Date.now) {
     }
     const liveReports = (state.workerReports || []).filter(report => publicReport(report, time).activity?.fresh);
     const queueTasks = currentQueue(state, liveReports);
+    if (reconcileTimings(state, queueTasks, time)) write(teamId, state);
     return {
       schema: 1,
       generatedAt: new Date(time).toISOString(),
@@ -1038,7 +1046,7 @@ function createFleetStore(dataDir, now = Date.now) {
         fresh: (state.workerReports || []).some(report => report.skillRelease?.revision === state.latestSkillRelease.revision
           && publicReport(report, time).skillRelease?.fresh === true) } } : {}),
       machines: machines.sort((a, b) => a.name.localeCompare(b.name)),
-      queue: { tasks: queueTasks, errors: (state.queue.blockedErrors || []).map(error => publicTask(error)), source: { ...source, stale, status: source.error ? "error" : !source.lastSuccessAt ? "unavailable" : stale ? "stale" : "fresh" } },
+      queue: { tasks: queueTasks.map(task => withTiming(task, state.queue.timings?.[task.id], time)), errors: (state.queue.blockedErrors || []).map(error => publicTask(error)), source: { ...source, stale, status: source.error ? "error" : !source.lastSuccessAt ? "unavailable" : stale ? "stale" : "fresh" } },
       events: [...state.events].reverse().map((entry) => publicMachineEvent(entry, state.machines)),
     };
   }

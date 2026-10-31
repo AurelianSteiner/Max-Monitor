@@ -988,6 +988,12 @@ function fleetSeen(workers) {
 // tasks may carry statusSince (the worker's status epoch, readStatusEpochs).
 // admission: the worker's admission predicates (workerAdmission, loadWorkerAdmission).
 // workers: the Macs' heartbeats read from the RS Hub (parseObservedWorkers).
+function taskStartEvidence(claims) {
+  const times = claims.filter(claim => !['claiming', 'withdrawn'].includes(claim.state))
+    .map(claim => Number(claim.ts) * 1000).filter(time => Number.isFinite(time) && time > 0);
+  return times.length ? { startedAt: new Date(Math.min(...times)).toISOString() } : {};
+}
+
 export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMinutes = 30, admission = workerAdmission(), workers, unavailableCorrectionSources = new Set() } = {}) {
   const updatedAt = new Date(now).toISOString();
   const seenAt = fleetSeen(workers);
@@ -1073,6 +1079,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       const mailSource = taskMailSource(task);
       rows.push({ id: `clickup:${workflow.id}:${task.id}`, title, url, workflow: workflow.queueWorkflow ?? workflow.id, status,
         ...languagePackage(task, tasks, workflow),
+        ...taskStartEvidence(matches),
         contentKind: contentKind(task, matches),
         ...evidence,
         completionSource: evidence.completionSource || (status === 'completed' ? finished ? 'register' : 'clickup' : undefined),
@@ -1118,6 +1125,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
         url: sourceUrl, workflow: workflow.queueWorkflow ?? workflow.id,
         contentKind: contentKind({ name: title }, matches), company: claim.company, mailUrl: claim.mailUrl, figmaUrl: claim.figmaUrl,
         status: 'completed', phase: 'Abgeschlossen', progress: 100, workerId: claim.workerId, attemptId: claim.runId,
+        ...taskStartEvidence(matches),
         ...evidence, completionSource: evidence.completionSource || 'register',
         updatedAt: evidence.completedAt || new Date(claim.heartbeat * 1000).toISOString(),
         run: { id: claim.runId, jobId: claim.jobId, workerId: claim.workerId, ts: threadOf(claim), taskId, channelId: claim.channelId, heartbeat: threadBeat(claim) } });
@@ -1161,6 +1169,7 @@ export function buildQueue(tasks, claims, workflows, { now = Date.now(), staleMi
       figmaUrl: claim.figmaUrl, mailUrl: claim.mailUrl,
       phase, progress: status === 'completed' ? 100 : undefined, updatedAt: new Date(claim.heartbeat * 1000).toISOString(),
       ...completionEvidence([claim]),
+      ...taskStartEvidence(attempts),
       run: { id: claim.runId, jobId: claim.jobId, workerId: claim.workerId, ts: threadOf(claim), taskId: claim.taskId, channelId: claim.channelId, heartbeat: threadBeat(claim) } });
   }
   rows.push(...waitingCorrections(tasks, rows, updatedAt, admission));
@@ -1700,6 +1709,8 @@ export async function readLocalSales(directory, now = Date.now()) {
         phase: noProduction ? SALES_CLOSED_PHASE : paused ? 'Pausiert · wartet außerhalb der Worker-Plätze' : awaitingWorker ? 'Worker-Meldung ausstehend' : phases[job.status],
         ...(noProduction ? { reasonCode: 'sales_shop_unavailable', responsibleRole: 'Sales', blockerReason: displayText(job.reason, 500, SALES_CLOSED_PHASE) }
           : { progress: progress.progress, step: paused || awaitingWorker ? undefined : progress.step }),
+        ...(Number.isFinite(typeof job.started_at === 'number' ? job.started_at : Date.parse(job.started_at))
+          ? { startedAt: new Date(job.started_at).toISOString() } : {}),
         ...(blockedReason && !noProduction ? { blockedReason } : {}), ...(salesOwner && !noProduction ? { blockerOwner: 'sales' } : {}),
         ...(status === 'completed' || noProduction ? { ...(Number.isFinite(closedTime) ? { completedAt: new Date(closedTime).toISOString(), completionSource: 'sales' } : {}) } : {}),
         updatedAt: new Date(seen).toISOString() });

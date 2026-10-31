@@ -53,6 +53,7 @@
     "team-server/remote-access.js",
     "team-server/server.js",
     "team-server/skill-versions.js",
+    "team-server/task-timing.js",
     "team-server/worker-control.js",
     "team-server/worker-identities.json",
     "team-server/worker-kinds.js",
