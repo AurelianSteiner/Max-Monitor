@@ -1503,9 +1503,12 @@ export async function addRunDetails(rows, { hubFetch, channelId, previews, previ
       // data is that blocker's status, never a PM question (blocker-context.mjs setupOwner).
       // Fehleraudit 26.10.2026: neither is a question the worker withdrew; its earlier
       // pm_decision_pending of the same attempt is not kept.
+      // Fehleraudit 30.10.2026 (pm-zuordnung P1): the earlier ❓ of this attempt may have been
+      // shown as undelivered; applyBlockerContexts decides it again from the current copies.
       const question = !setupOwner(row.blockerOwner, row.blockedReason) && !questionWithdrawn(row.blockedReason);
       if (question && (status?.pmQuestion || row.phase === 'PM-Rückfrage offen'
-        || (!currentReason && old?.attemptId === row.attemptId && old.phase === 'PM-Rückfrage offen' && row.blockedReason))) row.phase = 'PM-Rückfrage offen';
+        || (!currentReason && old?.attemptId === row.attemptId && ['PM-Rückfrage offen', 'Blockiert · PM-Rückfrage nicht zugestellt'].includes(old.phase)
+          && row.blockedReason))) row.phase = 'PM-Rückfrage offen';
       else if (row.blockedReason && row.status === 'blocked' && row.workflow === 'correction') row.phase = 'Korrektur blockiert';
       if (question && status?.pmQuestion) Object.assign(row, { blockerReason: row.blockedReason, reasonCode: 'pm_decision_pending', responsibleRole: 'PM',
         nextStep: 'Die offene Entscheidung im bestehenden Rückfragen-Thread klären; vorhandene Arbeit erhalten.' });

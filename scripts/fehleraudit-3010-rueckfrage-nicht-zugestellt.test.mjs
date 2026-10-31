@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { buildBlockedErrors, collectSnapshot, parseClaim, undeliveredQuestionAttempts } from './newsletter-monitor-bridge.mjs';
+import { addRunDetails, buildBlockedErrors, collectSnapshot, parseClaim, undeliveredQuestionAttempts } from './newsletter-monitor-bridge.mjs';
 import { applyBlockerContexts } from './blocker-context.mjs';
 const { createFleetStore } = createRequire(import.meta.url)('../team-server/fleet.js');
 
@@ -99,5 +99,30 @@ test('a full snapshot shows the open question of an undelivered copy as Technik;
   const relayed = store.snapshot('TEAM1234').queue.tasks.find(value => value.attemptId === 'run-t1');
   assert.deepEqual([relayed.status, relayed.phase], ['blocked', 'Blockiert · PM-Rückfrage nicht zugestellt']);
   const registered = (await snapshot([])).tasks.find(value => value.attemptId === 'run-t1');
+  assert.deepEqual([registered.phase, registered.responsibleRole], ['PM-Rückfrage offen', 'PM']);
+});
+
+// A Slack outage on a cold status cache keeps the attempt's earlier ❓ (addRunDetails); the
+// undelivered phase of the previous snapshot must not let the typed pm owner decide again.
+test('during a Slack outage the undelivered question of the same attempt stays Technik', async () => {
+  const job = '12451cu8w7p@1793382441876-klaviyo';
+  const fresh = () => ({ id: 'clickup:upload:12451cu8w7p', url: 'https://app.clickup.com/t/12451cu8w7p', workflow: 'upload', status: 'blocked',
+    attemptId: RUN, blockerOwner: 'pm', run: { id: RUN, jobId: job, taskId: '12451cu8w7p', ts: '1793389672.000100', channelId: 'CUPLOAD', heartbeat: 1 } });
+  const parent = { ts: '1793389672.000100', bot_id: 'bot', metadata: { event_type: 'ai_klaviyo_upload_claim',
+    event_payload: { task_id: job, run_id: RUN, worker: 'macworker-5-schwarz', state: 'final', heartbeat: 1 } } };
+  const notice = { ts: '1793389672.000200', bot_id: 'bot', text: '❓ Wartet · PM-Rückfrage\nDer Welcome Flow steht in Klaviyo inzwischen auf live.',
+    metadata: { event_type: 'ai_newsletter_notice', event_payload: { notification_id: `${RUN}:status` } } };
+  const cycle = async (hubFetch, previousTasks, copies) => {
+    const row = fresh();
+    await addRunDetails([row], { hubFetch, channelId: 'CUPLOAD', previousTasks, now });
+    return applyBlockerContexts([row], [], now, { undeliveredAttempts: undeliveredQuestionAttempts(copies) })[0];
+  };
+  const first = await cycle(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, messages: [parent, notice] }) }), [], [copy()]);
+  assert.deepEqual([first.phase, first.responsibleRole], ['Blockiert · PM-Rückfrage nicht zugestellt', 'Technik']);
+  const outage = async () => { throw Error('temporary outage'); };
+  const kept = await cycle(outage, [first], [copy()]);
+  assert.deepEqual([kept.phase, kept.responsibleRole, kept.nextStep], ['Blockiert · PM-Rückfrage nicht zugestellt', 'Technik', UNDELIVERED]);
+  // Registered meanwhile (copy gone): the open question is the PM's again.
+  const registered = await cycle(outage, [first], []);
   assert.deepEqual([registered.phase, registered.responsibleRole], ['PM-Rückfrage offen', 'PM']);
 });
